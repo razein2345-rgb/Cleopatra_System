@@ -66,3 +66,4 @@ Sequential, zero-padded to 4 digits, never reused: `0001-title-in-kebab-case.md`
 | [0024](0024-routing-introduced-phase-2.md)          | React Router introduced in Phase 2, ahead of its original plan           |
 | [0025](0025-audit-log-write-path-begins-phase-2.md) | Audit log write-path begins with Phase 2's auth events                   |
 | [0026](0026-legacy-employee-migration-mapping.md)   | Legacy employee → StaffProfile migration mapping                         |
+| [0027](0027-self-contained-build-lifecycle.md)      | Self-contained build lifecycle via `prepare`/`postinstall` (Vercel fix)  |

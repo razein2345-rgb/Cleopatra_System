@@ -158,6 +158,8 @@ Each app owns its own `.env` (never committed — see `.gitignore`), documented 
 
 Both apps have a multi-stage `Dockerfile`; `docker-compose.yml` at the repo root builds and runs both together (`api` on port 4000, `web` served by nginx on port 8080), with environment variables passed through from the host. Database migrations are **not** run automatically by the container — they are an explicit, reviewed step (`npm run prisma:migrate --workspace=apps/api`) run against the target Supabase project before a new version goes live. This has not yet been exercised end-to-end with real Docker builds in this environment (Docker was not installed during initial scaffolding); the Dockerfiles are written and reviewed but not yet build-tested.
 
+**The build is self-contained from a bare `npm install`** — no platform-specific configuration (no `vercel.json`) is required. `packages/shared` builds itself via a `prepare` script and `apps/api` generates its Prisma client via a `postinstall` script, both firing automatically as part of `npm install` for every workspace, including on Vercel or any other platform that scopes its build command to a single app's subdirectory. See [ADR 0027](adr/0027-self-contained-build-lifecycle.md) for the failure this fixes and how it was verified.
+
 ---
 
 ## 9. What's deliberately not here yet
