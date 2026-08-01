@@ -1,6 +1,6 @@
 # Migration Plan — Cleopatra Press (legacy Artifact) → Cleopatra System
 
-**Status:** Phase 1 complete and verified against the live Supabase database (migrated, seeded, all 26 tables confirmed). No calculation logic has been touched. `legacy/cleopatra_press_system.html` has not been modified and remains the single source of truth for every calculation and workflow until each phase below is explicitly approved and verified against it. Waiting for approval to start Phase 2.
+**Status:** Phases 1 and 2 (Identity & Access Management) complete and verified against the live Supabase database. No calculation logic has been touched. `legacy/cleopatra_press_system.html` has not been modified and remains the single source of truth for every calculation and workflow until each phase below is explicitly approved and verified against it. Waiting for approval to start Phase 3.
 
 This plan assumes the reader has read [LEGACY_ANALYSIS.md](LEGACY_ANALYSIS.md) first — phase descriptions below reference findings from that audit by section (e.g. "§3" = Pricing & Calculation Engine).
 
@@ -187,22 +187,21 @@ This phase's scope was deliberately widened (originally it covered only Settings
 
 ---
 
-## Phase 2 — Auth & Staff
+## Phase 2 — Identity & Access Management — ✅ COMPLETE
 
-**Goal:** Replace the legacy plaintext employee list with Supabase Auth.
+**Goal (expanded from the original "Auth & Staff" scope, by explicit instruction):** replace the legacy plaintext employee list with Supabase Auth for credentials **and** build a true, database-driven RBAC system on top of it — roles, granular permissions, branch-scoped access, full user management, and audit logging on every identity-related action. See [ARCHITECTURE.md §6](ARCHITECTURE.md#6-identity--access-management) for the resulting design and [ADRs 0021–0026](adr/) for the individual decisions.
 
-- **Depends on:** Phase 1 (the `StaffProfile` table already exists from Phase 1's migration).
-- **Files/components to create:**
-  - `apps/api/src/middlewares/requireAuth.ts` — already scaffolded; extend with role checks.
-  - `apps/api/src/routes/staff.ts`, `controllers/staff.ts`.
-  - `apps/web/src/pages/login/` — Supabase Auth login screen replacing `screenLogin()`.
-- **Database mapping:** `StaffProfile` schema already exists (Phase 1); this phase wires it to real Supabase Auth users (`supabaseUserId`) and adds the `branchId` assignment UI.
-- **API endpoints:** `GET /api/staff` (admin-only), `POST /api/staff/invite` (admin-only), `PATCH /api/staff/:id` (role/name/branch).
-- **UI components:** login page, staff management page (admin-only), logged-in-as indicator in the top bar (mirrors legacy `topbar()`).
-- **Business logic affected:** none. Session/role gating replaces the legacy client-side password check.
-- **Risks:**
-  - **Not a like-for-like data migration** (LEGACY_ANALYSIS §10, item 3): legacy plaintext passwords cannot and must not be imported. Each staff member needs a fresh Supabase Auth invite/reset — a rollout task, not a script.
-  - Legacy never branches on `role` anywhere; keep the admin/staff distinction exactly that simple for now.
+- **Depends on:** Phase 1 (the `StaffProfile`, `Branch`, and `AuditLog` tables already existed from Phase 1's migration).
+- **Delivered:**
+  - **Schema:** `StaffProfile` extended (`email`, `phone`, `isActive`, `lastLoginAt`; the old `role` enum removed); new `Role`, `Permission`, `UserRole`, `RolePermission`, `UserBranchAccess` tables; `AuditAction` enum gained `LOGIN`/`LOGOUT`/`PASSWORD_RESET`. Migrated and seeded against the live Supabase database.
+  - **Backend:** `requireAuth` (Supabase JWT verification + application identity/permission loading), `requirePermission` (database-driven authorization), `authContext`/`auditService`/`userService` services; full REST surface: `/api/auth/{login,logout,me}`, `/api/users` (+ `/roles`, `/branch-access`, `/reset-password` sub-actions), `/api/roles` (+ `/permissions`), `/api/permissions`, `/api/branches` (read-only). Phase 1's Settings/catalog endpoints were retrofitted with the same auth requirement.
+  - **Frontend:** React Router introduced (ADR 0024); `AuthContext`, `LoginPage` (with remember-me and self-service forgot-password), `ProtectedRoute`, `AppShell`; management screens for Users, Roles, and Permissions.
+  - **Seed data:** 8 default roles, 56 permissions across 12 modules (including `roles`/`permissions` themselves), default role→permission grants — all editable afterward, none hardcoded in application logic.
+- **Business logic affected:** none — this phase is entirely infrastructure/authorization, no calculation code touched.
+- **Resolved risks:**
+  - Legacy plaintext passwords were **not** migrated (by design) — every user requires a fresh Supabase Auth invite. See [ADR 0026](adr/0026-legacy-employee-migration-mapping.md) for the full legacy-employee mapping (including the fact that legacy has no email field, which the new model requires).
+  - A latent crash-at-startup bug in both Supabase client constructions (empty `SUPABASE_URL` throws synchronously in `createClient`) was found and fixed during this phase — it only surfaced once `requireAuth` was exercised broadly.
+- **Verified:** migration applied and seed data confirmed against the live Supabase database; full lint/typecheck/build passes; live smoke-tested (unauthenticated redirect to `/login`, every protected endpoint correctly rejecting missing/invalid tokens, Phase 1 endpoints now also protected).
 
 ---
 
@@ -428,7 +427,7 @@ All structural decisions raised during planning are now resolved and incorporate
 | ----- | ---------------------------------------------------------------------- | ------------------------------------------------- |
 | 0     | Data export check (gate)                                               | ✅ resolved — no data exists                      |
 | 1     | DB foundations (full schema) & settings/reference data                 | ✅ complete & verified                            |
-| 2     | Auth & staff                                                           | ✅ eligible                                       |
+| 2     | Identity & Access Management (auth, RBAC, branch access, audit)        | ✅ complete & verified                            |
 | 3     | Customers                                                              | ✅ eligible                                       |
 | 4     | Pricing & calculation engine                                           | ✅ eligible                                       |
 | 5     | Order builder UI (in-memory cart)                                      | ✅ eligible                                       |
@@ -443,4 +442,4 @@ All structural decisions raised during planning are now resolved and incorporate
 | 14    | Printing engine modernization                                          | ✅ eligible (mechanism); documents depend on 6-13 |
 | 15    | Parallel run & cutover                                                 | ⛔ last, after everything                         |
 
-**Phase 1 is complete and verified against the live Supabase database.** Waiting for approval before starting Phase 2 (Auth & Staff).
+**Phases 1 and 2 are complete and verified against the live Supabase database.** Waiting for approval before starting Phase 3 (Customers).
