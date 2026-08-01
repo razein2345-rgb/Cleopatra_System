@@ -1,6 +1,6 @@
 # Migration Plan — Cleopatra Press (legacy Artifact) → Cleopatra System
 
-**Status:** Phase 1 in progress (database schema, seed data, Settings/reference-data CRUD). No calculation logic has been touched. `legacy/cleopatra_press_system.html` has not been modified and remains the single source of truth for every calculation and workflow until each phase below is explicitly approved and verified against it.
+**Status:** Phase 1 complete and verified against the live Supabase database (migrated, seeded, all 26 tables confirmed). No calculation logic has been touched. `legacy/cleopatra_press_system.html` has not been modified and remains the single source of truth for every calculation and workflow until each phase below is explicitly approved and verified against it. Waiting for approval to start Phase 2.
 
 This plan assumes the reader has read [LEGACY_ANALYSIS.md](LEGACY_ANALYSIS.md) first — phase descriptions below reference findings from that audit by section (e.g. "§3" = Pricing & Calculation Engine).
 
@@ -144,7 +144,7 @@ Phases 2 and 3 have no dependency on each other and can run in parallel. Every p
 
 ---
 
-## Phase 1 — Database Foundations & Settings/Reference Data — 🔧 IN PROGRESS
+## Phase 1 — Database Foundations & Settings/Reference Data — ✅ COMPLETE
 
 **Goal:** Stand up the **complete** Prisma schema — every model referenced anywhere in this plan, including the ones whose API/UI don't get built until much later — in one coherent, foreign-key-consistent migration. Build and ship only the Settings/reference-data CRUD now; every other table exists but stays empty/unused until its own phase adds logic on top of it.
 
@@ -182,7 +182,8 @@ This phase's scope was deliberately widened (originally it covered only Settings
   - This is the single highest-leverage phase for getting the schema right, since fourteen later phases build directly on top of tables created here without revisiting them.
   - Creating tables now that won't have working API/UI until much later means they must not be exposed or queryable prematurely — gate each table's routes behind its own phase.
   - `isDeleted: false` filtering must be remembered by every later phase's read queries — Phase 1 creates the columns but no middleware auto-filters them.
-- **Commit:** per your instruction, Phase 1 is committed on its own once verified, before any Phase 2 work starts.
+- **Commit:** done, in two commits — schema/API/UI code (`f25f2d5`), then the applied migration + live verification (`5514a70`) once real Supabase credentials were available.
+- **Verified against the live database:** all 26 model tables + `_prisma_migrations` exist; seed data confirmed correct (default branch, 3 document-numbering sequences, `Setting` row matching legacy `DEFAULT_SETTINGS`, 8 `SizeFamily`/38 `SizeFamilyEntry` rows matching legacy `DEFAULT_FAMILIES`, 26 `SheetType` rows, empty `ReadyProduct`/`Service` as legacy defaults).
 
 ---
 
@@ -426,7 +427,7 @@ All structural decisions raised during planning are now resolved and incorporate
 | Phase | Module                                                                 | Implements now?                                   |
 | ----- | ---------------------------------------------------------------------- | ------------------------------------------------- |
 | 0     | Data export check (gate)                                               | ✅ resolved — no data exists                      |
-| 1     | DB foundations (full schema) & settings/reference data                 | 🔧 in progress                                    |
+| 1     | DB foundations (full schema) & settings/reference data                 | ✅ complete & verified                            |
 | 2     | Auth & staff                                                           | ✅ eligible                                       |
 | 3     | Customers                                                              | ✅ eligible                                       |
 | 4     | Pricing & calculation engine                                           | ✅ eligible                                       |
@@ -442,4 +443,4 @@ All structural decisions raised during planning are now resolved and incorporate
 | 14    | Printing engine modernization                                          | ✅ eligible (mechanism); documents depend on 6-13 |
 | 15    | Parallel run & cutover                                                 | ⛔ last, after everything                         |
 
-**Phase 1 is now in progress** (schema, seed, Settings/reference-data CRUD). It will be committed on its own, separately from every subsequent phase, once verified.
+**Phase 1 is complete and verified against the live Supabase database.** Waiting for approval before starting Phase 2 (Auth & Staff).
