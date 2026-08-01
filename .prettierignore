@@ -6,3 +6,6 @@ coverage
 pnpm-lock.yaml
 package-lock.json
 apps/api/src/generated
+
+# Legacy source of truth — never auto-formatted or otherwise modified.
+legacy/

@@ -6,3 +6,759 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// ============================================================================
+// Cleopatra System — Phase 1 schema (see /MIGRATION_PLAN.md, Phase 1 +
+// "Cross-Cutting Schema Additions"). Only Setting / SizeFamily / SheetType /
+// ReadyProduct / Service get working API + UI in Phase 1. Every other model
+// below exists so later phases never have to touch this migration again, but
+// has no routes/business logic attached until its own phase is approved.
+//
+// Conventions applied throughout (see MIGRATION_PLAN.md for the reasoning):
+//   - UUID primary keys: `id String @id @default(uuid()) @db.Uuid`
+//   - Soft delete on independently-addressable business entities only:
+//     `isDeleted`, `deletedAt`, `deletedBy` (deletedBy is a bare UUID value,
+//     not a formal relation, to avoid ~15 duplicate named relations on
+//     StaffProfile)
+//   - branchId is required (not nullable) on every branch-scoped table,
+//     since a default branch always exists to assign
+//   - Money fields use Decimal, never Float
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum StaffRole {
+  ADMIN
+  STAFF
+}
+
+enum DocumentType {
+  INVOICE
+  QUOTATION
+  WORK_ORDER
+}
+
+enum SheetBase {
+  REGULAR
+  GAYER
+}
+
+enum InventoryUnit {
+  SHEET
+  ROLL
+  LINEAR_METER
+  SQUARE_METER
+  PIECE
+  KILOGRAM
+  LITER
+}
+
+enum ServiceCategory {
+  DESIGN
+  MONTAGE
+}
+
+enum OrderStatus {
+  DRAFT
+  QUOTATION
+  CONFIRMED
+  IN_PRODUCTION
+  READY
+  DELIVERED
+  CANCELLED
+}
+
+enum WorkOrderProductionStatus {
+  WAITING
+  DESIGN
+  PREPRESS
+  PLATE_MAKING
+  PRINTING
+  FINISHING
+  QUALITY_CHECK
+  READY_FOR_DELIVERY
+  COMPLETED
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CONVERTED
+}
+
+enum PaymentMethod {
+  CASH
+  VODAFONE_CASH
+  INSTAPAY
+  BANK_ACCOUNT
+}
+
+enum TreasuryType {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
+enum TreasurySourceType {
+  MANUAL
+  INVOICE_PAYMENT
+}
+
+enum TenderStatus {
+  OPEN
+  SUBMITTED
+  WON
+  LOST
+}
+
+enum MaterialCategory {
+  PAPER
+  INK
+  PLATE
+  FINISHING
+  CONSUMABLE
+}
+
+enum StockMovementType {
+  IN
+  OUT
+  ADJUSTMENT
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+  STATUS_CHANGE
+}
+
+// ---------------------------------------------------------------------------
+// Branch & document numbering (Requirements 1, 8, 11)
+// ---------------------------------------------------------------------------
+
+model Branch {
+  id        String  @id @default(uuid()) @db.Uuid
+  name      String
+  code      String  @unique
+  address   String?
+  isDefault Boolean @default(false)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff             StaffProfile[]
+  orders            Order[]
+  quotations        Quotation[]
+  workOrders        WorkOrder[]
+  treasuryEntries   TreasuryEntry[]
+  documentSequences DocumentSequence[]
+  stockLevels       StockLevel[]
+  stockMovements    StockMovement[]
+  auditLogs         AuditLog[]
+
+  @@index([isDeleted])
+}
+
+/// One row per (branch, document type, year). `lastNumber` is incremented
+/// atomically in the same transaction that creates the document (Phase 6/7/8);
+/// never read-then-incremented in application code. Formatted display value is
+/// `{prefix}-{year}-{lastNumber padded to 6 digits}`, e.g. CLP-INV-2026-000001.
+model DocumentSequence {
+  id           String       @id @default(uuid()) @db.Uuid
+  branchId     String       @db.Uuid
+  branch       Branch       @relation(fields: [branchId], references: [id])
+  documentType DocumentType
+  year         Int
+  prefix       String
+  lastNumber   Int          @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([branchId, documentType, year])
+}
+
+// ---------------------------------------------------------------------------
+// Settings & catalog (Phase 1 — API/UI built now)
+// Field list mirrors legacy DEFAULT_SETTINGS exactly (LEGACY_ANALYSIS §4).
+// Singleton row; not soft-deletable (system config, never deleted).
+// ---------------------------------------------------------------------------
+
+model Setting {
+  id String @id @default(uuid()) @db.Uuid
+
+  zincPrice               Decimal @db.Decimal(12, 2)
+  printRunPrice           Decimal @db.Decimal(12, 2)
+  numberingRunPrice       Decimal @db.Decimal(12, 2)
+  envelopeDesignPrice     Decimal @db.Decimal(12, 2)
+  envelopePrintRunPrice   Decimal @db.Decimal(12, 2)
+  envelopeZincPrice       Decimal @db.Decimal(12, 2)
+  designPrice             Decimal @db.Decimal(12, 2)
+  wasteSheetsDefault      Int
+  profitPercent           Decimal @db.Decimal(6, 3)
+  notebookThreshold       Int
+  looseThreshold          Int
+  sellophanePricePerSheet Decimal @db.Decimal(12, 2)
+  logoUrl                 String?
+
+  boardsBannerNoDesign         Decimal @db.Decimal(12, 2)
+  boardsBannerWithDesign       Decimal @db.Decimal(12, 2)
+  boardsVinylPrintCutNoSello   Decimal @db.Decimal(12, 2)
+  boardsVinylPrintCutWithSello Decimal @db.Decimal(12, 2)
+  boardsVinylNormalNoSello     Decimal @db.Decimal(12, 2)
+  boardsVinylNormalWithSello   Decimal @db.Decimal(12, 2)
+  boardsFlex                   Decimal @db.Decimal(12, 2)
+  boardsSeasro                 Decimal @db.Decimal(12, 2)
+  boardsGapMM                  Decimal @db.Decimal(6, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Replaces legacy `settings.families`. "Protected" sizes (LEGACY_ANALYSIS
+/// §2/§9 — sizes structurally relied on by the tiered/numbering calculation
+/// engine) are a computed flag in the API layer, derived from the GROUPS /
+/// REAL_SIZES constants ported verbatim in Phase 4 — not stored here.
+model SizeFamily {
+  id    String    @id @default(uuid()) @db.Uuid
+  key   String    @unique
+  label String
+  base  SheetBase
+
+  entries SizeFamilyEntry[]
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+}
+
+model SizeFamilyEntry {
+  id             String     @id @default(uuid()) @db.Uuid
+  familyId       String     @db.Uuid
+  family         SizeFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  label          String
+  piecesPerSheet Decimal    @db.Decimal(10, 3)
+  sortOrder      Int        @default(0)
+
+  @@unique([familyId, label])
+}
+
+/// Replaces legacy `settings.sheetTypes.{gayer,regular}`. `unit` is reserved
+/// for future inventory tracking (Requirement 9) — unused by any calculator.
+model SheetType {
+  id    String        @id @default(uuid()) @db.Uuid
+  base  SheetBase
+  name  String
+  price Decimal       @db.Decimal(12, 2)
+  unit  InventoryUnit @default(SHEET)
+
+  inventoryItem InventoryItem?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+}
+
+model ReadyProduct {
+  id    String  @id @default(uuid()) @db.Uuid
+  name  String
+  price Decimal @db.Decimal(12, 2)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+}
+
+model Service {
+  id       String          @id @default(uuid()) @db.Uuid
+  name     String
+  price    Decimal         @db.Decimal(12, 2)
+  category ServiceCategory
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+}
+
+// ---------------------------------------------------------------------------
+// Staff / Auth (schema only — API/UI in Phase 2)
+// ---------------------------------------------------------------------------
+
+model StaffProfile {
+  id             String    @id @default(uuid()) @db.Uuid
+  supabaseUserId String    @unique @db.Uuid
+  name           String
+  role           StaffRole @default(STAFF)
+  branchId       String    @db.Uuid
+  branch         Branch    @relation(fields: [branchId], references: [id])
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders          Order[]
+  quotations      Quotation[]
+  treasuryEntries TreasuryEntry[]
+  attachments     Attachment[]
+  auditLogs       AuditLog[]
+
+  @@index([isDeleted])
+  @@index([branchId])
+}
+
+// ---------------------------------------------------------------------------
+// Customers (schema only — API/UI in Phase 3). Shared across branches.
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id    String  @id @default(uuid()) @db.Uuid
+  name  String
+  phone String?
+  notes String?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders          Order[]
+  quotations      Quotation[]
+  treasuryEntries TreasuryEntry[]
+  tenders         Tender[]
+  attachments     Attachment[]
+
+  @@index([isDeleted])
+  @@index([name])
+}
+
+// ---------------------------------------------------------------------------
+// Orders & Invoices (schema only — API/UI in Phase 6).
+// Order rows double as invoices in this system, exactly as in legacy.
+// ---------------------------------------------------------------------------
+
+model Order {
+  id            String @id @default(uuid()) @db.Uuid
+  invoiceNumber String @unique // e.g. CLP-INV-2026-000001, see DocumentSequence
+
+  branchId   String       @db.Uuid
+  branch     Branch       @relation(fields: [branchId], references: [id])
+  customerId String       @db.Uuid
+  customer   Customer     @relation(fields: [customerId], references: [id])
+  staffId    String       @db.Uuid
+  staff      StaffProfile @relation(fields: [staffId], references: [id])
+
+  date            DateTime    @default(now())
+  subtotal        Decimal     @db.Decimal(12, 2)
+  discountPercent Decimal     @default(0) @db.Decimal(6, 3)
+  vatOn           Boolean     @default(false)
+  vatAmount       Decimal     @default(0) @db.Decimal(12, 2)
+  finalTotal      Decimal     @db.Decimal(12, 2)
+  paymentTerms    String?
+  deliveryDate    DateTime?
+  customerNotes   String?
+  internalNotes   String?
+  status          OrderStatus @default(DRAFT)
+
+  items           OrderItem[]
+  payments        Payment[]
+  workOrder       WorkOrder?
+  treasuryEntries TreasuryEntry[]
+  attachments     Attachment[]
+  quotationOrigin Quotation?      @relation("QuotationConversion")
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([customerId])
+  @@index([branchId])
+  @@index([status])
+}
+
+/// Full denormalized calculator output snapshot (`breakdown`), preserving the
+/// legacy denormalized-snapshot behavior (LEGACY_ANALYSIS §8) — a historical
+/// line item never changes even if the underlying paper/price catalog does.
+model OrderItem {
+  id        String  @id @default(uuid()) @db.Uuid
+  orderId   String  @db.Uuid
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  kind      String // loose | notebook | envelope | folders | boards | product | service
+  modelName String?
+  breakdown Json
+
+  createdAt DateTime @default(now())
+}
+
+model Payment {
+  id      String        @id @default(uuid()) @db.Uuid
+  orderId String        @db.Uuid
+  order   Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  method  PaymentMethod
+  amount  Decimal       @db.Decimal(12, 2)
+
+  treasuryEntry TreasuryEntry?
+
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Quotations (schema only — API/UI in Phase 7). Independent of Order per
+// Requirement 2; conversion (Requirement 3) creates a real Order, freezing
+// the breakdown by default or recalculating when explicitly requested.
+// ---------------------------------------------------------------------------
+
+model Quotation {
+  id              String @id @default(uuid()) @db.Uuid
+  quotationNumber String @unique // e.g. CLP-QUO-2026-000001
+
+  branchId   String       @db.Uuid
+  branch     Branch       @relation(fields: [branchId], references: [id])
+  customerId String       @db.Uuid
+  customer   Customer     @relation(fields: [customerId], references: [id])
+  staffId    String       @db.Uuid
+  staff      StaffProfile @relation(fields: [staffId], references: [id])
+
+  date            DateTime        @default(now())
+  validUntil      DateTime
+  subtotal        Decimal         @db.Decimal(12, 2)
+  discountPercent Decimal         @default(0) @db.Decimal(6, 3)
+  vatOn           Boolean         @default(false)
+  vatAmount       Decimal         @default(0) @db.Decimal(12, 2)
+  finalTotal      Decimal         @db.Decimal(12, 2)
+  status          QuotationStatus @default(DRAFT)
+
+  convertedOrderId String? @unique @db.Uuid
+  convertedOrder   Order?  @relation("QuotationConversion", fields: [convertedOrderId], references: [id])
+
+  items       QuotationItem[]
+  attachments Attachment[]
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([customerId])
+  @@index([branchId])
+  @@index([status])
+}
+
+model QuotationItem {
+  id          String    @id @default(uuid()) @db.Uuid
+  quotationId String    @db.Uuid
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  kind        String
+  modelName   String?
+  breakdown   Json
+
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Work Orders (schema only — API/UI in Phase 8). Independent of Order.status
+// per Requirement 4 — production-floor lifecycle tracked separately.
+// ---------------------------------------------------------------------------
+
+model WorkOrder {
+  id              String @id @default(uuid()) @db.Uuid
+  workOrderNumber String @unique // e.g. CLP-WO-2026-000001
+
+  orderId  String @unique @db.Uuid
+  order    Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  productionStatus WorkOrderProductionStatus @default(WAITING)
+
+  attachments Attachment[]
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([branchId])
+  @@index([productionStatus])
+}
+
+// ---------------------------------------------------------------------------
+// Treasury (schema only — API/UI in Phase 10, but written to starting in
+// Phase 6). Every field from Requirement 5 is a direct column, not a join.
+// ---------------------------------------------------------------------------
+
+model TreasuryEntry {
+  id         String             @id @default(uuid()) @db.Uuid
+  type       TreasuryType
+  amount     Decimal            @db.Decimal(12, 2)
+  category   String?
+  note       String?
+  date       DateTime
+  sourceType TreasurySourceType @default(MANUAL)
+
+  orderId    String?   @db.Uuid // = invoice id (Order doubles as invoice)
+  order      Order?    @relation(fields: [orderId], references: [id])
+  paymentId  String?   @unique @db.Uuid
+  payment    Payment?  @relation(fields: [paymentId], references: [id])
+  customerId String?   @db.Uuid
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
+  staffId  String       @db.Uuid // employee who recorded it (or who saved the source invoice)
+  staff    StaffProfile @relation(fields: [staffId], references: [id])
+  branchId String       @db.Uuid
+  branch   Branch       @relation(fields: [branchId], references: [id])
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([branchId])
+  @@index([type])
+  @@index([date])
+}
+
+// ---------------------------------------------------------------------------
+// Suppliers (schema only — API/UI in Phase 11). Shared across branches.
+// ---------------------------------------------------------------------------
+
+model Supplier {
+  id    String  @id @default(uuid()) @db.Uuid
+  name  String
+  phone String?
+  notes String?
+
+  purchases SupplierPurchase[]
+  payments  SupplierPayment[]
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+}
+
+model SupplierPurchase {
+  id          String   @id @default(uuid()) @db.Uuid
+  supplierId  String   @db.Uuid
+  supplier    Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  amount      Decimal  @db.Decimal(12, 2)
+  description String?
+  date        DateTime
+
+  createdAt DateTime @default(now())
+}
+
+model SupplierPayment {
+  id         String   @id @default(uuid()) @db.Uuid
+  supplierId String   @db.Uuid
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  amount     Decimal  @db.Decimal(12, 2)
+  note       String?
+  date       DateTime
+
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Tenders (schema only — API/UI in Phase 12). Shared across branches.
+// ---------------------------------------------------------------------------
+
+model Tender {
+  id         String       @id @default(uuid()) @db.Uuid
+  customerId String?      @db.Uuid
+  customer   Customer?    @relation(fields: [customerId], references: [id])
+  clientName String? // free-text fallback if not linked to a Customer record
+  title      String
+  value      Decimal      @db.Decimal(12, 2)
+  deadline   DateTime?
+  status     TenderStatus @default(OPEN)
+  notes      String?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Inventory readiness (Requirement 9) — schema only, no API/UI/logic
+// anywhere. Reserves relationships for Paper, Ink, Plates, Finishing
+// materials, and Consumables without wiring any stock-affecting behavior
+// into the calculation engine or order flow.
+// ---------------------------------------------------------------------------
+
+/// The material catalog. PAPER-category items optionally link back to the
+/// existing pricing catalog (SheetType) so paper isn't defined twice; other
+/// categories (ink, plates, finishing, consumables) stand alone.
+model InventoryItem {
+  id           String           @id @default(uuid()) @db.Uuid
+  category     MaterialCategory
+  name         String
+  unit         InventoryUnit
+  sheetTypeId  String?          @unique @db.Uuid
+  sheetType    SheetType?       @relation(fields: [sheetTypeId], references: [id])
+  reorderLevel Decimal?         @db.Decimal(12, 3)
+
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([category])
+}
+
+/// Current on-hand quantity per item, per branch. Derivable from
+/// StockMovement in principle; kept as a materialized value for fast reads
+/// once inventory logic is actually implemented in a future phase.
+model StockLevel {
+  id              String        @id @default(uuid()) @db.Uuid
+  inventoryItemId String        @db.Uuid
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  branchId        String        @db.Uuid
+  branch          Branch        @relation(fields: [branchId], references: [id])
+  quantityOnHand  Decimal       @default(0) @db.Decimal(14, 3)
+
+  updatedAt DateTime @updatedAt
+
+  @@unique([inventoryItemId, branchId])
+}
+
+/// In/out/adjustment ledger, deliberately mirroring TreasuryEntry's ledger
+/// pattern (immutable log + derivable balance) for architectural consistency.
+model StockMovement {
+  id              String            @id @default(uuid()) @db.Uuid
+  inventoryItemId String            @db.Uuid
+  inventoryItem   InventoryItem     @relation(fields: [inventoryItemId], references: [id])
+  branchId        String            @db.Uuid
+  branch          Branch            @relation(fields: [branchId], references: [id])
+  type            StockMovementType
+  quantity        Decimal           @db.Decimal(14, 3)
+  reference       String?
+  date            DateTime          @default(now())
+
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Attachments (Requirement 14) — schema only, no upload/storage wiring yet.
+// "Invoices" and "Orders" are the same table in this system (Order), so the
+// four relations below cover exactly the five document types requested.
+// ---------------------------------------------------------------------------
+
+model Attachment {
+  id          String  @id @default(uuid()) @db.Uuid
+  fileName    String
+  fileType    String
+  storagePath String? // reserved for a future Supabase Storage key
+  sizeBytes   Int?
+
+  uploadedById String?       @db.Uuid
+  uploadedBy   StaffProfile? @relation(fields: [uploadedById], references: [id])
+
+  customerId  String?    @db.Uuid
+  customer    Customer?  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  quotationId String?    @db.Uuid
+  quotation   Quotation? @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  orderId     String?    @db.Uuid
+  order       Order?     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  workOrderId String?    @db.Uuid
+  workOrder   WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  @@index([isDeleted])
+  @@index([customerId])
+  @@index([quotationId])
+  @@index([orderId])
+  @@index([workOrderId])
+}
+
+// ---------------------------------------------------------------------------
+// Audit log (Requirement 13) — schema only, no write-path yet. Generic
+// entityType/entityId reference since it spans every model above; not
+// enforced via FK (a formal relation to every model would be impractical).
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id            String        @id @default(uuid()) @db.Uuid
+  entityType    String // e.g. "Order", "Quotation", "Customer", "TreasuryEntry"
+  entityId      String        @db.Uuid
+  action        AuditAction
+  performedById String?       @db.Uuid
+  performedBy   StaffProfile? @relation(fields: [performedById], references: [id])
+  branchId      String?       @db.Uuid
+  branch        Branch?       @relation(fields: [branchId], references: [id])
+  previousValue Json?
+  newValue      Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([performedById])
+}
