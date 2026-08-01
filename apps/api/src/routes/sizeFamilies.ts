@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { requireAuth } from '../middlewares/requireAuth.js';
+import { requirePermission } from '../middlewares/requirePermission.js';
 import {
   addSizeFamilyEntry,
   createSizeFamily,
@@ -11,10 +13,20 @@ import {
 
 export const sizeFamiliesRouter = Router();
 
-sizeFamiliesRouter.get('/', listSizeFamilies);
-sizeFamiliesRouter.post('/', createSizeFamily);
-sizeFamiliesRouter.put('/:id', updateSizeFamily);
-sizeFamiliesRouter.delete('/:id', deleteSizeFamily);
-sizeFamiliesRouter.post('/:id/entries', addSizeFamilyEntry);
-sizeFamiliesRouter.put('/:id/entries/:entryId', updateSizeFamilyEntry);
-sizeFamiliesRouter.delete('/:id/entries/:entryId', deleteSizeFamilyEntry);
+sizeFamiliesRouter.use(requireAuth);
+
+sizeFamiliesRouter.get('/', requirePermission('settings.view'), listSizeFamilies);
+sizeFamiliesRouter.post('/', requirePermission('settings.edit'), createSizeFamily);
+sizeFamiliesRouter.put('/:id', requirePermission('settings.edit'), updateSizeFamily);
+sizeFamiliesRouter.delete('/:id', requirePermission('settings.edit'), deleteSizeFamily);
+sizeFamiliesRouter.post('/:id/entries', requirePermission('settings.edit'), addSizeFamilyEntry);
+sizeFamiliesRouter.put(
+  '/:id/entries/:entryId',
+  requirePermission('settings.edit'),
+  updateSizeFamilyEntry,
+);
+sizeFamiliesRouter.delete(
+  '/:id/entries/:entryId',
+  requirePermission('settings.edit'),
+  deleteSizeFamilyEntry,
+);

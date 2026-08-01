@@ -29,11 +29,6 @@ datasource db {
 // Enums
 // ---------------------------------------------------------------------------
 
-enum StaffRole {
-  ADMIN
-  STAFF
-}
-
 enum DocumentType {
   INVOICE
   QUOTATION
@@ -136,6 +131,9 @@ enum AuditAction {
   DELETE
   APPROVE
   STATUS_CHANGE
+  LOGIN
+  LOGOUT
+  PASSWORD_RESET
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +155,7 @@ model Branch {
   updatedAt DateTime @updatedAt
 
   staff             StaffProfile[]
+  userBranchAccess  UserBranchAccess[]
   orders            Order[]
   quotations        Quotation[]
   workOrders        WorkOrder[]
@@ -311,16 +310,33 @@ model Service {
 }
 
 // ---------------------------------------------------------------------------
-// Staff / Auth (schema only — API/UI in Phase 2)
+// Identity & Access Management (Phase 2 — API/UI built now)
+//
+// Authentication itself (credential storage/hashing, session/JWT issuance)
+// is fully delegated to Supabase Auth (see ADR 0005, ADR 0021) — this system
+// never stores or sees a password. StaffProfile is the application-level
+// identity record, linked 1:1 to a Supabase Auth user via `supabaseUserId`.
+//
+// Authorization is true DB-driven RBAC (ADR 0022): a StaffProfile has one or
+// more Roles (UserRole), each Role has a set of Permissions (RolePermission).
+// Nothing about "what a role can do" is hardcoded in application code — the
+// permission check is always a query against these tables. `Permission.key`
+// follows a `<module>.<action>` convention (e.g. `customers.view`) with two
+// wildcard forms: `<module>.*` (everything in one module) and `*` (superuser,
+// granted only to the seeded Super Admin role).
 // ---------------------------------------------------------------------------
 
 model StaffProfile {
   id             String    @id @default(uuid()) @db.Uuid
   supabaseUserId String    @unique @db.Uuid
   name           String
-  role           StaffRole @default(STAFF)
-  branchId       String    @db.Uuid
-  branch         Branch    @relation(fields: [branchId], references: [id])
+  email          String    @unique
+  phone          String?
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -329,6 +345,8 @@ model StaffProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  roles           UserRole[]
+  branchAccess    UserBranchAccess[]
   orders          Order[]
   quotations      Quotation[]
   treasuryEntries TreasuryEntry[]
@@ -337,6 +355,89 @@ model StaffProfile {
 
   @@index([isDeleted])
   @@index([branchId])
+  @@index([isActive])
+}
+
+/// A role is a named, DB-editable bundle of permissions. `isSystem` protects
+/// the 8 seeded default roles from deletion (they can still be renamed or
+/// have their permission set adjusted through the Role management UI).
+model Role {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique // e.g. "SUPER_ADMIN", stable, machine-referenced
+  label       String // display name, editable, e.g. "Super Admin"
+  description String?
+  isSystem    Boolean @default(false)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@index([isDeleted])
+}
+
+/// The permission catalog. `key` is what `requirePermission()` middleware
+/// checks against; `module` is `key`'s prefix, stored redundantly for fast
+/// grouped-by-module queries in the Permissions management UI. `isSystem`
+/// protects permissions actual code depends on from being deleted via the
+/// management UI (deleting one out from under a live `requirePermission()`
+/// check would silently lock everyone out of that action).
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  key         String  @unique // e.g. "customers.view", "orders.*", "*"
+  module      String // e.g. "customers" ("*" for the global wildcard)
+  label       String
+  description String?
+  isSystem    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  roles RolePermission[]
+
+  @@index([module])
+}
+
+model UserRole {
+  id         String       @id @default(uuid()) @db.Uuid
+  staffId    String       @db.Uuid
+  staff      StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  roleId     String       @db.Uuid
+  role       Role         @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  assignedAt DateTime     @default(now())
+
+  @@unique([staffId, roleId])
+}
+
+model RolePermission {
+  id           String     @id @default(uuid()) @db.Uuid
+  roleId       String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @db.Uuid
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+/// Explicit branch-access grant beyond a user's home branch (`StaffProfile.
+/// branchId`) — e.g. a regional manager who needs to see two branches.
+/// Users with the SUPER_ADMIN role bypass this table entirely (see
+/// `canAccessBranch()` in `src/lib/permissions.ts`) rather than needing a
+/// row per branch.
+model UserBranchAccess {
+  id        String       @id @default(uuid()) @db.Uuid
+  staffId   String       @db.Uuid
+  staff     StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  branchId  String       @db.Uuid
+  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  grantedAt DateTime     @default(now())
+
+  @@unique([staffId, branchId])
 }
 
 // ---------------------------------------------------------------------------

@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { requireAuth } from '../middlewares/requireAuth.js';
+import { requirePermission } from '../middlewares/requirePermission.js';
 import {
   createSheetType,
   deleteSheetType,
@@ -8,7 +10,9 @@ import {
 
 export const sheetTypesRouter = Router();
 
-sheetTypesRouter.get('/', listSheetTypes);
-sheetTypesRouter.post('/', createSheetType);
-sheetTypesRouter.put('/:id', updateSheetType);
-sheetTypesRouter.delete('/:id', deleteSheetType);
+sheetTypesRouter.use(requireAuth);
+
+sheetTypesRouter.get('/', requirePermission('settings.view'), listSheetTypes);
+sheetTypesRouter.post('/', requirePermission('settings.edit'), createSheetType);
+sheetTypesRouter.put('/:id', requirePermission('settings.edit'), updateSheetType);
+sheetTypesRouter.delete('/:id', requirePermission('settings.edit'), deleteSheetType);

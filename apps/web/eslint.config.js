@@ -30,4 +30,12 @@ export default tseslint.config([
       'react-refresh/only-export-components': 'off',
     },
   },
+  {
+    // React context modules intentionally co-export a provider component and its
+    // matching useX() hook from the same file — the standard context pattern.
+    files: ['src/state/**/*.tsx'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ]);

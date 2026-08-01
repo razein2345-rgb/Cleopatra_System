@@ -1,5 +1,10 @@
 import { Router } from 'express';
 import { healthRouter } from './health.js';
+import { authRouter } from './auth.js';
+import { branchesRouter } from './branches.js';
+import { usersRouter } from './users.js';
+import { rolesRouter } from './roles.js';
+import { permissionsRouter } from './permissions.js';
 import { settingsRouter } from './settings.js';
 import { sheetTypesRouter } from './sheetTypes.js';
 import { sizeFamiliesRouter } from './sizeFamilies.js';
@@ -12,6 +17,11 @@ export const apiRouter = Router();
 apiRouter.use('/health', healthRouter);
 
 const api = Router();
+api.use('/auth', authRouter);
+api.use('/branches', branchesRouter);
+api.use('/users', usersRouter);
+api.use('/roles', rolesRouter);
+api.use('/permissions', permissionsRouter);
 api.use('/settings', settingsRouter);
 api.use('/sheet-types', sheetTypesRouter);
 api.use('/size-families', sizeFamiliesRouter);

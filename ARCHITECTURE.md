@@ -1,6 +1,6 @@
 # Architecture
 
-Cleopatra System is a commercial Printing ERP built as an npm-workspaces monorepo. This document describes the system as it exists today (Phase 1 complete). It will be extended, not rewritten, as later migration phases add real business logic — see [MIGRATION_PLAN.md](MIGRATION_PLAN.md) for what's still to come and [LEGACY_ANALYSIS.md](LEGACY_ANALYSIS.md) / [LEGACY_MAPPING.md](LEGACY_MAPPING.md) for where each piece comes from.
+Cleopatra System is a commercial Printing ERP built as an npm-workspaces monorepo. This document describes the system as it exists today (Phase 1 and Phase 2 — Identity & Access Management — complete). It will be extended, not rewritten, as later migration phases add real business logic — see [MIGRATION_PLAN.md](MIGRATION_PLAN.md) for what's still to come and [LEGACY_ANALYSIS.md](LEGACY_ANALYSIS.md) / [LEGACY_MAPPING.md](LEGACY_MAPPING.md) for where each piece comes from.
 
 For the reasoning behind specific choices below, see the [ADR folder](adr/).
 
@@ -21,8 +21,8 @@ graph LR
     Api -- "Prisma Client" --> Db
 ```
 
-- **`apps/web`** is a single-page React app. It talks to `apps/api` over REST/JSON, and talks to **Supabase Auth directly** for sign-in (the browser holds the session; the API never sees a password).
-- **`apps/api`** is a REST API. It never talks to Postgres directly with raw SQL — all access goes through Prisma. It verifies incoming requests by validating the Supabase-issued JWT (`requireAuth` middleware, Phase 2).
+- **`apps/web`** is a single-page React app (React Router since Phase 2 — see [ADR 0024](adr/0024-routing-introduced-phase-2.md)). It talks to `apps/api` over REST/JSON, and talks to **Supabase Auth directly** for sign-in (the browser holds the session; the API never sees a password).
+- **`apps/api`** is a REST API. It never talks to Postgres directly with raw SQL — all access goes through Prisma. It verifies incoming requests by validating the Supabase-issued JWT, then loads the caller's application-level roles/permissions from the database (`requireAuth` middleware — see [§6](#6-identity--access-management)).
 - **`packages/shared`** holds Zod validation schemas and TypeScript types used by _both_ apps, so a field can't drift between what the frontend sends and what the backend expects. It will also hold the ported calculation engine (Phase 4) — see [§5](#5-the-calculation-engine-phase-4).
 - Supabase itself provides both the Postgres database and the Auth service; there is no separate self-hosted auth server.
 
@@ -36,17 +36,19 @@ Cleopatra_System/
 │   ├── web/                 React + Vite + TypeScript frontend
 │   │   ├── src/
 │   │   │   ├── components/
-│   │   │   │   └── ui/       shadcn/ui vendor components — do not hand-edit business logic in here
-│   │   │   ├── pages/        one folder per screen/feature area
-│   │   │   ├── lib/          fetch wrapper, Supabase client, cn() helper
-│   │   │   └── state/        cross-component client state (cart store, Phase 5+)
+│   │   │   │   ├── ui/       shadcn/ui vendor components — do not hand-edit business logic in here
+│   │   │   │   ├── AppShell.tsx        top nav + logout, wraps every authenticated route
+│   │   │   │   └── ProtectedRoute.tsx  client-side route/permission gate (UX only — see §6)
+│   │   │   ├── pages/        one folder per screen/feature area (login, dashboard, settings, users, roles, permissions, …)
+│   │   │   ├── lib/          fetch wrapper (auto-attaches the Supabase access token), Supabase client, cn() helper
+│   │   │   └── state/        AuthContext (session + roles/permissions); future cross-component state (cart store, Phase 5+) lands here too
 │   │   └── Dockerfile         multi-stage build → nginx
 │   └── api/                 Express + TypeScript REST API
 │       ├── src/
 │       │   ├── routes/        thin Express routers, one file per resource
 │       │   ├── controllers/   request/response handling + Zod validation
-│       │   ├── services/      multi-step business logic (introduced as needed, e.g. Phase 6 order finalization)
-│       │   ├── middlewares/    auth, error handling
+│       │   ├── services/      multi-step business logic — authContext.ts (role/permission loading), auditService.ts, userService.ts, and (as needed) e.g. Phase 6 order finalization
+│       │   ├── middlewares/    requireAuth (authentication), requirePermission (authorization), error handling
 │       │   ├── lib/           Prisma client, Supabase admin client
 │       │   ├── config/        environment loading/validation
 │       │   ├── utils/         small pure helpers (e.g. Decimal serialization)
@@ -109,12 +111,36 @@ No calculation code exists yet in this repository. `legacy/cleopatra_press_syste
 
 ---
 
-## 6. Authentication & authorization
+## 6. Identity & Access Management
 
-- **Authentication** is entirely delegated to **Supabase Auth**. `apps/web` calls Supabase's client SDK directly for sign-in; the resulting JWT is attached to every request to `apps/api` as `Authorization: Bearer <token>`.
-- `apps/api` never stores or sees a password. `src/middlewares/requireAuth.ts` verifies the bearer token by calling `supabase.auth.getUser(token)` using a service-role Supabase client (`src/lib/supabase.ts`), and attaches the resulting user to `req.user`.
-- **Authorization** (Phase 2) is role-based: a `StaffProfile` row (linked 1:1 to a Supabase Auth user via `supabaseUserId`) carries a `role` (`ADMIN`/`STAFF`). Route-level role checks are middleware, not scattered `if` statements in controllers.
-- See [API_CONVENTIONS.md](API_CONVENTIONS.md) for the exact header/error-code contract.
+Two cleanly separated layers, deliberately not conflated ([ADR 0021](adr/0021-authn-authz-layering.md)):
+
+**Authentication — who is this?** — entirely delegated to **Supabase Auth**. `apps/web` calls Supabase's client SDK directly for sign-in; the resulting JWT is attached to every request to `apps/api` as `Authorization: Bearer <token>`. `apps/api` never stores, sees, or hashes a password itself — Supabase owns the credential end to end, including password reset (self-service reset calls Supabase directly from the browser; admin-triggered reset uses the Supabase Admin API server-side).
+
+**Authorization — what can they do here?** — a true, database-driven RBAC system that has nothing to do with Supabase ([ADR 0022](adr/0022-database-driven-rbac.md)):
+
+```mermaid
+graph LR
+    Staff["StaffProfile<br/>(1 per Supabase Auth user)"]
+    UserRole["UserRole"]
+    Role["Role<br/>(8 seeded defaults + custom)"]
+    RolePermission["RolePermission"]
+    Permission["Permission<br/>(module.action catalog)"]
+
+    Staff --> UserRole --> Role --> RolePermission --> Permission
+```
+
+- `StaffProfile` is the application-level identity record — name, email, phone, `isActive`, `lastLoginAt`, home `branchId` — linked 1:1 to a Supabase Auth user via `supabaseUserId`.
+- A `StaffProfile` holds one or more `Role`s (`UserRole` join). A `Role` holds a set of `Permission`s (`RolePermission` join). **Nothing about "who can do what" is hardcoded in application code** — `requirePermission('customers.view')` always queries the database (via `loadAuthContext()`, `src/services/authContext.ts`), never an in-code role→permission map.
+- Permission keys follow `<module>.<action>` (e.g. `customers.view`), with two wildcard forms: `<module>.*` (everything in one module) and `*` (superuser — granted only to the seeded `SUPER_ADMIN` role). Matching logic lives in `packages/shared/src/permissions.ts` (`hasPermission()`), shared by the backend's authorization check and available to the frontend for UX-only gating.
+- The 8 default roles (`SUPER_ADMIN`, `ADMIN`, `SALES`, `CASHIER`, `PRODUCTION_MANAGER`, `DESIGNER`, `PRINTING_OPERATOR`, `VIEWER`) are seeded with sensible default grants (`apps/api/prisma/seed.ts`) but are fully editable from the Role management UI afterward — the seed only establishes a starting point, not a permanent mapping.
+- **Branch access**: a user's home branch (`StaffProfile.branchId`) plus any explicit extra grants (`UserBranchAccess`) define `accessibleBranchIds`. `SUPER_ADMIN` bypasses this entirely (`canAccessBranch()`, same service). This is enforced today on the Users resource itself (the one branch-scoped resource that exists so far) and is the pattern every future branch-scoped resource (Orders, Treasury, …) will reuse.
+- **Request flow**: `requireAuth` middleware verifies the Supabase JWT, then calls `loadAuthContext(supabaseUserId)` to load the `StaffProfile` + flattened, deduped permission keys + accessible branch ids in one query, attaching it to `req.auth`. `requirePermission(key)` middleware (composed after `requireAuth`) checks `req.auth.permissions` — **the client's own claims about its permissions are never trusted**; every check re-reads what the server loaded from the database on this request.
+- **Audit logging**: login, logout, admin-triggered password reset, and user/role/permission changes write to `AuditLog` (`src/services/auditService.ts`) — the first real write-path against the table Phase 1 reserved ([ADR 0013](adr/0013-audit-log-schema-reserved.md), now see [ADR 0025](adr/0025-audit-log-write-path-begins-phase-2.md)).
+- **Session management** is Supabase's own JWT/refresh-token mechanism — this system holds no server-side session state. "Remember me" is implemented as a storage adapter switch on the frontend's Supabase client (localStorage vs. sessionStorage, chosen at sign-in) rather than a second client instance — see `apps/web/src/lib/supabase.ts`.
+- **Legacy compatibility**: legacy employee records (`{id, name, password, role}` — LEGACY_ANALYSIS §9) have no email field, which the new `StaffProfile`/Supabase Auth model requires, and plaintext passwords cannot and must not be carried forward regardless. A legacy employee maps to a new `StaffProfile` by name (plus an administrator-supplied email) and by role (legacy's undifferentiated `admin`/`staff` maps to `ADMIN`/`VIEWER` as a starting point, to be corrected per person). No import script has been run — Phase 0 confirmed no real legacy data exists to migrate — but the mapping above is what one would use if it ever did.
+
+See [API_CONVENTIONS.md](API_CONVENTIONS.md) for the exact header/status-code/error contract, and [LEGACY_MAPPING.md](LEGACY_MAPPING.md) for how this replaces legacy's plaintext-password, unprotected Settings screen employee list.
 
 ---
 
@@ -136,4 +162,6 @@ Both apps have a multi-stage `Dockerfile`; `docker-compose.yml` at the repo root
 
 ## 9. What's deliberately not here yet
 
-To avoid this document going stale the moment Phase 2 starts, it does **not** describe: routing/navigation structure for the web app (no router is installed yet — Phase 5), the order-builder/cart architecture (Phase 5), the calculation engine's internals (Phase 4, see §5), or any printing/PDF architecture (Phase 14). Each of those gets documented — and this file updated — when its phase is implemented, per the process in [CONTRIBUTING.md](CONTRIBUTING.md).
+To avoid this document going stale the moment Phase 3 starts, it does **not** describe: the order-builder/cart architecture (Phase 5), the calculation engine's internals (Phase 4, see §5), or any printing/PDF architecture (Phase 14). Each of those gets documented — and this file updated — when its phase is implemented, per the process in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Routing (React Router) was introduced ahead of its originally-planned phase because Identity & Access Management's scope — login, protected routes, multiple management screens — genuinely required real navigation; see [ADR 0024](adr/0024-routing-introduced-phase-2.md) for why this was a deliberate, documented deviation rather than silent scope creep.

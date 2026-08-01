@@ -1,5 +1,79 @@
 import { prisma } from '../src/lib/prisma.js';
 import { DocumentType } from '../src/generated/prisma/enums.js';
+import { GLOBAL_PERMISSION, PERMISSION_CATALOG } from '@cleopatra/shared';
+
+// The 8 default roles required by Phase 2. `isSystem: true` protects these
+// from deletion via the Role management UI (they can still be renamed or
+// have their permission set edited).
+const DEFAULT_ROLES = [
+  {
+    name: 'SUPER_ADMIN',
+    label: 'Super Admin',
+    description: 'Full access to every branch and every permission.',
+  },
+  { name: 'ADMIN', label: 'Admin', description: 'Full access within their assigned branch.' },
+  { name: 'SALES', label: 'Sales', description: 'Manages customers, orders, and quotations.' },
+  {
+    name: 'CASHIER',
+    label: 'Cashier',
+    description: 'Manages treasury and views orders/customers.',
+  },
+  {
+    name: 'PRODUCTION_MANAGER',
+    label: 'Production Manager',
+    description: 'Manages the work-order production queue.',
+  },
+  {
+    name: 'DESIGNER',
+    label: 'Designer',
+    description: 'Views orders and work orders relevant to design.',
+  },
+  {
+    name: 'PRINTING_OPERATOR',
+    label: 'Printing Operator',
+    description: 'Views and updates work-order production status.',
+  },
+  { name: 'VIEWER', label: 'Viewer', description: 'Read-only access across modules.' },
+] as const;
+
+// Default permission grants per role, expressed as the permission keys each
+// role starts with. These are seed defaults only — the actual grants live in
+// the RolePermission table and are freely editable from the Role management
+// UI once Phase 2 ships; nothing here is re-applied after the first seed.
+const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], string[]> = {
+  SUPER_ADMIN: [GLOBAL_PERMISSION],
+  ADMIN: [
+    'customers.*',
+    'orders.*',
+    'quotations.*',
+    'work-orders.*',
+    'treasury.*',
+    'suppliers.*',
+    'tenders.*',
+    'reports.*',
+    'settings.*',
+    'employees.*',
+    'roles.view',
+    'permissions.view',
+  ],
+  SALES: ['customers.*', 'orders.*', 'quotations.*', 'reports.view'],
+  CASHIER: ['treasury.*', 'orders.view', 'customers.view'],
+  PRODUCTION_MANAGER: ['work-orders.*', 'orders.view'],
+  DESIGNER: ['work-orders.view', 'orders.view'],
+  PRINTING_OPERATOR: ['work-orders.view', 'work-orders.edit'],
+  VIEWER: [
+    'customers.view',
+    'orders.view',
+    'quotations.view',
+    'work-orders.view',
+    'treasury.view',
+    'suppliers.view',
+    'tenders.view',
+    'reports.view',
+    'settings.view',
+    'employees.view',
+  ],
+};
 
 // Mirrors legacy DEFAULT_SETTINGS exactly (LEGACY_ANALYSIS §4). Do not change
 // any of these values — they are the pricing constants the calculation
@@ -203,7 +277,57 @@ async function main() {
     });
   }
 
+  // ---- Identity & Access Management (Phase 2) ----
+
+  await prisma.permission.upsert({
+    where: { key: GLOBAL_PERMISSION },
+    update: {},
+    create: {
+      key: GLOBAL_PERMISSION,
+      module: '*',
+      label: 'Super admin — every permission, every module',
+      isSystem: true,
+    },
+  });
+  for (const entry of PERMISSION_CATALOG) {
+    await prisma.permission.upsert({
+      where: { key: entry.key },
+      update: {},
+      create: { key: entry.key, module: entry.module, label: entry.label, isSystem: true },
+    });
+  }
+
+  const allPermissions = await prisma.permission.findMany();
+  const permissionByKey = new Map(allPermissions.map((p) => [p.key, p]));
+
+  for (const roleDef of DEFAULT_ROLES) {
+    const role = await prisma.role.upsert({
+      where: { name: roleDef.name },
+      update: {},
+      create: {
+        name: roleDef.name,
+        label: roleDef.label,
+        description: roleDef.description,
+        isSystem: true,
+      },
+    });
+
+    const grantKeys = DEFAULT_ROLE_PERMISSIONS[roleDef.name];
+    for (const key of grantKeys) {
+      const permission = permissionByKey.get(key);
+      if (!permission) continue;
+      await prisma.rolePermission.upsert({
+        where: { roleId_permissionId: { roleId: role.id, permissionId: permission.id } },
+        update: {},
+        create: { roleId: role.id, permissionId: permission.id },
+      });
+    }
+  }
+
   console.log(`Seed complete. Default branch: ${branch.name} (${branch.code}).`);
+  console.log(
+    `Seeded ${allPermissions.length} permissions and ${DEFAULT_ROLES.length} default roles.`,
+  );
 }
 
 main()

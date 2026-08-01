@@ -1,15 +1,24 @@
 import type { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { loadAuthContext, type AuthenticatedUser } from '../services/authContext.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      user?: { id: string; email?: string };
+      /** Populated by requireAuth: the caller's StaffProfile, roles, flattened permissions, and accessible branches. */
+      auth?: AuthenticatedUser;
     }
   }
 }
 
+/**
+ * Verifies the Supabase-issued bearer token, then loads the caller's
+ * application-level identity (StaffProfile + roles + permissions). A valid
+ * Supabase session with no corresponding, active StaffProfile is rejected —
+ * Supabase Auth answers "is this a real session," this middleware answers
+ * "is this person allowed to use Cleopatra System."
+ */
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
@@ -26,6 +35,22 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
-  req.user = { id: data.user.id, email: data.user.email };
+  const authContext = await loadAuthContext(data.user.id);
+
+  if (!authContext) {
+    res
+      .status(403)
+      .json({ success: false, error: { message: 'No staff profile exists for this account' } });
+    return;
+  }
+
+  if (!authContext.isActive) {
+    res
+      .status(403)
+      .json({ success: false, error: { message: 'This account has been deactivated' } });
+    return;
+  }
+
+  req.auth = authContext;
   next();
 }

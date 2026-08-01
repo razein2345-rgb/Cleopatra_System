@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { requireAuth } from '../middlewares/requireAuth.js';
+import { requirePermission } from '../middlewares/requirePermission.js';
 import {
   createService,
   deleteService,
@@ -8,7 +10,9 @@ import {
 
 export const servicesRouter = Router();
 
-servicesRouter.get('/', listServices);
-servicesRouter.post('/', createService);
-servicesRouter.put('/:id', updateService);
-servicesRouter.delete('/:id', deleteService);
+servicesRouter.use(requireAuth);
+
+servicesRouter.get('/', requirePermission('settings.view'), listServices);
+servicesRouter.post('/', requirePermission('settings.edit'), createService);
+servicesRouter.put('/:id', requirePermission('settings.edit'), updateService);
+servicesRouter.delete('/:id', requirePermission('settings.edit'), deleteService);
