@@ -26,7 +26,9 @@ export function mapStaffToUser(staff: StaffWithRoles): User {
       description: userRole.role.description,
       isSystem: userRole.role.isSystem,
     })),
-    accessibleBranchIds: staff.branchAccess.map((access) => access.branchId),
+    accessibleBranchIds: Array.from(
+      new Set<string>([staff.branchId, ...staff.branchAccess.map((access) => access.branchId)]),
+    ),
     createdAt: staff.createdAt.toISOString(),
   };
 }
