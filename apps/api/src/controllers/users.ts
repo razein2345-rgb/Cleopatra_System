@@ -11,6 +11,12 @@ import type { Prisma } from '../generated/prisma/client.js';
 import { getUserDto, mapStaffToUser, userInclude } from '../services/userService.js';
 import { canAccessBranch } from '../services/authContext.js';
 import { recordAudit } from '../services/auditService.js';
+import { env } from '../config/env.js';
+
+// Where invite/recovery email links send the user to complete account setup
+// (FEATURE-001.2). CORS_ORIGIN is already the frontend's own origin — reused
+// rather than introducing a new env var.
+const ACCEPT_INVITE_REDIRECT_URL = `${env.CORS_ORIGIN}/accept-invite`;
 
 // Branch scoping (Requirement 5): Super Admin sees every branch; everyone
 // else is restricted to their home branch plus any explicit UserBranchAccess
@@ -88,7 +94,9 @@ export async function createUser(req: Request, res: Response) {
     return;
   }
 
-  const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(input.email);
+  const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(input.email, {
+    redirectTo: ACCEPT_INVITE_REDIRECT_URL,
+  });
   if (error || !data.user) {
     res
       .status(400)
@@ -290,6 +298,7 @@ export async function resetUserPassword(req: Request<{ id: string }>, res: Respo
   const { error } = await supabaseAdmin.auth.admin.generateLink({
     type: 'recovery',
     email: existing.email,
+    options: { redirectTo: ACCEPT_INVITE_REDIRECT_URL },
   });
   if (error) {
     res.status(400).json({ success: false, error: { message: error.message } });

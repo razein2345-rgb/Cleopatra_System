@@ -7,12 +7,31 @@ import { apiGet, apiPost } from '@/lib/api';
 type AuthState = {
   loading: boolean;
   authContext: AuthContextData | null;
-  signIn: (email: string, password: string, rememberMe: boolean) => Promise<void>;
+  signIn: (identifier: string, password: string, rememberMe: boolean) => Promise<void>;
   signOut: () => Promise<void>;
   can: (permissionKey: string) => boolean;
+  /**
+   * Registers the current Supabase session with the backend (lastLoginAt +
+   * audit log) and loads the resulting StaffProfile/permissions. Used by
+   * `signIn()` after a fresh sign-in, and by the invite-acceptance/password
+   * setup flow after a brand-new session's password is set for the first
+   * time — same endpoint, same result shape, no duplicate logic.
+   */
+  refreshAuthContext: () => Promise<void>;
 };
 
 const AuthReactContext = createContext<AuthState | null>(null);
+
+// Egyptian mobile format, e.g. "01012345678" — the shape the login UI's example uses.
+const EGYPT_MOBILE_PATTERN = /^0\d{10}$/;
+
+/** Normalizes a bare local mobile number to E.164 so Supabase's phone-based sign-in accepts it. */
+function normalizePhone(value: string): string {
+  const digitsOnly = value.replace(/[\s-]/g, '');
+  if (digitsOnly.startsWith('+')) return digitsOnly;
+  if (EGYPT_MOBILE_PATTERN.test(digitsOnly)) return `+20${digitsOnly.slice(1)}`;
+  return digitsOnly;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
@@ -46,13 +65,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const signIn = async (email: string, password: string, rememberMe: boolean) => {
-    setRememberMe(rememberMe);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message);
-    // Registers the login (lastLoginAt + audit log) and returns profile/permissions.
+  // Registers the login (lastLoginAt + audit log) and loads profile/permissions.
+  const refreshAuthContext = async () => {
     const ctx = await apiPost<AuthContextData>('/api/auth/login');
     setAuthContext(ctx);
+  };
+
+  const signIn = async (identifier: string, password: string, rememberMe: boolean) => {
+    setRememberMe(rememberMe);
+    const trimmed = identifier.trim();
+    const { error } = trimmed.includes('@')
+      ? await supabase.auth.signInWithPassword({ email: trimmed, password })
+      : await supabase.auth.signInWithPassword({ phone: normalizePhone(trimmed), password });
+    if (error) throw new Error(error.message);
+    await refreshAuthContext();
   };
 
   const signOut = async () => {
@@ -72,7 +98,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthReactContext.Provider value={{ loading, authContext, signIn, signOut, can }}>
+    <AuthReactContext.Provider
+      value={{ loading, authContext, signIn, signOut, can, refreshAuthContext }}
+    >
       {children}
     </AuthReactContext.Provider>
   );

@@ -3,6 +3,7 @@ import { AuthProvider } from '@/state/AuthContext';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { AppShell } from '@/components/AppShell';
 import { LoginPage } from '@/pages/login/LoginPage';
+import { AcceptInvitePage } from '@/pages/accept-invite/AcceptInvitePage';
 import { DashboardPage } from '@/pages/dashboard/DashboardPage';
 import { SettingsPage } from '@/pages/settings/SettingsPage';
 import { UsersPage } from '@/pages/users/UsersPage';
@@ -15,6 +16,7 @@ function App() {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/accept-invite" element={<AcceptInvitePage />} />
 
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
