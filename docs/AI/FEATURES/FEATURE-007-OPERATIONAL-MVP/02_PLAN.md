@@ -1,0 +1,132 @@
+# FEATURE-007 — Milestone Plan
+
+Each milestone: typecheck/lint/build/tests + live verification before moving to the next, per standing project rule. No milestone starts before the previous one is reported and (implicitly, per the owner's "نفّذ milestone واحدًا في كل مرة" instruction pattern established across this project) not objected to.
+
+## M1 — Sheet-count calculation core (pure functions, `packages/shared`)
+
+- Port the tiering/repeat-factor logic from `PRICING_ENGINE_SPEC.md` §3.1–3.4, scoped to **sheet count only** (no cost/price output): given a real size, quantity, and job type (loose paper vs notebook — Offset/Digital distinction maps to which calculation path), resolve the calc-size via the tiering rule, compute the repeat factor (area ratio, rounded), and return `sheetsNeeded` (ceiling rounding, `+ wasteSheetsDefault`).
+- Reads `SizeFamily`/`SizeFamilyEntry`/`Setting.notebookThreshold`/`Setting.looseThreshold`/`Setting.wasteSheetsDefault` — no new schema.
+- Unit test against the one confirmed worked example in the spec (100 notebooks, original+3 copies, 10×15) for the sheet-count portion specifically.
+- **This is the dependency every later milestone in this plan needs** — nothing else can honestly claim "auto-deduct" without it.
+
+## M2 — Inventory: stock tracking + auto-deduction + low-stock + purchase list
+
+- Schema: additive columns on `SheetType` (`stockQuantity`, `lowStockThreshold`), migration.
+- Service: deduct `stockQuantity` by M1's computed `sheetsNeeded` when an Order item referencing that `SheetType` is created. **Locked decision (owner, 2026-08-09)**: insufficient stock never blocks order creation — the order proceeds, `stockQuantity` may go negative/zero, and the shortfall is surfaced as a warning plus an entry in the "needs from supplier" list (framed as "هنجيبه من المورد" — work the shop sources externally, not just a low-stock nudge).
+- "Needs to purchase" view: `GET` endpoint listing `SheetType` where `stockQuantity <= lowStockThreshold` (regular low-stock case) **or** `stockQuantity < 0` (an order already outran stock) — same list, two ways to land on it. Framed and labeled as supplier-facing ("طلبات من الموردين / بضاعة ناقصة"), architected so it can later link into real `SupplierPurchase` records (schema already exists, API/UI deferred) without a redesign — but no Supplier UI is built in this feature.
+- Frontend: Inventory list/edit screen (register stock), low-stock badge, purchase-needed section.
+
+## M3 — Treasury: reception scoping + per-wallet breakdown
+
+- Schema: additive `TreasuryEntry.method: PaymentMethod?`, migration, backfill from linked `Payment.method` for `INVOICE_PAYMENT` rows.
+- Service: scope `listTreasuryEntries` to `staffId = caller.id` when caller has `treasury.create` but not `treasury.view`; add a "my total for period" summary.
+- `getTreasuryBalance` extended to break down by `method`.
+- Frontend: reception-facing simplified entry form + "my totals" view (no balance/grand-total visible); full `TreasuryPage` gets the per-wallet breakdown cards.
+
+## PE — Full Pricing Engine (reactivated, owner decision 2026-08-09)
+
+Owner reviewed a real screenshot of the reference system's item-entry panel (live زنك/تراج/إجمالي calculation) and explicitly chose to build the **full costing engine now**, ahead of M4, rather than ship M4 with manually-entered prices. This supersedes the earlier "sheet-count only, costing deferred" scoping — M1 (sheet-count) stays as-is and becomes the foundation the cost functions call into, not wasted work.
+
+Sequenced by how well-specified each item kind is in `PRICING_ENGINE_SPEC.md` §3, most-confirmed first:
+
+- **PE-A** — Loose paper (§3.4) + Notebooks (§3.5) costing: zinc, print runs, independent numbering (with the exact `numEnd` rules for original-only vs original+copies), design cost, binding cost (notebooks), profit margin. Tested against the one fully-confirmed worked example (100 notebooks, original+3 copies, 10×15 → 3 print runs, 5 numbering runs, numEnd 500).
+- **PE-B** — Envelopes (§3.6, no tiering) + Folders (§3.7, sello/riza/jarab/forma/taksir) costing.
+- **PE-C** — Boards & signage (§3.8) — per-meter, independent unit model, **no profit margin applied** (confirmed rule), including the print-cut piece-packing formula.
+- **PE-D** — Ready products/services (§3.9) — unit price × qty, no markup.
+- **PE-E** (done 2026-08-09) — `vatRate` as a new configurable `Setting` field (currently only `vatOn: boolean` exists, no rate) + wire the whole engine into Order item creation, replacing caller-supplied `subtotal`/`finalTotal` with computed values. Implemented as: `orderItemPricingInputSchema` (six-kind discriminated union, `packages/shared/src/schemas/orderItemPricing.ts`) validates shape only; `orderService.ts`'s `computeItemPricing` dispatches each item to the real pure functions and freezes the result (`OrderItem.itemTotal` + `breakdown`, `Order.subtotal`/`vatAmount`/`finalTotal` all server-computed, never caller-supplied); a new `GET /api/pricing-reference` endpoint (gated on `orders.create`, not `settings.view` — reception/sales don't hold that permission) hands the client the same constants for an instant live preview using the identical shared pure functions; `NewOrderPage.tsx` was fully rewritten around this. Live-verified end to end in the dev browser: a real 1000-sheet LOOSE_PAPER item priced identically client-side and server-side (505.00 ج.م), stock deducted correctly (127 sheets), invoice `CLP-INV-2026-000010` created. **Known gap, not yet done:** Quotation creation still uses its own pre-PE `createQuotationItemSchema`/caller-supplied-total shape — the owner's instruction named `NewOrderPage.tsx`/Order specifically, not Quotation; wiring Quotation to the same engine is follow-up work, not assumed-included here.
+
+No unit test exists yet for envelopes/folders/boards (no confirmed worked example was given for those, unlike notebooks) — will build literally per the spec and flag that limitation explicitly rather than claim a confidence level the tests don't support.
+
+## M4 — Guided reception order-creation flow
+
+- New guided flow: customer/company entry → order type selection (Offset/Digital/etc.) → item entry — wired to M1 (sheet calc), PE (live cost calculation), M2 (inventory deduction), existing Treasury/payment recording, existing Work Order creation.
+- Replaces/extends the current flat `NewOrderPage.tsx`.
+- **Entry point on the Dashboard itself** (owner, round 2): typing the company/customer name from the Dashboard leads directly into this flow — not a separate milestone, the fast path *is* this flow, just reachable from one more place.
+- **Reference UI** (owner, 2026-08-09, real screenshot of the legacy system): a two-panel layout — left panel is the invoice/cart (items added so far, VAT toggle, profit display, collection/payment section with multiple payment lines, action buttons: حفظ وطباعة / حفظ فقط / طباعة عرض سعر / طباعة كل أوامر الشغل); right panel is the per-item entry form with the live PE-computed cost breakdown (زنكات/تراجات/إجمالي), additional-services checkboxes, optional reference-image upload, then "إضافة للفاتورة" to push the item into the left cart.
+- **Locked decisions from the same message**: the **Invoice is the default/primary document** (حفظ وطباعة / حفظ فقط act on the Invoice directly); the Quotation is a secondary, explicit action ("طباعة عرض سعر") — matches the already-established "quotation not required for every customer" rule. The **Invoice's visual design reuses the Quotation's theme** (same reference PDFs from Round 2 §9) — one shared visual identity across both document types, built once in M8, not duplicated for M9.
+
+## M3.5 — Dashboard: Treasury summary widget
+
+- Small addition surfaced by the owner after M1/M2 shipped: show وارد/منصرف directly on the Dashboard (not only inside `/treasury`), reusing `getTreasuryBalance` and the existing Dashboard Widget Registry (FEATURE-005 refinement 2) — no new backend.
+
+## M8 (reactivated from FEATURE-006, was paused) — Quotation document rendering
+
+- Now unblocked: owner supplied the real reference format (two PDFs, see 00_REQUIREMENTS.md Round 2 §9). Build the Quotation `DocumentTemplate` config + wire `DocumentRenderer` (already built in FEATURE-006 M7) to produce this exact layout: logo/business-name header, "السادة/" line, items table with brand-color header, VAT note when applicable, notes field under items, stamp, closing phrase, footer contact bar.
+- Runs after M3 (next in the already-approved sequence) — not before, since M3 has no new open questions and this does need the "Marketing vs Customer" and any other open point resolved first if it turns out to affect the customer-name field shown on the document (unlikely, but worth confirming once reached).
+
+## M5 — Employees directory
+
+- Schema: additive `StaffProfile.position: String?`.
+- Frontend: simple list/create/edit screen (name, contact, position) — reuses existing Users management patterns, not a new permission module unless a genuine access-control need appears.
+
+## VD — Video-reference visual pass (owner, 2026-08-10, done)
+
+Owner asked for the system's overall look to resemble the reference video (VIDEO_VS_CLEOPATRA_REVIEW.md). Scoped via AskUserQuestion into three ordered pieces, all done in one pass, all within the existing Cleopatra Design System tokens — never a literal copy of the video's own colors/pixels (per MASTER_HANDOFF's own "not a literal copy" rule, restated in VIDEO_VS_CLEOPATRA_REVIEW.md §E):
+
+- **VD-1** — `DashboardPage.tsx` gained a `ModuleNavGrid` (new `pages/dashboard/moduleCards.ts` + `ModuleNavGrid.tsx`): a grid of big colorful navigation cards to every module the signed-in user can reach (mirrors the video's 12-card home screen), permission-filtered the same way `ProtectedRoute`/`NavTree` already do. Purely additive — every existing real aggregate-data widget (order counts, delayed jobs, daily production, etc.) stays exactly as it was, now under a "نظرة عامة" heading below the card grid.
+- **VD-2** — `NewOrderPage.tsx`'s sticky totals sidebar now shows the final total in a large `--success`-toned box that updates on every keystroke (mirrors the video's live green pricing box), with the subtotal/discount/VAT breakdown lines kept smaller above it.
+- **VD-3** — Wired the existing (previously unused outside Production Board/Treasury/Inventory) `StatusBadge` component into `PartnersPage.tsx` and `QuotationsPage.tsx`'s status/approval columns (new `PARTNER_STATUS_TONES`/`QUOTATION_STATUS_TONES`/`QUOTATION_APPROVAL_TONES` tone maps), replacing plain text with the same colored-pill vocabulary used everywhere else.
+
+Live-verified in the dev browser: Dashboard card grid + preserved stat widgets, NewOrderPage's green box updating live from 0.00 to a real computed total as items were filled in, and colored status pills on both list pages.
+
+## DOC — Notion-style editing, invoice printing, unified Documents (owner, 2026-08-10, done)
+
+Three more owner asks in the same turn, all done:
+
+- **Notion-style inline editing** — `PartnersPage.tsx`'s table cells (name/branch/status/phone) are now click-to-edit-in-place via two new reusable `components/cleopatra/EditableCell.tsx` primitives (`EditableTextCell`/`EditableSelectCell`), saving on blur through the existing `PUT /api/partners/:id`. Chosen over an external-tool/API integration (owner picked this explicitly via AskUserQuestion) — no new auth surface, no new attack surface.
+- **Real invoice printing** — FEATURE-006 M7 had built `DocumentRenderer` + the print CSS + the snapshot resolver but never wired any of it into an actual page (confirmed by investigation before starting). New: `GET /api/settings/business-identity` (letterhead-only, gated on `orders.view` not `settings.view` — same reasoning as `pricing-reference.ts`, reception/sales print invoices but don't hold `settings.view`); `OrderDocumentPage.tsx` (new route `/orders/:id`) mounts `DocumentRenderer` with real order/partner data and a working `طباعة الفاتورة` button (`window.print()`) — live-verified opening a real print dialog. Along the way, fixed a real gap: `OrderItem.breakdown` (PE-E) never preserved the customer-facing quantity, only internal pricing-engine figures like `sheetsNeeded` — printing an invoice would have shown 0 or nothing. `computeItemPricing` now merges `quantity` into the frozen breakdown at creation time; live-verified a fresh order's invoice printing the correct quantity.
+- **Unified "المستندات" (Documents)** — the "عروض الأسعار" nav entry/page is now "المستندات", listing Quotations + Orders(invoices) + WorkOrders together, each row tagged with its type and colored (`DocumentsPage.tsx`, replacing the old `QuotationsPage.tsx`). Kept as three separate Prisma models — the owner explicitly delegated this choice ("انت مخير") and a real merge would touch nearly everything already built (ADR 0010 snapshots, Workflow Engine, DocumentTemplate) for no real benefit; this is a unified *view*, not a unified table. Needed two new list endpoints that didn't exist yet (`GET /api/orders`, `GET /api/work-orders` — both previously create+get-by-id only). Live-verified: all three document types show up sorted by date with correct type/status badges, row-click navigates to the right detail (Quotation → `/quotations/:id`, Invoice → `/orders/:id` print page, WorkOrder → production timeline when it has a workflow instance).
+
+**Known gap, still not done:** Quotation/WorkOrder printing (M8/M10) — only the Invoice path (M9) is wired. `DocumentRenderer` is generic enough that wiring the other two should be mechanical (same pattern as `OrderDocumentPage.tsx`), but wasn't done this pass.
+
+## DOC-2 — Quotation creation wired to the real Pricing Engine (owner, 2026-08-10, done)
+
+Owner's explicit mid-turn clarification: Quotation/Order/WorkOrder creation is one unified flow, not three — "عرض السعر مش بيطلع من قسم مستندات لا بيطلع بردو من نفس واجهة أمر الشغل والفواتير". Quotation creation previously took a caller-supplied `subtotal`/`vatAmount`/`finalTotal` and a bare `quantity`/`size` per item (pre-PE-E, never updated when Order creation was wired to the real engine) — a real gap, not a stylistic one, since it let a Quotation's price disagree with what the same items would cost as an Order.
+
+- **Schema** — `QuotationItem` dropped `quantity`/`size`, gained `itemTotal`/`sizeFamilyKey`/`realSizeLabel` (parity with `OrderItem`); `createQuotationItemSchema` now takes the same `pricing: orderItemPricingInputSchema` union every Order item takes; `createQuotationSchema`/`updateQuotationSchema` dropped caller-supplied totals entirely (migration `20260810120000_feature007_quotation_pricing_engine`).
+- **Backend** — extracted the pricing dispatch (`buildPricingContext`/`computeItemPricing`/constant mappers) out of `orderService.ts` into a new shared `pricingEngineService.ts`, so `quotationService.ts`'s `createQuotation` calls the identical dispatch `orderService.ts`'s `createOrder` does — one engine, two callers, never two implementations that could drift. `controllers/quotations.ts` rewritten to match: `createQuotation` mirrors `createOrderHandler`'s exact shape (validate → resolve catalog names → service call → audit → 201); `updateQuotation` re-prices `items` through the same dispatch when items are supplied; `convertQuotation` now carries the Quotation item's already-frozen `itemTotal`/`breakdown`/`sizeFamilyKey`/`realSizeLabel` straight onto the new Order item (closing PE-E's old known gap where a converted Order's `itemTotal` always came back `null`); `createQuotationVersion` copies the same frozen fields instead of the old `quantity`/`size`.
+- **Frontend** — `QuotationDetail.tsx`'s old create/edit form (free-text `quantity`/`size` per item, caller-typed totals) no longer compiles against the new item shape and, more fundamentally, no longer matches the architecture — item pricing needs the full engine input, not a two-field form, and per the owner's clarification above that belongs on the unified creation screen (#211), not here. Rewrote the page to be read/status-only: lifecycle controls (status/approval/versioning/conversion) stay exactly as before; items render as a read-only table of each item's frozen kind/quantity/size/total; only `validUntil`/`discountPercent`/`vatOn`/notes stay editable via `PUT`. Removed the now-dead `/quotations/new` entry point (`DocumentsPage.tsx`'s "+ عرض سعر جديد" button) rather than leave a broken link — Quotation creation has no UI entry point until #211 ships; a direct Order/Invoice ("+ مستند جديد") is the only creation button on the Documents list for now.
+- **Verified**: `apps/api` typecheck/lint/vitest (42 tests) and `apps/web` typecheck/lint/build all clean. Live-verified in the browser: posted a real Quotation (`CLP-QUO-2026-000009`) with a BOARDS item straight against the API — server computed `itemTotal: 840` from the real Boards pricing function (not the caller), applied 10% discount → 756, applied the real `Setting.vatRate` (14%) → `vatAmount: 105.84`, `finalTotal: 861.84` — then confirmed the same numbers render correctly on the Documents list and the read-only Quotation detail page.
+
+**Still open:** #211, the unified "الطلبات والمستندات" creation screen (save-as Quotation/Invoice + generate Work Order) — the actual replacement UI for creating a Quotation now that the old form is retired.
+
+## DOC-3 — الطلبات والمستندات: unified creation screen, save-as Quotation/Invoice (owner, 2026-08-10, done)
+
+Closes the gap DOC-2 opened: `NewOrderPage.tsx` (renamed on-screen to "الطلبات والمستندات", route unchanged at `/orders/new`) is now the one screen that creates both document types, per the owner's explicit clarification — "عرض السعر مش بيطلع من قسم مستندات لا بيطلع بردو من نفس واجهة أمر الشغل والفواتير".
+
+- **Save-as toggle** — a segmented `فاتورة مباشرة` / `عرض سعر` control (shown only when the caller holds both `orders.create` and `quotations.create`; single-permission callers just get their one option, no toggle) switches `documentType`. The item-entry section (all 7 pricing kinds, unchanged from PE-E) and its client-side live-preview math are shared verbatim between both modes — only the wrapping document differs, since `createOrderItemSchema` and `createQuotationItemSchema` are structurally identical (DOC-2). Quotation mode swaps "تاريخ التسليم" for a required "صالح حتى" date (defaults to +14 days); submit posts to `/api/orders` or `/api/quotations` accordingly and the success screen branches per type (فاتورة: طباعة + إنشاء أمر شغل; عرض سعر: عرض التفاصيل → `/quotations/:id`).
+- **Generate Work Order** — added as a follow-on action on the Invoice success screen, not a third save-as target, because a WorkOrder always wraps an *existing* Order (`createWorkOrder` requires `orderId` + a published `templateCode` — there's no "create a WorkOrder from scratch"). Fetches `/api/workflow-templates`, keeps only the latest *published* version per `code` (unpublished/older versions aren't valid choices — `createWorkOrder` resolves through `getLatestPublishedTemplate`), and either renders a real template picker + "إنشاء أمر شغل" button or, honestly, "لا يوجد نموذج تدفق عمل منشور بعد" when none exist yet (true today — zero WorkflowTemplates exist in this environment; FEATURE-007 WF-A is what will populate them). Gated on `work-orders.edit` (the same permission `POST /api/work-orders` itself requires).
+- **Route/nav** — `/orders/new`'s `ProtectedRoute` gate widened from `orders.create` alone to `['orders.create', 'quotations.create']` (either is enough to reach the page); Dashboard's module card relabeled "الطلبات والمستندات" with the same widened permission array.
+- **Also fixed while in the area**: `QuotationDetail.tsx` (rewritten read-only in DOC-2) had been left in English — missed because it was a same-session rewrite, not a translation pass. Retranslated every user-facing string to Arabic (labels, buttons, confirm() dialogs, error messages) to match the rest of the app.
+- **Verified**: `apps/api` typecheck/lint/vitest (42 tests) and `apps/web` typecheck/lint/build all clean. Live-verified both paths end-to-end in the browser: created a BOARDS-item Quotation (`CLP-QUO-2026-000010`, 195.00 ج.م) via the toggle, then an Invoice (`CLP-INV-2026-000013`, 62.40 ج.م) from the same screen, confirmed the Generate Work Order panel renders its real (currently template-less) state rather than a stub.
+
+**Still open:** FEATURE-007 WF-A (real WorkflowTemplates) is the prerequisite for "إنشاء أمر شغل" to actually succeed rather than show its empty state; FEATURE-006/007 M8 (Quotation document printing) so a created Quotation can be printed/PDF'd like an Invoice already can.
+
+## M6 — Theme: logo palette + dark/light toggle
+
+- Extract palette from the Cleopatra Press logo (deep red + black + silver-gray) into `index.css` design tokens, replacing the current teal/gold, for both `:root` and `.dark`.
+- Build the runtime toggle: persisted preference (localStorage), applied as `.dark` class on `<html>`, exposed as a control in `AppShell`.
+
+## M7 — Marketing funnel stage per customer
+
+- Additive `marketingStage` enum field (وعي / اهتمام / عميل لأول مرة / عميل ثابت) on `BusinessPartner`, migration.
+- Frontend: visible/editable on the customer's own page (Partners/Customers list) — reuses the existing partner page, not a new parallel screen. A simple filter/badge in the list so Marketing can see stage distribution at a glance.
+- Explicitly out of scope here: campaign recommendations, capacity-aware marketing, "sell marketing as a service to customers" — all confirmed still deferred (MASTER_HANDOFF.md §5B, §45, §46 — P2/future).
+
+## WF — Production workflow per pricing track (owner, round 3, 2026-08-09)
+
+Uses existing FEATURE-004 infrastructure entirely — no new engine, this is configuration + one new routing rule + one genuinely new notification feature:
+
+- **WF-A** — Configure real `WorkflowTemplate`s (via the existing template service/versioning already built) for each confirmed track: Offset (Design → Plate Preparation → Offset Printing → Finishing → Delivery → Customer Service), Digital (same minus Plate Preparation), Boards & Signage, and a generic "other products" track (brass plates/stamps/acrylic — uses `WorkflowStageVariable` for per-item custom fields, e.g. "customer text", exactly as the engine's own schema comment anticipated).
+
+  > **Owner decision, 2026-08-10 (Arabic, kept verbatim — see below):** "في قسم تصميم منفصل بتدفق عليه كل التصاميم بغض النظر عن نوع المنتج ولما بيتم بيكمل في الورك فلو بتاعه" — Design is not a per-track stage duplicated four times; it is one shared department/queue every item passes through first, regardless of product type (ورق سايب/دفاتر/أظرف/فولدرات/لوحات/منتج جاهز/خدمة — all of it). Once an item's design is marked done there, it continues into *its own* track's remaining stages (Offset → Plate Preparation next; Digital → straight to Digital Printing; Boards & Signage → its own next stage; etc.) — never a second, separate design stage per track. Practically this means: the design staff's queue/Production Board view must show every item awaiting design in one place regardless of which track it'll continue on afterward, not four scattered per-track queues. Whether this is modeled as one shared `WorkflowStage`/queue that every template's first stage points at, or four per-track "Design" stages that the Production Board simply groups together under one filter, is an implementation choice to make when WF-A is actually built — but the requirement itself (one unified design intake, branch-per-track only after design completes) is locked and must not be silently designed away as "four independent Design stages."
+- **WF-B** — Automatic template routing: when an Order/WorkOrder is confirmed, select the right `WorkflowTemplate` based on the item kind (loose/notebook/envelope/folder → Offset or Digital depending on a to-be-confirmed distinguishing input; boards → Boards & Signage; product/service → the relevant track or none). The exact Offset-vs-Digital signal isn't resolved yet — will ask if it's genuinely ambiguous once reached.
+- **WF-C** — Reorder-reminder notifications: track an expected reorder date per customer/order (source: owner-entered estimate, e.g. "this notebook order lasts ~2 months"), notify before that date. New schema, new scheduled check — not part of any existing system.
+
+Sequenced after PE-E and M8 (the Quotation-shows-final-price-only requirement is already implicit in M8's existing scope) — not before, since WF-B specifically needs PE-E's item-kind data to route correctly.
+
+## Explicitly deferred (not part of this feature)
+
+- FEATURE-006 M7–M11 (DocumentRenderer, Quotation/Invoice/WorkOrder documents, Customer Profile tabs) — paused, resumes after this feature or once the quotation reference image arrives, whichever the owner prefers.
+- Full Pricing Engine costing (margins, VAT, plates, design, numbering, binding costs) — only the sheet-count subset (M1) is in scope here.
+- Employee payroll/attendance, Fixed Assets, Reports module, Meter/Waste reconciliation — unresolved open questions from `VIDEO_VS_CLEOPATRA_REVIEW.md`, not requested in this round.
