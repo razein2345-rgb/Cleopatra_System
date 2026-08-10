@@ -1,0 +1,356 @@
+import { describe, expect, it } from 'vitest';
+import {
+  calculateEnvelopeCost,
+  calculateFolderCost,
+  calculateLoosePaperCost,
+  calculateNotebookCost,
+  calculateProductOrServiceCost,
+  resolveNumbering,
+  type PricingConstants,
+  type SizeFamilyInput,
+} from '@cleopatra/shared';
+
+// Module under test lives in packages/shared/src/pricing/costCalculation.ts
+// (pure functions, no DB dependency) — tested here for the same reason as
+// sizeCalculation.test.ts: apps/api already has vitest configured.
+
+const FAMILIES: SizeFamilyInput[] = [
+  {
+    key: 'standard',
+    base: 'REGULAR',
+    entries: [
+      { label: '12.5×17.5', piecesPerSheet: 32 },
+      { label: '17.5×25', piecesPerSheet: 16 },
+      { label: '25×35', piecesPerSheet: 8 },
+      { label: '35×50', piecesPerSheet: 4 },
+      { label: '50×70', piecesPerSheet: 2 },
+      { label: '70×100', piecesPerSheet: 1 },
+    ],
+  },
+  {
+    key: 'extra2',
+    base: 'REGULAR',
+    entries: [
+      { label: '10×15', piecesPerSheet: 44 },
+      { label: '15×20', piecesPerSheet: 22 },
+      { label: '20×30', piecesPerSheet: 11 },
+      { label: '30×40', piecesPerSheet: 5 },
+    ],
+  },
+  {
+    key: 'koshiaGayer',
+    base: 'GAYER',
+    entries: [
+      { label: '11×16.5', piecesPerSheet: 32 },
+      { label: '16.5×22', piecesPerSheet: 16 },
+      { label: '22×33', piecesPerSheet: 8 },
+      { label: '33×44', piecesPerSheet: 4 },
+      { label: '44×66', piecesPerSheet: 2 },
+      { label: '66×88', piecesPerSheet: 1 },
+    ],
+  },
+];
+
+const SETTINGS: PricingConstants = {
+  notebookThreshold: 30,
+  looseThreshold: 3000,
+  wasteSheetsDefault: 2,
+  zincPrice: 75,
+  printRunPrice: 75,
+  numberingRunPrice: 75,
+  designPrice: 75,
+  profitPercent: 25,
+  envelopeDesignPrice: 100,
+  envelopeZincPrice: 75,
+  envelopePrintRunPrice: 100,
+  sellophanePricePerSheet: 4,
+};
+
+describe('resolveNumbering — §3.3', () => {
+  it('g1 (extra2) targets 20×30', () => {
+    const result = resolveNumbering({ familyKey: 'extra2', realLabel: '10×15', families: FAMILIES });
+    expect(result.targetLabel).toBe('20×30');
+    expect(result.repeat).toBe(4); // area(20×30)=600 / area(10×15)=150 = 4
+  });
+});
+
+describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPEC.md §3.5)', () => {
+  it('100 notebooks, original+3 copies, 10×15, numbering from 1', () => {
+    const result = calculateNotebookCost({
+      familyKey: 'extra2',
+      realLabel: '10×15',
+      notebookQuantity: 100,
+      contentType: 'ORIGINAL_PLUS_COPIES',
+      copies: 3,
+      colorCount: 1,
+      isNewDesign: true,
+      numbering: { startNumber: 1 },
+      bindingPricePerNotebook: 2.5,
+      sheetPrice: 3,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+
+    expect(result.totalSheetsFlat).toBe(20000);
+    expect(result.printRuns).toBe(3);
+    expect(result.sheetsNeeded).toBe(502);
+    expect(result.numberingRuns).toBe(5);
+
+    // NOTE — discrepancy found against the spec document itself, not
+    // invented here: PRICING_ENGINE_SPEC.md §3.5 states
+    // "نهاية الترقيم = 1 + (100 × 50) - 1 = 500", but that arithmetic is
+    // wrong on its own terms — 1 + (100*50) - 1 = 5000, not 500 (the
+    // stated formula and the stated inputs are unambiguous; only the
+    // written answer doesn't match them, most likely a dropped digit).
+    // Implemented the formula literally; flagged to the owner rather than
+    // silently "corrected" to match the doc's stated (arithmetically
+    // inconsistent) answer.
+    expect(result.numberingEnd).toBe(5000);
+
+    expect(result.zincCost).toBe(75); // 75 * 1 color
+    expect(result.printCost).toBe(225); // 3 runs * 75
+    expect(result.numberingCost).toBe(375); // 5 runs * 75
+    expect(result.paperCost).toBe(1506); // 502 sheets * 3
+    expect(result.bindingCost).toBe(250); // 100 * 2.5
+    expect(result.designCost).toBe(75);
+
+    const expectedSubtotal = 75 + 75 + 225 + 375 + 1506 + 250; // design+zinc+print+numbering+paper+binding
+    expect(result.subtotal).toBe(expectedSubtotal);
+    expect(result.total).toBeCloseTo(expectedSubtotal * 1.25, 5);
+  });
+});
+
+describe('calculateLoosePaperCost — gayer sheets never tier (§3.4)', () => {
+  it('direct piecesPerSheet lookup, no numbering requested', () => {
+    const result = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 2,
+      sides: 1,
+      isNewDesign: false,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    // repeat = 8 (piecesPerSheet), sheetsNeeded = ceil(100/8) + 2 = 15
+    expect(result.sheetsNeeded).toBe(15);
+    expect(result.paperCost).toBe(75); // 15 * 5
+    expect(result.zincCost).toBe(150); // 75 * 2 colors
+    expect(result.printRuns).toBe(2); // ceil(100/1000)=1 * 2 colors * 1 side
+    expect(result.numberingCost).toBe(0);
+    expect(result.numberingEnd).toBeNull();
+    expect(result.designCost).toBe(0);
+  });
+
+  it('double-sided printing doubles run count, not sheet count', () => {
+    const oneSided = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 1,
+      sides: 1,
+      isNewDesign: false,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    const twoSided = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 1,
+      sides: 2,
+      isNewDesign: false,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    expect(twoSided.printRuns).toBe(oneSided.printRuns * 2);
+    expect(twoSided.sheetsNeeded).toBe(oneSided.sheetsNeeded);
+  });
+});
+
+// No confirmed worked example exists for envelopes/folders (unlike
+// notebooks) — these tests check the formula is applied exactly as
+// written in PRICING_ENGINE_SPEC.md §3.6-3.7, not against real business
+// numbers. Flagged in 02_PLAN.md as a known confidence gap.
+describe('calculateEnvelopeCost — §3.6 (no confirmed worked example, formula-literal only)', () => {
+  it('applies envelope-specific constants, independent of loose-paper/notebook ones', () => {
+    const result = calculateEnvelopeCost({
+      quantity: 2500,
+      colorCount: 2,
+      isNewDesign: true,
+      readyEnvelopePricePerPiece: 1.5,
+      settings: SETTINGS,
+    });
+    expect(result.designCost).toBe(100); // envelopeDesignPrice
+    expect(result.zincCost).toBe(150); // envelopeZincPrice(75) * 2 colors
+    expect(result.printRuns).toBe(6); // ceil(2500/1000)=3 * 2 colors
+    expect(result.printCost).toBe(600); // 6 * envelopePrintRunPrice(100)
+    expect(result.envelopesCost).toBe(3750); // 2500 * 1.5
+    const expectedSubtotal = 100 + 150 + 600 + 3750;
+    expect(result.subtotal).toBe(expectedSubtotal);
+    expect(result.total).toBeCloseTo(expectedSubtotal * 1.25, 5);
+  });
+
+  it('no design cost when reusing an existing design', () => {
+    const result = calculateEnvelopeCost({
+      quantity: 1000,
+      colorCount: 1,
+      isNewDesign: false,
+      readyEnvelopePricePerPiece: 1,
+      settings: SETTINGS,
+    });
+    expect(result.designCost).toBe(0);
+  });
+});
+
+describe('calculateFolderCost — §3.7 (no confirmed worked example, formula-literal only)', () => {
+  it('reuses loose-paper sheet/zinc/print math, adds sello + manual line costs, margin applied once', () => {
+    const looseEquivalent = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 2,
+      sides: 1,
+      isNewDesign: true,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+
+    const result = calculateFolderCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 2,
+      sides: 1,
+      isNewDesign: true,
+      sheetPrice: 5,
+      sellophaneEnabled: true,
+      riza: 50,
+      jarab: 30,
+      forma: 20,
+      taksir: 10,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+
+    expect(result.sheetsNeeded).toBe(looseEquivalent.sheetsNeeded);
+    expect(result.paperCost).toBe(looseEquivalent.paperCost);
+    expect(result.zincCost).toBe(looseEquivalent.zincCost);
+    expect(result.printCost).toBe(looseEquivalent.printCost);
+    expect(result.designCost).toBe(looseEquivalent.designCost);
+    expect(result.selloCost).toBe(looseEquivalent.sheetsNeeded * 4); // sellophanePricePerSheet
+
+    const expectedSubtotal =
+      result.designCost + result.zincCost + result.printCost + result.paperCost + 50 + 30 + 20 + 10 + result.selloCost;
+    expect(result.subtotal).toBe(expectedSubtotal);
+    expect(result.total).toBeCloseTo(expectedSubtotal * 1.25, 5);
+    // Folders' own total must not equal the loose-paper equivalent's total
+    // — margin is applied once across the *full* folder subtotal
+    // (including sello/riza/jarab/forma/taksir), not on the paper portion
+    // alone and then re-applied.
+    expect(result.total).not.toBeCloseTo(looseEquivalent.total, 2);
+  });
+
+  it('optional line costs default to 0, sello skipped when disabled', () => {
+    const result = calculateFolderCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 1,
+      sides: 1,
+      isNewDesign: false,
+      sheetPrice: 5,
+      sellophaneEnabled: false,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    expect(result.selloCost).toBe(0);
+    expect(result.riza).toBe(0);
+    expect(result.jarab).toBe(0);
+    expect(result.forma).toBe(0);
+    expect(result.taksir).toBe(0);
+  });
+});
+
+describe('calculateProductOrServiceCost — §3.9 (unit price already includes everything, no markup)', () => {
+  it('is a plain unit price × quantity, nothing more', () => {
+    expect(calculateProductOrServiceCost(45.5, 3)).toBe(136.5);
+  });
+
+  it('adds extraCosts on top, still no margin', () => {
+    expect(calculateProductOrServiceCost(45.5, 3, 20)).toBe(156.5);
+  });
+});
+
+// FEATURE-007 — owner-approved manual overrides (2026-08-10), amending
+// PRICING_ENGINE_SPEC.md §4. See costCalculation.ts's own doc comments.
+describe('owner-approved manual overrides — profitPercentOverride/zincCostOverride/printCostOverride/extraCosts', () => {
+  it('profitPercentOverride replaces the global margin for this item only', () => {
+    const withDefault = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 1,
+      sides: 1,
+      isNewDesign: false,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    const withOverride = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 1,
+      sides: 1,
+      isNewDesign: false,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+      profitPercentOverride: 40,
+    });
+    expect(withDefault.profitPercentUsed).toBe(25);
+    expect(withOverride.profitPercentUsed).toBe(40);
+    expect(withOverride.subtotal).toBe(withDefault.subtotal);
+    expect(withOverride.total).toBeCloseTo(withDefault.subtotal * 1.4, 5);
+  });
+
+  it('zincCostOverride/printCostOverride replace only those two figures, rest of the formula unaffected', () => {
+    const result = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 2,
+      sides: 1,
+      isNewDesign: false,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+      zincCostOverride: 999,
+      printCostOverride: 111,
+    });
+    expect(result.zincCost).toBe(999);
+    expect(result.printCost).toBe(111);
+    expect(result.paperCost).toBe(75); // unaffected — same as the non-override test above
+    expect(result.subtotal).toBe(999 + 111 + 75); // + numberingCost(0) + designCost(0) + extraCosts(0)
+  });
+
+  it('extraCosts (manual خدمات إضافية) is added to subtotal before margin', () => {
+    const result = calculateEnvelopeCost({
+      quantity: 1000,
+      colorCount: 1,
+      isNewDesign: false,
+      readyEnvelopePricePerPiece: 1,
+      settings: SETTINGS,
+      extraCosts: 50,
+    });
+    // baseline (no extras): designCost(0) + zinc(75) + printCost(1*100=100) + envelopesCost(1000) = 1175
+    expect(result.subtotal).toBe(1175 + 50);
+    expect(result.total).toBeCloseTo((1175 + 50) * 1.25, 5);
+  });
+
+});

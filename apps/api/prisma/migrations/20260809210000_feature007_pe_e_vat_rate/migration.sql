@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "Setting" ADD COLUMN     "vatRate" DECIMAL(5,2) NOT NULL DEFAULT 14;

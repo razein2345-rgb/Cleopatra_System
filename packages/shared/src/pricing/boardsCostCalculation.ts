@@ -1,0 +1,103 @@
+/**
+ * FEATURE-007 PE-C — boards & signage costing (§3.8).
+ *
+ * Deliberately independent of `sizeCalculation.ts`/`costCalculation.ts` —
+ * the spec itself frames this section as "مستقل بالكامل" (fully
+ * independent): priced by the meter, not the sheet, no size-family
+ * tiering, and — unlike every other item kind — **no profit margin is
+ * applied here at all**. The per-meter price in `Setting` already has
+ * margin baked in, so `total` below is the final customer price directly.
+ *
+ * Pure functions only — no DB/HTTP access.
+ */
+
+export type BoardMaterial = 'BANNER' | 'VINYL_NORMAL' | 'VINYL_PRINT_CUT' | 'FLEX' | 'SEASRO';
+
+export interface BoardsPricingConstants {
+  boardsBannerNoDesign: number;
+  boardsBannerWithDesign: number;
+  boardsVinylNormalNoSello: number;
+  boardsVinylNormalWithSello: number;
+  boardsVinylPrintCutNoSello: number;
+  boardsVinylPrintCutWithSello: number;
+  boardsFlex: number;
+  boardsSeasro: number;
+  /** Gap between pieces, in millimeters (spec default 5mm) — only used by VINYL_PRINT_CUT's piece-packing math. */
+  boardsGapMM: number;
+}
+
+export interface BoardsCostInput {
+  material: BoardMaterial;
+  /** Piece dimensions in centimeters. */
+  widthCm: number;
+  heightCm: number;
+  quantity: number;
+  /** BANNER only. */
+  hasDesign?: boolean;
+  /** VINYL_NORMAL / VINYL_PRINT_CUT only. */
+  hasSellophane?: boolean;
+  settings: BoardsPricingConstants;
+  /**
+   * FEATURE-007 — owner-approved manual "خدمات إضافية" amount (2026-08-10,
+   * see PRICING_ENGINE_SPEC.md §4's amendment), added directly to `total`
+   * — never multiplied by a margin, since boards never apply one at all.
+   */
+  extraCosts?: number;
+}
+
+export interface BoardsCostResult {
+  pricePerMeter: number;
+  // The regular (area-based) path — BANNER/VINYL_NORMAL/FLEX/SEASRO.
+  pieceAreaM2?: number;
+  totalAreaM2?: number;
+  // The VINYL_PRINT_CUT path — piece-packing per square meter.
+  piecesPerMeter?: number;
+  metersNeeded?: number;
+  extraCosts: number;
+  /** The final customer price — no margin applied on top of this. */
+  total: number;
+}
+
+export class BoardsCalculationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BoardsCalculationError';
+  }
+}
+
+function resolvePricePerMeter(input: BoardsCostInput): number {
+  switch (input.material) {
+    case 'BANNER':
+      return input.hasDesign ? input.settings.boardsBannerWithDesign : input.settings.boardsBannerNoDesign;
+    case 'VINYL_NORMAL':
+      return input.hasSellophane ? input.settings.boardsVinylNormalWithSello : input.settings.boardsVinylNormalNoSello;
+    case 'VINYL_PRINT_CUT':
+      return input.hasSellophane ? input.settings.boardsVinylPrintCutWithSello : input.settings.boardsVinylPrintCutNoSello;
+    case 'FLEX':
+      return input.settings.boardsFlex;
+    case 'SEASRO':
+      return input.settings.boardsSeasro;
+  }
+}
+
+/** §3.8 — boards & signage. */
+export function calculateBoardsCost(input: BoardsCostInput): BoardsCostResult {
+  const pricePerMeter = resolvePricePerMeter(input);
+  const extraCosts = input.extraCosts ?? 0;
+
+  if (input.material === 'VINYL_PRINT_CUT') {
+    const gapCm = input.settings.boardsGapMM / 10;
+    const perRow = Math.floor((100 + gapCm) / (input.widthCm + gapCm));
+    const perCol = Math.floor((100 + gapCm) / (input.heightCm + gapCm));
+    const piecesPerMeter = perRow * perCol;
+    if (piecesPerMeter <= 0) {
+      throw new BoardsCalculationError('Piece dimensions too large to fit even one piece per square meter');
+    }
+    const metersNeeded = Math.ceil(input.quantity / piecesPerMeter);
+    return { pricePerMeter, piecesPerMeter, metersNeeded, extraCosts, total: metersNeeded * pricePerMeter + extraCosts };
+  }
+
+  const pieceAreaM2 = (input.widthCm / 100) * (input.heightCm / 100);
+  const totalAreaM2 = pieceAreaM2 * input.quantity;
+  return { pricePerMeter, pieceAreaM2, totalAreaM2, extraCosts, total: totalAreaM2 * pricePerMeter + extraCosts };
+}
