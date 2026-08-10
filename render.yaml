@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: cleopatra-api
+    runtime: node
+    plan: starter
+    region: frankfurt
+    branch: main
+    buildCommand: npm ci && npm run build --workspace=packages/shared && npm run build --workspace=apps/api && npx prisma migrate deploy --schema=apps/api/prisma/schema.prisma
+    startCommand: npm run start --workspace=apps/api
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # كل القيم اللي تحتها sync: false محتاجة تتحط يدويًا في لوحة تحكم Render
+      # (Environment tab) بعد الاستيراد — نفس القيم الموجودة في apps/api/.env
+      # المحلي بتاعك، غير CORS_ORIGIN اللي المفروض يبقى رابط الواجهة على Vercel.
+      - key: CORS_ORIGIN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
