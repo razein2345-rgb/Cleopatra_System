@@ -1,0 +1,125 @@
+import { useState } from 'react';
+import type { Setting, UpdateSettingInput } from '@cleopatra/shared';
+import { apiPut } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { useAuth } from '@/state/AuthContext';
+
+function fmt(value: number) {
+  return value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+const NUMBER_FIELDS: Array<{ key: keyof UpdateSettingInput; label: string; step?: string }> = [
+  { key: 'designPrice', label: 'سعر التصميم/الكمبيوتر' },
+  { key: 'zincPrice', label: 'سعر الزنكاية للون (أسعار الزنكات)' },
+  { key: 'envelopeZincPrice', label: 'سعر زنكاية الأظرف' },
+  { key: 'printRunPrice', label: 'سعر تراج الطباعة' },
+  { key: 'numberingRunPrice', label: 'سعر تراج الترقيم' },
+  { key: 'envelopeDesignPrice', label: 'تصميم الأظرف' },
+  { key: 'envelopePrintRunPrice', label: 'تراج طباعة الأظرف' },
+  { key: 'sellophanePricePerSheet', label: 'سعر السلوفان لكل فرخ' },
+  { key: 'profitPercent', label: 'نسبة الربح % (هامش الربح الافتراضي)', step: '0.001' },
+  { key: 'wasteSheetsDefault', label: 'أفرخ التهدير الافتراضية' },
+  { key: 'notebookThreshold', label: 'حد عدد الدفاتر' },
+  { key: 'looseThreshold', label: 'حد عدد ورق السايب' },
+  { key: 'boardsBannerNoDesign', label: 'بنر بدون تصميم' },
+  { key: 'boardsBannerWithDesign', label: 'بنر مع تصميم' },
+  { key: 'boardsVinylPrintCutNoSello', label: 'فنيل برنت اند كت بدون سلوفان' },
+  { key: 'boardsVinylPrintCutWithSello', label: 'فنيل برنت اند كت مع سلوفان' },
+  { key: 'boardsVinylNormalNoSello', label: 'فنيل عادي بدون سلوفان' },
+  { key: 'boardsVinylNormalWithSello', label: 'فنيل عادي مع سلوفان' },
+  { key: 'boardsFlex', label: 'فلكس' },
+  { key: 'boardsSeasro', label: 'سيسرو' },
+  { key: 'boardsGapMM', label: 'المسافة بين القطع (مم)' },
+];
+
+/**
+ * Sprint 1 §3 — Fixed Prices, editable. Every field here already exists on
+ * `Setting` and is already writable via `PUT /api/settings`
+ * (settings.ts route, `settings.edit`); this only adds the form. Ink
+ * Prices and Finishing Costs are not shown — no such field exists
+ * (01_ANALYSIS.md Critical Finding #7), and this sprint doesn't add one.
+ */
+export function FixedPricesForm({ setting, onSaved }: { setting: Setting; onSaved: () => void }) {
+  const { can } = useAuth();
+  const [editing, setEditing] = useState(false);
+  const [values, setValues] = useState<Record<string, number>>(() =>
+    Object.fromEntries(NUMBER_FIELDS.map((f) => [f.key, setting[f.key] as number])),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  if (!editing) {
+    return (
+      <div className="space-y-3">
+        {can('settings.edit') && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setValues(Object.fromEntries(NUMBER_FIELDS.map((f) => [f.key, setting[f.key] as number])));
+              setEditing(true);
+            }}
+          >
+            تعديل الأسعار
+          </Button>
+        )}
+        <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
+          {NUMBER_FIELDS.map((f) => (
+            <div key={f.key} className="border-border flex flex-col gap-1 border-b border-dashed py-2 text-sm">
+              <span className="text-muted-foreground">{f.label}</span>
+              <span className="font-medium">
+                {f.key === 'profitPercent' ? `${setting[f.key]}%` : fmt(setting[f.key] as number)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPut('/api/settings', values satisfies UpdateSettingInput);
+      setEditing(false);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حفظ الأسعار');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="space-y-3">
+      {error && <div className="text-destructive text-sm">{error}</div>}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {NUMBER_FIELDS.map((f) => (
+          <label key={f.key} className="space-y-1 text-sm">
+            <span className="text-muted-foreground">{f.label}</span>
+            <input
+              type="number"
+              step={f.step ?? '0.01'}
+              min={0}
+              required
+              value={values[f.key]}
+              onChange={(e) => setValues((prev) => ({ ...prev, [f.key]: Number(e.target.value) }))}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Button type="submit" disabled={submitting}>
+          {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
+        </Button>
+        <Button type="button" variant="secondary" onClick={() => setEditing(false)}>
+          إلغاء
+        </Button>
+      </div>
+    </form>
+  );
+}

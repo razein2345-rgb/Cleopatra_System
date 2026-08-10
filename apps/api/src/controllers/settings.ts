@@ -14,6 +14,34 @@ export async function getSettings(_req: Request, res: Response) {
   res.json({ success: true, data: serializeDecimals(setting) });
 }
 
+/**
+ * FEATURE-007 — the letterhead-only slice of Settings, reachable by
+ * anyone who can view an Order/Quotation/WorkOrder to print it (gated on
+ * `orders.view` at the route, not `settings.view`).
+ */
+export async function getBusinessIdentity(_req: Request, res: Response) {
+  const setting = await prisma.setting.findFirst({
+    select: {
+      businessNameAr: true,
+      businessNameEn: true,
+      address: true,
+      phone: true,
+      email: true,
+      website: true,
+      taxNumber: true,
+      commercialRegisterNumber: true,
+      logoUrl: true,
+    },
+  });
+  if (!setting) {
+    res
+      .status(404)
+      .json({ success: false, error: { message: 'Settings have not been initialized yet' } });
+    return;
+  }
+  res.json({ success: true, data: setting });
+}
+
 export async function updateSettings(req: Request, res: Response) {
   const input = updateSettingSchema.parse(req.body);
   const existing = await prisma.setting.findFirst();
