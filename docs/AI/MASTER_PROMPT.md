@@ -190,6 +190,35 @@ Fix only issues introduced by this feature.
 
 ---
 
+## Database Checklist (required when a feature introduces a new table)
+
+Every feature that introduces a new table must finish with this checklist,
+before the Final Report:
+
+Database Checklist
+
+☐ Migration created
+
+☐ Soft Delete reviewed
+
+☐ Audit reviewed
+
+☐ Permissions reviewed
+
+☐ Row Level Security enabled
+
+☐ backend_only_deny_direct_access created
+
+☐ Verification completed
+
+See VISION.md's Engineering Standards → Database Security section: no
+application table may be considered complete without Row Level Security
+enabled and its `backend_only_deny_direct_access` policy created (ADR
+0029). This is not optional per table, and it is not deferred to a later
+cleanup pass — it is part of what "the table exists" means.
+
+---
+
 ## Step 8 — Final Report
 
 Always end with:
@@ -238,3 +267,13 @@ Always:
 - verify last
 
 Quality is more important than speed.
+
+When replacing an existing model that already contains production data:
+
+Never accept Prisma generated Drop/Create migrations without review.
+
+Prefer explicit Rename migrations.
+
+Preserve data whenever possible.
+
+Drop/Create is acceptable only when the affected tables are confirmed empty.

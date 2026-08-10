@@ -67,3 +67,6 @@ Sequential, zero-padded to 4 digits, never reused: `0001-title-in-kebab-case.md`
 | [0025](0025-audit-log-write-path-begins-phase-2.md) | Audit log write-path begins with Phase 2's auth events                   |
 | [0026](0026-legacy-employee-migration-mapping.md)   | Legacy employee → StaffProfile migration mapping                         |
 | [0027](0027-self-contained-build-lifecycle.md)      | Self-contained build lifecycle via `prepare`/`postinstall` (Vercel fix)  |
+| [0028](0028-last-active-admin-safety-rule.md)        | Last-active-administrator safety rule                                   |
+| [0029](0029-rls-defense-in-depth.md)                 | Row Level Security as Defense-in-Depth, never the authorization source  |
+| [0030](0030-backend-only-database-access.md)         | Backend-only database access                                            |

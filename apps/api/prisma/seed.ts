@@ -43,12 +43,12 @@ const DEFAULT_ROLES = [
 const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], string[]> = {
   SUPER_ADMIN: [GLOBAL_PERMISSION],
   ADMIN: [
-    'customers.*',
+    'partners.*',
     'orders.*',
     'quotations.*',
     'work-orders.*',
     'treasury.*',
-    'suppliers.*',
+    'inventory.*',
     'tenders.*',
     'reports.*',
     'settings.*',
@@ -56,18 +56,18 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     'roles.view',
     'permissions.view',
   ],
-  SALES: ['customers.*', 'orders.*', 'quotations.*', 'reports.view'],
-  CASHIER: ['treasury.*', 'orders.view', 'customers.view'],
+  SALES: ['partners.*', 'orders.*', 'quotations.*', 'reports.view', 'inventory.view'],
+  CASHIER: ['treasury.*', 'orders.view', 'partners.view'],
   PRODUCTION_MANAGER: ['work-orders.*', 'orders.view'],
   DESIGNER: ['work-orders.view', 'orders.view'],
   PRINTING_OPERATOR: ['work-orders.view', 'work-orders.edit'],
   VIEWER: [
-    'customers.view',
+    'partners.view',
     'orders.view',
     'quotations.view',
     'work-orders.view',
     'treasury.view',
-    'suppliers.view',
+    'inventory.view',
     'tenders.view',
     'reports.view',
     'settings.view',
@@ -101,6 +101,24 @@ const DEFAULT_SETTINGS = {
   boardsSeasro: 230,
   boardsGapMM: 5,
 };
+
+// FEATURE-004 M1. Representative departments from VISION.md's
+// Department-Based Workflow — starting data an administrator can rename,
+// add to, or remove (not `isSystem`-protected, unlike Role: no code ever
+// branches on a specific department's identity).
+const DEFAULT_DEPARTMENTS = [
+  { code: 'SALES', name: 'Sales' },
+  { code: 'DESIGN', name: 'Design' },
+  { code: 'OFFSET_PRINTING', name: 'Offset Printing' },
+  { code: 'DIGITAL_PRINTING', name: 'Digital Printing' },
+  { code: 'PLATE_PREPARATION', name: 'Plate Preparation' },
+  { code: 'FINISHING', name: 'Finishing' },
+  { code: 'WAREHOUSE', name: 'Warehouse' },
+  { code: 'PURCHASING', name: 'Purchasing' },
+  { code: 'EXTERNAL_SUPPLIER', name: 'External Supplier' },
+  { code: 'DELIVERY', name: 'Delivery' },
+  { code: 'CUSTOMER_SERVICE', name: 'Customer Service' },
+] as const;
 
 // Mirrors legacy DEFAULT_FAMILIES exactly (LEGACY_ANALYSIS §3/§4).
 const DEFAULT_FAMILIES = [
@@ -274,6 +292,16 @@ async function main() {
         { base: 'GAYER' as const, name, price: 0 },
         { base: 'REGULAR' as const, name, price: 0 },
       ]),
+    });
+  }
+
+  // ---- Workflow Engine (FEATURE-004 M1) ----
+
+  for (const dept of DEFAULT_DEPARTMENTS) {
+    await prisma.department.upsert({
+      where: { code: dept.code },
+      update: {},
+      create: { code: dept.code, name: dept.name },
     });
   }
 

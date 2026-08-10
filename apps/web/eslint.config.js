@@ -38,4 +38,14 @@ export default tseslint.config([
       'react-refresh/only-export-components': 'off',
     },
   },
+  {
+    // Dashboard widget/data-provider modules intentionally co-export a plain
+    // registration object (DashboardWidgetDefinition) or a useX() context hook
+    // alongside their component — the same class of deliberate co-export as
+    // the two exemptions above, see REFINEMENTS.md §2.
+    files: ['src/lib/dashboard/**/*.tsx'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 ]);

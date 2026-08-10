@@ -1,6 +1,7 @@
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -65,6 +66,10 @@ enum OrderStatus {
   CANCELLED
 }
 
+/// @deprecated FEATURE-004 M1. See `WorkOrder.productionStatus`'s own doc
+/// comment — a hardcoded, Printing-specific pipeline the Workflow Engine
+/// replaces. Kept only because the field using it is kept; never
+/// referenced by new code.
 enum WorkOrderProductionStatus {
   WAITING
   DESIGN
@@ -134,6 +139,104 @@ enum AuditAction {
   LOGIN
   LOGOUT
   PASSWORD_RESET
+  /// FEATURE-002 M2. Distinct from STATUS_CHANGE: which contact is the
+  /// primary is a relationship/exclusivity change, not a status toggle —
+  /// kept separate so "who was primary when" stays independently queryable.
+  PRIMARY_CHANGED
+  /// FEATURE-002 M3. Same rationale as PRIMARY_CHANGED, for the analogous
+  /// "default address per type" exclusivity change — kept as its own value
+  /// per the explicit M3 requirement, rather than reusing PRIMARY_CHANGED,
+  /// since the two flags belong to different entities and audit queries
+  /// should be able to filter for one without the other.
+  DEFAULT_CHANGED
+  /// FEATURE-002 M4. Per-entity CRUD action names for the Category/Tag
+  /// admin catalogs — an explicit, deliberate exception to the
+  /// CREATE/UPDATE/DELETE + entityType convention used everywhere else in
+  /// this feature (see 03_IMPLEMENT.md M2's "wouldn't scale to future
+  /// entities" note): the M4 requirement specifies these exact action
+  /// names, so they are used as specified rather than folded into the
+  /// generic values.
+  CREATE_CATEGORY
+  UPDATE_CATEGORY
+  DELETE_CATEGORY
+  CREATE_TAG
+  UPDATE_TAG
+  DELETE_TAG
+  /// A partner's Category assignment changed — relationship/exclusivity
+  /// change, same rationale as PRIMARY_CHANGED/DEFAULT_CHANGED, distinct
+  /// from a generic STATUS_CHANGE/UPDATE on the partner record itself.
+  CATEGORY_CHANGED
+  /// A partner's Tag set changed (any add/remove) — one audit entry per
+  /// assignment call, not one per tag, since tags are set as a whole.
+  TAGS_CHANGED
+  /// FEATURE-002 M5. A note was pinned — kept distinct from generic UPDATE
+  /// since pinning is a relationship/visibility change (same rationale as
+  /// PRIMARY_CHANGED/DEFAULT_CHANGED/CATEGORY_CHANGED), not a content edit.
+  PIN
+  /// The inverse of PIN — kept as its own value rather than reusing PIN
+  /// with a payload flag, so "when was this unpinned" stays independently
+  /// queryable, consistent with the PRIMARY_CHANGED/DEFAULT_CHANGED style.
+  UNPIN
+  /// FEATURE-003. An internal approval decision on a Quotation changed —
+  /// kept distinct from STATUS_CHANGE for the same reason PIN/UNPIN and
+  /// CATEGORY_CHANGED are distinct from generic UPDATE: approval and the
+  /// customer-facing workflow status are independent concepts (see
+  /// QuotationApprovalState's doc comment) and audit queries should be
+  /// able to filter for one without the other.
+  APPROVAL_CHANGED
+  /// ADR 0028 (Last-Active-Administrator Safety Rule). Recorded by
+  /// `AdminSafetyService` itself whenever it rejects an operation that
+  /// would orphan the system — never by the calling controller — so
+  /// every current and future caller gets this for free. `newValue`
+  /// carries `{ reason: 'LAST_ACTIVE_ADMIN', operation }`; a distinct
+  /// value from DELETE/UPDATE/STATUS_CHANGE specifically so future
+  /// security reporting can filter for "rejected, dangerous attempts"
+  /// as its own category, independent of what succeeded.
+  SECURITY_REJECTION
+}
+
+/// FEATURE-002. Lifecycle stage — distinct from PartnerRole (what capacity
+/// a partner acts in). PROSPECT is a stage every partner starts in, not a
+/// role, so it is not duplicated in PartnerRole.
+enum PartnerStatus {
+  PROSPECT
+  ACTIVE
+  INACTIVE
+  BLOCKED
+}
+
+/// FEATURE-002. What capacity a partner acts in; a partner may hold more
+/// than one at once (see 01_ANALYSIS.md's Approved decision).
+enum PartnerRole {
+  CUSTOMER
+  SUPPLIER
+  GOVERNMENT
+  SCHOOL
+  HOSPITAL
+  COMPANY
+  PRINTING_HOUSE
+  INTERNAL_DEPARTMENT
+}
+
+/// FEATURE-002 M2. Nullable on ContactPerson — "no preference recorded" is
+/// a valid, distinct state from any specific channel.
+enum PreferredContactMethod {
+  PHONE
+  MOBILE
+  WHATSAPP
+  EMAIL
+}
+
+/// FEATURE-002 M3.
+enum AddressType {
+  BILLING
+  SHIPPING
+  OFFICE
+  FACTORY
+  BRANCH
+  WAREHOUSE
+  REGISTERED
+  OTHER
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +259,7 @@ model Branch {
 
   staff             StaffProfile[]
   userBranchAccess  UserBranchAccess[]
+  businessPartners  BusinessPartner[]
   orders            Order[]
   quotations        Quotation[]
   workOrders        WorkOrder[]
@@ -205,6 +309,11 @@ model Setting {
   designPrice             Decimal @db.Decimal(12, 2)
   wasteSheetsDefault      Int
   profitPercent           Decimal @db.Decimal(6, 3)
+  /// FEATURE-007 PE-E — VAT percentage applied when `Order.vatOn`/
+  /// `Quotation.vatOn` is toggled on. Previously only the boolean toggle
+  /// existed with no configurable rate (`vatAmount` was caller-supplied).
+  /// Business-logic prompt §6.1 default: 14%.
+  vatRate                 Decimal @default(14) @db.Decimal(5, 2)
   notebookThreshold       Int
   looseThreshold          Int
   sellophanePricePerSheet Decimal @db.Decimal(12, 2)
@@ -220,8 +329,70 @@ model Setting {
   boardsSeasro                 Decimal @db.Decimal(12, 2)
   boardsGapMM                  Decimal @db.Decimal(6, 2)
 
+  /// FEATURE-006 — business identity for document headers (Quotation/
+  /// Invoice/Work Order printing). All nullable/additive; logoUrl above is
+  /// reused as-is (no upload endpoint exists anywhere in this codebase —
+  /// confirmed by inspection — so this stays a plain URL field, not a file
+  /// upload, per the explicit decision not to invent upload architecture).
+  businessNameAr           String?
+  businessNameEn           String?
+  address                  String?
+  phone                    String?
+  email                    String?
+  website                  String?
+  taxNumber                String?
+  commercialRegisterNumber String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
+// Document Templates & Printing (FEATURE-006). Versioned exactly like
+// WorkflowTemplate (FEATURE-004): code stays implicit per documentType +
+// name, `version`/`previousVersionId` chain, `publishedAt` null = draft/
+// editable, non-null = immutable. A Quotation/Order/WorkOrder's
+// `documentTemplateId` points at one exact version forever — editing a
+// template publishes a new version, never mutates an existing row, so a
+// document that already froze its `documentSnapshot` (see those models
+// below) is never affected by a later edit.
+// ---------------------------------------------------------------------------
+
+/// `config` holds the customizable header/footer/section-visibility/terms/
+/// signature-area shape — one flexible field, the same precedent as
+/// StageInstance.variableValues, rather than dozens of rigid columns.
+/// "Exactly one default per documentType" reuses the exclusivity-lock
+/// pattern from partnerChildEntity.ts (generalized to a lock-key form,
+/// since there is no natural parent row to lock the way BusinessPartner
+/// is for ContactPerson/PartnerAddress — see setExclusiveDefaultByKey).
+model DocumentTemplate {
+  id           String       @id @default(uuid()) @db.Uuid
+  documentType DocumentType
+  name         String
+  config       Json
+
+  isDefault Boolean @default(false)
+
+  version           Int               @default(1)
+  previousVersionId String?           @unique @db.Uuid
+  previousVersion   DocumentTemplate? @relation("DocumentTemplateVersionChain", fields: [previousVersionId], references: [id])
+  nextVersion       DocumentTemplate? @relation("DocumentTemplateVersionChain")
+  publishedAt       DateTime?
+
+  quotations Quotation[]
+  orders     Order[]
+  workOrders WorkOrder[]
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([documentType], where: { isDefault: true, isDeleted: false })
+  @@index([isDeleted])
+  @@index([documentType])
 }
 
 /// Replaces legacy `settings.families`. "Protected" sizes (LEGACY_ANALYSIS
@@ -290,6 +461,9 @@ model ReadyProduct {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // FEATURE-003 M1.
+  quotationItems QuotationItem[]
+
   @@index([isDeleted])
 }
 
@@ -298,6 +472,9 @@ model Service {
   name     String
   price    Decimal         @db.Decimal(12, 2)
   category ServiceCategory
+
+  // FEATURE-003 M1.
+  quotationItems QuotationItem[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -321,7 +498,7 @@ model Service {
 // more Roles (UserRole), each Role has a set of Permissions (RolePermission).
 // Nothing about "what a role can do" is hardcoded in application code — the
 // permission check is always a query against these tables. `Permission.key`
-// follows a `<module>.<action>` convention (e.g. `customers.view`) with two
+// follows a `<module>.<action>` convention (e.g. `partners.view`) with two
 // wildcard forms: `<module>.*` (everything in one module) and `*` (superuser,
 // granted only to the seeded Super Admin role).
 // ---------------------------------------------------------------------------
@@ -338,6 +515,13 @@ model StaffProfile {
   branchId String @db.Uuid
   branch   Branch @relation(fields: [branchId], references: [id])
 
+  /// FEATURE-004 M1. Home department — nullable since existing staff have
+  /// none yet, and not every role needs one (Sales/Admin have no
+  /// production-floor queue). Mirrors `branchId`'s "home + explicit grants"
+  /// shape exactly (see `UserDepartmentAccess`).
+  departmentId String?     @db.Uuid
+  department   Department? @relation(fields: [departmentId], references: [id])
+
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
@@ -345,16 +529,21 @@ model StaffProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  roles           UserRole[]
-  branchAccess    UserBranchAccess[]
-  orders          Order[]
-  quotations      Quotation[]
-  treasuryEntries TreasuryEntry[]
-  attachments     Attachment[]
-  auditLogs       AuditLog[]
+  roles                      UserRole[]
+  branchAccess               UserBranchAccess[]
+  departmentAccess           UserDepartmentAccess[]
+  businessPartnersAsSalesRep BusinessPartner[]
+  orders                     Order[]
+  quotations                 Quotation[]
+  treasuryEntries            TreasuryEntry[]
+  attachments                Attachment[]
+  auditLogs                  AuditLog[]
+  assignedStageInstances     StageInstance[]
+  workflowEvents             WorkflowEvent[]
 
   @@index([isDeleted])
   @@index([branchId])
+  @@index([departmentId])
   @@index([isActive])
 }
 
@@ -441,14 +630,49 @@ model UserBranchAccess {
 }
 
 // ---------------------------------------------------------------------------
-// Customers (schema only — API/UI in Phase 3). Shared across branches.
+// Business Partners (FEATURE-002). Replaces the previously separate
+// Customer/Supplier placeholders — see
+// docs/AI/FEATURES/FEATURE-002-CUSTOMERS/01_ANALYSIS.md (Approved: Business
+// Partner + Contact Person). A partner may hold multiple roles (Customer,
+// Supplier, ...) at once instead of needing a separate record per role.
+// Shared across branches; branchId is the partner's primary/home branch,
+// not a visibility restriction — any staff with `partners.view` may see any
+// partner regardless of branch.
+//
+// See docs/AI/FEATURES/FEATURE-002-CUSTOMERS/03_IMPLEMENT.md. Contacts
+// (M2), addresses (M3), and categories/tags (M4) are modeled; credit, tax,
+// documents, notes, duplicate detection, and merge are later milestones
+// and intentionally not modeled here yet.
 // ---------------------------------------------------------------------------
 
-model Customer {
-  id    String  @id @default(uuid()) @db.Uuid
-  name  String
+model BusinessPartner {
+  id           String  @id @default(uuid()) @db.Uuid
+  nameAr       String
+  nameEn       String?
+  shortName    String?
+  isIndividual Boolean @default(false)
+
+  roles  PartnerRole[]
+  status PartnerStatus @default(PROSPECT)
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  salesRepId String?       @db.Uuid
+  salesRep   StaffProfile? @relation(fields: [salesRepId], references: [id])
+
   phone String?
+  email String?
   notes String?
+
+  // FEATURE-002 M4. Zero-or-one Category (a plain nullable FK — no
+  // exclusivity/lock pattern needed, unlike ContactPerson.isPrimary or
+  // PartnerAddress.isDefault, since there is only ever one FK column to
+  // update, not a flag to move between sibling rows). Zero-or-more Tags
+  // via the BusinessPartnerTag join table.
+  categoryId String?              @db.Uuid
+  category   PartnerCategory?     @relation(fields: [categoryId], references: [id])
+  tags       BusinessPartnerTag[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -457,14 +681,360 @@ model Customer {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  orders          Order[]
-  quotations      Quotation[]
-  treasuryEntries TreasuryEntry[]
-  tenders         Tender[]
-  attachments     Attachment[]
+  contacts               ContactPerson[]
+  addresses              PartnerAddress[]
+  // FEATURE-002 M5. Named `partnerNotes`, not `notes` — the scalar `notes`
+  // field above (M1, a single free-text remarks field edited from the
+  // Overview tab) already owns that name. `PartnerNote` is a distinct,
+  // unlimited, first-class, pinnable, audited entity; the two are not the
+  // same concept and are not merged.
+  partnerNotes           PartnerNote[]
+  // FEATURE-002 M6. Optional 1:1 — see PartnerCommercialProfile's own doc
+  // comment for why this is a separate model, not inline fields here.
+  commercialProfile      PartnerCommercialProfile?
+  orders                 Order[]
+  quotations             Quotation[]
+  treasuryEntries        TreasuryEntry[]
+  tenders                Tender[]
+  attachments            Attachment[]
+  supplierPurchases      SupplierPurchase[]
+  supplierPayments       SupplierPayment[]
+  // FEATURE-004 M1 — a partner holding the SUPPLIER role may be assigned to
+  // an EXTERNAL WorkflowStage's StageInstance (VISION.md's External
+  // Supplier Workflow), reusing BusinessPartner rather than a parallel
+  // Supplier model, per Reuse Before Create (see SupplierPurchase/
+  // SupplierPayment's own identical reuse).
+  assignedStageInstances StageInstance[]
+  // See AuditLog.partnerId's doc comment for why this denormalized
+  // back-relation exists (Timeline Preparation / Activity Feed Ready).
+  auditLogs              AuditLog[]
 
   @@index([isDeleted])
-  @@index([name])
+  @@index([status])
+  @@index([branchId])
+  @@index([nameAr])
+  @@index([categoryId])
+}
+
+// ---------------------------------------------------------------------------
+// Categories & Tags (FEATURE-002 M4). Both are administrator-managed
+// catalogs (mutated only via `settings.edit`, mirroring SheetType/
+// SizeFamily), distinct from PartnerRole (what capacity a partner acts
+// in, fixed enum, set at data-model design time) and PartnerStatus
+// (lifecycle stage) — Category/Tag are open-ended, business-configurable
+// segmentation, per 00_REQUIREMENTS.md §14-15.
+//
+// Category is a plain nullable FK on BusinessPartner (zero-or-one, no
+// exclusivity pattern needed). Tag is many-to-many via the explicit
+// BusinessPartnerTag join table (Prisma requires an explicit join model
+// once the relation carries its own metadata/needs cascade behavior
+// tuned per side; kept explicit here for the same reason M2/M3 favored
+// explicitness over implicit magic).
+// ---------------------------------------------------------------------------
+
+model PartnerCategory {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  description String?
+  isActive    Boolean @default(true)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  partners BusinessPartner[]
+
+  @@index([isDeleted])
+  @@index([isActive])
+}
+
+model PartnerTag {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String  @unique
+  isActive Boolean @default(true)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  partnerTags BusinessPartnerTag[]
+
+  @@index([isDeleted])
+  @@index([isActive])
+}
+
+/// Join table: which Tags are currently assigned to which BusinessPartner.
+/// Plain rows with no independent lifecycle of their own (ADR 0007) — a
+/// tag assignment is created/removed outright, never soft-deleted, exactly
+/// like OrderItem/QuotationItem.
+model BusinessPartnerTag {
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  tagId     String          @db.Uuid
+  tag       PartnerTag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([partnerId, tagId])
+  @@index([tagId])
+}
+
+// ---------------------------------------------------------------------------
+// Contact Persons (FEATURE-002 M2). First-class per the Approved decision
+// in 01_ANALYSIS.md — a named individual who represents a BusinessPartner,
+// with their own authority flags. Every ContactPerson belongs to exactly
+// one BusinessPartner (no shared/cross-partner contacts in this milestone).
+//
+// isPrimary is intentionally NOT settable through the general update path
+// — see the Set Primary business rule enforced in the service/controller
+// layer, which unsets any other primary contact for the same partner in
+// the same transaction, inside a row lock on the parent BusinessPartner
+// (see setPrimaryContactPerson) to stay correct under concurrent
+// requests. isActive is a separate concept from isDeleted: isActive is a
+// business toggle (an inactive contact can be reactivated, and cannot be
+// primary while inactive); isDeleted is the standard soft-delete
+// lifecycle (ADR 0007) — same split as StaffProfile.
+//
+// The "only one Primary Contact per partner" rule is enforced twice,
+// deliberately: the application layer (above) gives a clean error
+// message and stays race-free under normal concurrent use via the row
+// lock; the partial unique index below (`partialIndexes` preview
+// feature, confirmed working via `prisma migrate diff` before adopting
+// it) is the non-negotiable database-level guarantee that survives any
+// future bug or direct-database access — this can never silently hold
+// two primary contacts for the same partner, even if the application
+// logic above is ever bypassed or changed incorrectly.
+// ---------------------------------------------------------------------------
+
+model ContactPerson {
+  id        String          @id @default(uuid()) @db.Uuid
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  fullName   String
+  jobTitle   String?
+  department String?
+
+  mobile   String?
+  phone    String?
+  whatsapp String?
+  email    String?
+
+  preferredContactMethod PreferredContactMethod?
+
+  isPrimary Boolean @default(false)
+
+  canApproveQuotations         Boolean @default(false)
+  canApproveWorkOrders         Boolean @default(false)
+  canApproveFinancialDocuments Boolean @default(false)
+
+  notes    String?
+  isActive Boolean @default(true)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([partnerId], where: { isPrimary: true, isDeleted: false })
+  @@index([partnerId])
+  @@index([isDeleted])
+  @@index([isPrimary])
+}
+
+// ---------------------------------------------------------------------------
+// Addresses (FEATURE-002 M3). Every field is optional except `name` and
+// `type`, since address formats vary too much by country to require a
+// fixed shape. Coordinates are Float, not Decimal — the "money fields use
+// Decimal" convention above is about currency precision, not geographic
+// coordinates.
+//
+// "Only one default address per Address Type" mirrors ContactPerson's
+// "only one Primary Contact" pattern exactly, and for the same two
+// reasons: a row lock on the parent BusinessPartner in the
+// set-default-address service call for concurrency safety, plus a
+// database-level partial unique index — scoped to (partnerId, type),
+// since a partner may have one default BILLING address AND one default
+// SHIPPING address at the same time, just not two default BILLING
+// addresses.
+// ---------------------------------------------------------------------------
+
+model PartnerAddress {
+  id        String          @id @default(uuid()) @db.Uuid
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  name String
+  type AddressType
+
+  country     String?
+  governorate String?
+  city        String?
+  district    String?
+  street      String?
+  building    String?
+  floor       String?
+  apartment   String?
+  postalCode  String?
+
+  googleMapsUrl String?
+  latitude      Float?
+  longitude     Float?
+
+  notes String?
+
+  isDefault Boolean @default(false)
+  isActive  Boolean @default(true)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([partnerId, type], where: { isDefault: true, isDeleted: false })
+  @@index([partnerId])
+  @@index([isDeleted])
+  @@index([type])
+}
+
+// ---------------------------------------------------------------------------
+// Notes (FEATURE-002 M5). Unlimited, first-class, timestamped,
+// attributable free-text entries per partner — distinct from
+// `BusinessPartner.notes` above (a single M1 scalar remarks field; not
+// merged with this model, not renamed, not redesigned).
+//
+// `createdBy`/`updatedBy` are bare UUIDs, not formal relations to
+// StaffProfile — same deliberate simplification ADR 0007 already applies
+// to `deletedBy`, to avoid duplicate named relations on StaffProfile.
+// The API resolves author names by cross-referencing the existing
+// `GET /api/users` list client-side rather than adding a new relation.
+//
+// `isPinned` is intentionally NOT an "exactly one" exclusivity flag —
+// unlike ContactPerson.isPrimary/PartnerAddress.isDefault, many notes may
+// be pinned simultaneously ("pinned notes always appear first, then
+// newest first" describes a two-tier sort, not single-item exclusivity).
+// No lock/transaction pattern or partial unique index applies here.
+// ---------------------------------------------------------------------------
+
+model PartnerNote {
+  id        String          @id @default(uuid()) @db.Uuid
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  title String
+  body  String
+  color String?
+
+  isPinned Boolean @default(false)
+
+  createdBy String  @db.Uuid
+  updatedBy String? @db.Uuid
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([partnerId])
+  @@index([isDeleted])
+  @@index([isPinned])
+}
+
+// ---------------------------------------------------------------------------
+// Commercial & Credit Profile (FEATURE-002 M6). Kept as its own model —
+// never inline fields on BusinessPartner — per the service-boundary
+// decision in 02_PLAN.md §3: credit decisions follow a different approval
+// chain (Accounts/Credit Control) than partner identity (Sales/Customer
+// Service), so the two must not share one service or one set of
+// permissions. Also the concrete implementation of the pre-M6
+// "Commercial Profile Separation" and "Avoid God Objects" rules.
+//
+// One-to-zero-or-one with BusinessPartner (`partnerId @unique`) — a
+// partner may have no commercial profile yet (e.g. a fresh PROSPECT).
+//
+// Deliberately excluded from this milestone:
+//   - Tax Information — already has its own dedicated future milestone
+//     (M7 Tax & Compliance Information per 03_IMPLEMENT.md's roadmap);
+//     adding it here would duplicate that milestone's planned scope.
+//   - Sales Representative — already exists as `BusinessPartner.salesRepId`
+//     (M1, core identity). Not duplicated here.
+//   - Commercial Classification — implemented as `priceTier` below, a
+//     free-text field distinct from the M4 `PartnerCategory` (VIP/Gold/
+//     Silver/...): Category is general partner segmentation used across
+//     the whole partner record; priceTier is commercial/pricing-specific
+//     and scoped to this profile only.
+//
+// No soft-delete triad — a deliberate exception to ADR 0007's general
+// convention (see that ADR's Consequences section): this is a 1:1 detail
+// record of BusinessPartner, not an independently-addressable list-of-many
+// entity the way ContactPerson/PartnerAddress/PartnerNote are. The
+// correct soft-delete unit is the BusinessPartner itself — deleting the
+// partner already makes its commercial profile inaccessible (access is
+// always partner-scoped, checked via the partner's own isDeleted first).
+// `onDelete: Cascade` handles the (never-exercised-by-the-app, since
+// partners are always soft-deleted) hard-delete case at the DB level.
+// ---------------------------------------------------------------------------
+
+/// Credit/account standing — distinct from BusinessPartner.status (overall
+/// partner lifecycle: Prospect/Active/Inactive/Blocked). This is narrower:
+/// whether the partner's account is currently in good standing for
+/// commercial transactions.
+enum PartnerCommercialStatus {
+  ACTIVE
+  ON_HOLD
+  UNDER_REVIEW
+}
+
+enum PartnerRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model PartnerCommercialProfile {
+  id        String          @id @default(uuid()) @db.Uuid
+  partnerId String          @unique @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  creditLimit            Decimal?                @db.Decimal(12, 2)
+  /// Net payment terms, in days (e.g. 30 for "Net 30"). A single number,
+  /// not a richer terms model — nothing more specific was ever specified.
+  paymentTermsDays       Int?
+  preferredPaymentMethod PaymentMethod?
+  /// Free text, not an enum — no fixed set of tier names was specified;
+  /// see the model-level comment above for why this is distinct from
+  /// PartnerCategory.
+  priceTier              String?
+  status                 PartnerCommercialStatus @default(ACTIVE)
+  riskLevel              PartnerRiskLevel?
+  /// Not yet enforced or used in any calculation anywhere in the system —
+  /// captured now, ahead of any real multi-currency support, per the
+  /// explicit "future-ready" requirement. A loose string (e.g. "EGP"),
+  /// not a Currency table/enum — that infrastructure does not exist yet
+  /// and inventing it now would be premature.
+  preferredCurrency      String?
+  /// Distinct from BusinessPartner.notes (M1, one general remark) and
+  /// PartnerNote (M5, unlimited pinnable/searchable notes) — this is a
+  /// short, commercial-specific annotation visible only to
+  /// partners.credit.manage holders, not the general Notes feature.
+  internalNotes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
 }
 
 // ---------------------------------------------------------------------------
@@ -476,12 +1046,12 @@ model Order {
   id            String @id @default(uuid()) @db.Uuid
   invoiceNumber String @unique // e.g. CLP-INV-2026-000001, see DocumentSequence
 
-  branchId   String       @db.Uuid
-  branch     Branch       @relation(fields: [branchId], references: [id])
-  customerId String       @db.Uuid
-  customer   Customer     @relation(fields: [customerId], references: [id])
-  staffId    String       @db.Uuid
-  staff      StaffProfile @relation(fields: [staffId], references: [id])
+  branchId  String          @db.Uuid
+  branch    Branch          @relation(fields: [branchId], references: [id])
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id])
+  staffId   String          @db.Uuid
+  staff     StaffProfile    @relation(fields: [staffId], references: [id])
 
   date            DateTime    @default(now())
   subtotal        Decimal     @db.Decimal(12, 2)
@@ -494,6 +1064,17 @@ model Order {
   customerNotes   String?
   internalNotes   String?
   status          OrderStatus @default(DRAFT)
+
+  // FEATURE-006 — Document Templates & Printing. `documentOverrides` is
+  // this document's one-time presentation customization (never written
+  // back to Setting or to documentTemplate); `documentSnapshot` is the
+  // fully resolved, frozen render configuration captured once at first
+  // print — never silently recomputed afterward, per the explicit
+  // hierarchy in FEATURE-006's 00_REQUIREMENTS.md.
+  documentTemplateId String?           @db.Uuid
+  documentTemplate   DocumentTemplate? @relation(fields: [documentTemplateId], references: [id])
+  documentOverrides  Json?
+  documentSnapshot   Json?
 
   items           OrderItem[]
   payments        Payment[]
@@ -510,7 +1091,7 @@ model Order {
   updatedAt DateTime @updatedAt
 
   @@index([isDeleted])
-  @@index([customerId])
+  @@index([partnerId])
   @@index([branchId])
   @@index([status])
 }
@@ -526,7 +1107,29 @@ model OrderItem {
   modelName String?
   breakdown Json
 
+  /// FEATURE-007 PE-E — the frozen pricing-engine result for this item
+  /// (packages/shared/src/pricing/*'s `.total`). Kept as its own queryable/
+  /// summable column alongside `breakdown` (which holds the full
+  /// computation detail) so `Order.subtotal` can be derived by summing
+  /// this column without parsing JSON.
+  itemTotal Decimal? @db.Decimal(12, 2)
+
+  /// FEATURE-007 M2 — sheet-count-to-inventory link. All nullable/additive:
+  /// only populated when `kind` is 'loose' or 'notebook' AND the caller
+  /// supplied a size/family/stock item (paper-consuming items only —
+  /// product/service items never touch inventory). `sheetsConsumed` is
+  /// frozen at creation time (never recomputed), matching this project's
+  /// "freeze by default" discipline — it is history of what was deducted,
+  /// not a live-recalculated figure.
+  sizeFamilyKey   String?
+  realSizeLabel   String?
+  inventoryItemId String?        @db.Uuid
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+  sheetsConsumed  Decimal?       @db.Decimal(14, 3)
+
   createdAt DateTime @default(now())
+
+  @@index([inventoryItemId])
 }
 
 model Payment {
@@ -542,21 +1145,42 @@ model Payment {
 }
 
 // ---------------------------------------------------------------------------
-// Quotations (schema only — API/UI in Phase 7). Independent of Order per
-// Requirement 2; conversion (Requirement 3) creates a real Order, freezing
-// the breakdown by default or recalculating when explicitly requested.
+// Quotations (FEATURE-003 M1 — Quotation Engine foundation; M2 — Order
+// Conversion; the rest of this model was schema-only since Phase 1).
+// Independent of Order per Requirement 2; conversion (M2,
+// convertQuotationToOrder in quotationService.ts) creates a real Order,
+// freezing the breakdown by default (ADR 0010) — the explicit
+// `recalculate: true` re-run-current-pricing path remains deferred until
+// a real Pricing Engine exists.
+//
+// Status transitions and approval-state transitions are service-layer-only
+// (see apps/api/src/services/quotationService.ts) — no UI/route code
+// decides legality of a transition, so this can move behind a real
+// Workflow Engine later without an API-contract change (VISION.md's
+// Workflow Engine Architecture).
 // ---------------------------------------------------------------------------
+
+/// Internal approval decision on a Quotation — deliberately independent of
+/// QuotationStatus (the customer-facing document lifecycle). "Has this
+/// been internally approved" and "has the customer accepted this" are
+/// different questions with different actors; conflating them into one
+/// enum would make both harder to query and reason about independently.
+enum QuotationApprovalState {
+  PENDING
+  APPROVED
+  NEEDS_REVISION
+}
 
 model Quotation {
   id              String @id @default(uuid()) @db.Uuid
   quotationNumber String @unique // e.g. CLP-QUO-2026-000001
 
-  branchId   String       @db.Uuid
-  branch     Branch       @relation(fields: [branchId], references: [id])
-  customerId String       @db.Uuid
-  customer   Customer     @relation(fields: [customerId], references: [id])
-  staffId    String       @db.Uuid
-  staff      StaffProfile @relation(fields: [staffId], references: [id])
+  branchId  String          @db.Uuid
+  branch    Branch          @relation(fields: [branchId], references: [id])
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id])
+  staffId   String          @db.Uuid
+  staff     StaffProfile    @relation(fields: [staffId], references: [id])
 
   date            DateTime        @default(now())
   validUntil      DateTime
@@ -567,8 +1191,32 @@ model Quotation {
   finalTotal      Decimal         @db.Decimal(12, 2)
   status          QuotationStatus @default(DRAFT)
 
+  // FEATURE-003 M1. Same naming convention Order already established
+  // (Order.customerNotes/internalNotes, Phase 1) — customerNotes is
+  // Customer-View-visible, internalNotes never is.
+  customerNotes String?
+  internalNotes String?
+
+  approvalState QuotationApprovalState @default(PENDING)
+
+  // FEATURE-003 M1 versioning: a new version is a new row, never an
+  // overwrite. `previousVersionId` is @unique, so at most one row may
+  // point back to a given earlier version — a linear chain, not a tree.
+  // Full history is reconstructed by walking this chain, or (for
+  // cross-entity activity) via AuditLog.partnerId.
+  version           Int        @default(1)
+  previousVersionId String?    @unique @db.Uuid
+  previousVersion   Quotation? @relation("QuotationVersionChain", fields: [previousVersionId], references: [id])
+  nextVersion       Quotation? @relation("QuotationVersionChain")
+
   convertedOrderId String? @unique @db.Uuid
   convertedOrder   Order?  @relation("QuotationConversion", fields: [convertedOrderId], references: [id])
+
+  // FEATURE-006 — see the identical fields' doc comment on Order above.
+  documentTemplateId String?           @db.Uuid
+  documentTemplate   DocumentTemplate? @relation(fields: [documentTemplateId], references: [id])
+  documentOverrides  Json?
+  documentSnapshot   Json?
 
   items       QuotationItem[]
   attachments Attachment[]
@@ -581,25 +1229,65 @@ model Quotation {
   updatedAt DateTime @updatedAt
 
   @@index([isDeleted])
-  @@index([customerId])
+  @@index([partnerId])
   @@index([branchId])
   @@index([status])
+  @@index([approvalState])
 }
 
+/// FEATURE-003 M1. `itemType` is the foundation-milestone discriminator —
+/// a plain String (not a Prisma enum), matching OrderItem.kind's own
+/// zero-migration extensibility: new business lines (Marketing Service,
+/// Graphic Design, Photography, Video Editing, Branding, ...) introduce a
+/// new itemType value, never a schema change. `kind`/`modelName`/
+/// `breakdown` remain reserved for the future Pricing/Calculation Engine
+/// (LEGACY_ANALYSIS §8) and are not populated by this milestone — all
+/// three are nullable (kind/breakdown were NOT NULL under the old
+/// schema-only definition; relaxed here since the table held zero rows in
+/// any environment, and this milestone would otherwise have to write
+/// meaningless placeholder data into them just to satisfy the constraint).
+/// FEATURE-007 — wired to the same Pricing Engine as OrderItem (owner's
+/// explicit clarification, 2026-08-10, that Quotation creation is not a
+/// separate flow). `quantity`/`size` columns removed — the customer-facing
+/// quantity now lives inside `breakdown` (same freeze pattern as
+/// OrderItem, see order.ts's doc comment); no `inventoryItemId`/
+/// `sheetsConsumed` here at all — Quotations never touch stock, only a
+/// converted Order does.
 model QuotationItem {
   id          String    @id @default(uuid()) @db.Uuid
   quotationId String    @db.Uuid
   quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-  kind        String
-  modelName   String?
-  breakdown   Json
+
+  itemType    String
+  notes       String?
+  description String?
+
+  readyProductId String?       @db.Uuid
+  readyProduct   ReadyProduct? @relation(fields: [readyProductId], references: [id])
+  serviceId      String?       @db.Uuid
+  service        Service?      @relation(fields: [serviceId], references: [id])
+
+  kind      String?
+  modelName String?
+  breakdown Json?
+  itemTotal Decimal? @db.Decimal(12, 2)
+
+  sizeFamilyKey String?
+  realSizeLabel String?
 
   createdAt DateTime @default(now())
+
+  @@index([quotationId])
+  @@index([readyProductId])
+  @@index([serviceId])
 }
 
 // ---------------------------------------------------------------------------
-// Work Orders (schema only — API/UI in Phase 8). Independent of Order.status
-// per Requirement 4 — production-floor lifecycle tracked separately.
+// Work Orders (FEATURE-004 M1 — first real application code; schema existed
+// since Phase 1). Independent of Order.status per Requirement 4 —
+// production-floor lifecycle tracked separately, now via the Workflow
+// Engine below rather than `productionStatus` (see its own deprecation
+// comment) — WorkOrder itself stays the thin identity/numbering record.
 // ---------------------------------------------------------------------------
 
 model WorkOrder {
@@ -611,7 +1299,21 @@ model WorkOrder {
   branchId String @db.Uuid
   branch   Branch @relation(fields: [branchId], references: [id])
 
+  /// @deprecated FEATURE-004 M1. Superseded by `workflowInstance` — the
+  /// Workflow Engine is the real source of truth for production state from
+  /// this milestone forward. Kept (not removed) per explicit direction:
+  /// zero code reads or writes this field going forward; removal is
+  /// deferred to a future cleanup milestone once nothing could plausibly
+  /// still depend on it. Never reference this field in new code.
   productionStatus WorkOrderProductionStatus @default(WAITING)
+
+  workflowInstance WorkflowInstance?
+
+  // FEATURE-006 — see the identical fields' doc comment on Order above.
+  documentTemplateId String?           @db.Uuid
+  documentTemplate   DocumentTemplate? @relation(fields: [documentTemplateId], references: [id])
+  documentOverrides  Json?
+  documentSnapshot   Json?
 
   attachments Attachment[]
 
@@ -628,8 +1330,353 @@ model WorkOrder {
 }
 
 // ---------------------------------------------------------------------------
-// Treasury (schema only — API/UI in Phase 10, but written to starting in
-// Phase 6). Every field from Requirement 5 is a direct column, not a join.
+// Workflow Engine (FEATURE-004 M1). Generic engine — see docs/AI/VISION.md's
+// Workflow Engine Architecture / Dynamic Workflow Engine: the engine must
+// never know what a Stamp or Offset Printing is, only execute templates.
+// WorkOrder (above) is this milestone's first real consumer;
+// WorkflowInstance's owner linkage follows Attachment's established
+// multi-nullable-FK pattern (workOrderId today) so a future module (a
+// Marketing Job, etc.) adds its own nullable column the same way, without
+// the engine ever hardcoding "WorkOrder" as the only possible owner.
+// ---------------------------------------------------------------------------
+
+/// Admin-manageable list (VISION.md's Department-Based Workflow) — not a
+/// hardcoded enum. Global, not branch-scoped: Department answers "what kind
+/// of work," Branch answers "where" (FEATURE-004 01_ANALYSIS.md's Open
+/// Decisions) — a StageInstance's branch is read from its owning business
+/// record, never from a Department-Branch relationship. Not `isSystem`
+/// like Role — no code ever branches on a specific department's identity.
+model Department {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String
+  code        String  @unique
+  description String?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff          StaffProfile[]
+  userAccess     UserDepartmentAccess[]
+  stages         WorkflowStage[]
+  stageInstances StageInstance[]
+
+  @@index([isDeleted])
+}
+
+/// Direct precedent: UserBranchAccess. StaffProfile.departmentId is the home
+/// department; this table is additional access — the same "home + explicit
+/// grants" shape, reused rather than reinvented.
+model UserDepartmentAccess {
+  id           String       @id @default(uuid()) @db.Uuid
+  staffId      String       @db.Uuid
+  staff        StaffProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  departmentId String       @db.Uuid
+  department   Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  assignedAt   DateTime     @default(now())
+
+  @@unique([staffId, departmentId])
+}
+
+enum WorkflowStageType {
+  INTERNAL
+  EXTERNAL
+}
+
+enum WorkflowInstanceStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum StageInstanceStatus {
+  WAITING
+  IN_PROGRESS
+  DONE
+  SKIPPED
+  FAILED
+}
+
+/// Presets for a WorkflowStageVariable's answer type — structural (what
+/// *kind* of value), never a business-line concept. `selectOptions` (the
+/// actual choices for a SELECT variable) is data, not a schema concern.
+enum WorkflowVariableDataType {
+  TEXT
+  NUMBER
+  BOOLEAN
+  DATE
+  SELECT
+}
+
+/// Queue-ordering rank (FEATURE-004 Refinement 4) — a structural ranking,
+/// not a rules engine; nothing in this milestone auto-assigns a priority.
+enum WorkflowPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+/// FEATURE-004 Refinement 3 — the domain-event feed Timeline, Dashboard,
+/// Notifications, AI, Reporting, and Analytics are meant to consume,
+/// instead of inspecting workflow state directly. Distinct from AuditLog
+/// (security/compliance "who did what") — both are written for the same
+/// transition; neither replaces the other. See ADR-worthy reasoning in
+/// FEATURE-004 01_ANALYSIS.md.
+enum WorkflowEventType {
+  INSTANCE_STARTED
+  STAGE_STARTED
+  STAGE_COMPLETED
+  STAGE_SKIPPED
+  STAGE_FAILED
+  INSTANCE_COMPLETED
+  INSTANCE_CANCELLED
+}
+
+/// A Workflow Template version (VISION.md's Workflow Templates / Workflow
+/// Versioning). `code` is the stable identity shared across a template's
+/// versions (e.g. `OFFSET_PRINTING`); `version`/`previousVersionId` is the
+/// same non-destructive chain FEATURE-003 uses for Quotation versioning — a
+/// new version is a new row, never an overwrite. `publishedAt` null = draft
+/// (freely editable); once set, this version's stages are immutable
+/// (FEATURE-004 02_PLAN.md's Business Rules) — further changes go through
+/// `POST .../versions`, never a mutation of a published version. A running
+/// WorkflowInstance's `templateId` points at one exact version forever;
+/// publishing a new version never touches it.
+model WorkflowTemplate {
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String
+  name        String
+  description String?
+
+  version           Int               @default(1)
+  previousVersionId String?           @unique @db.Uuid
+  previousVersion   WorkflowTemplate? @relation("WorkflowTemplateVersionChain", fields: [previousVersionId], references: [id])
+  nextVersion       WorkflowTemplate? @relation("WorkflowTemplateVersionChain")
+
+  publishedAt DateTime?
+
+  stages    WorkflowStage[]
+  instances WorkflowInstance[]
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([code, version])
+  @@index([isDeleted])
+  @@index([code, publishedAt])
+}
+
+/// One stage within a WorkflowTemplate version — VISION.md's Workflow Stage
+/// Configuration, in full. `nextStageId`/`failureStageId` are the routing
+/// graph (FEATURE-004 00_REQUIREMENTS.md §7) — nullable self-references
+/// within the same template version, deliberately NOT unique (a branching
+/// or converging graph may have more than one stage point at the same next
+/// stage). Immutable once its template is published.
+model WorkflowStage {
+  id         String           @id @default(uuid()) @db.Uuid
+  templateId String           @db.Uuid
+  template   WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  order     Int
+  name      String
+  stageType WorkflowStageType @default(INTERNAL)
+
+  departmentId String?     @db.Uuid
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  defaultAssignedEmployeeId String? @db.Uuid
+
+  estimatedDurationMinutes Int?
+  requiresFiles            Boolean @default(false)
+  requiresApproval         Boolean @default(false)
+  requiresCostEntry        Boolean @default(false)
+  requiresTimeTracking     Boolean @default(false)
+  isMandatory              Boolean @default(true)
+  canSkip                  Boolean @default(false)
+
+  nextStageId String?         @db.Uuid
+  nextStage   WorkflowStage?  @relation("WorkflowStageNext", fields: [nextStageId], references: [id])
+  nextOfStage WorkflowStage[] @relation("WorkflowStageNext")
+
+  failureStageId String?         @db.Uuid
+  failureStage   WorkflowStage?  @relation("WorkflowStageFailure", fields: [failureStageId], references: [id])
+  failureOfStage WorkflowStage[] @relation("WorkflowStageFailure")
+
+  internalVisible Boolean @default(true)
+  customerVisible Boolean @default(false)
+
+  variables          WorkflowStageVariable[]
+  stageInstances     StageInstance[]
+  currentForInstance WorkflowInstance[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([templateId])
+  @@index([departmentId])
+}
+
+/// A stage's dynamic-field definitions (FEATURE-004 Refinement 2) — how a
+/// Brass Plate's "Collect Customer Text" or an Acrylic Sign's size/options
+/// gets captured without a hardcoded column per business line. Belongs to
+/// the same immutable-once-published stage its parent WorkflowStage does —
+/// no separate publish state of its own. The engine validates *presence* of
+/// required variables before allowing a stage to advance; it never
+/// interprets what a variable *means*.
+model WorkflowStageVariable {
+  id      String        @id @default(uuid()) @db.Uuid
+  stageId String        @db.Uuid
+  stage   WorkflowStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  key           String
+  label         String
+  dataType      WorkflowVariableDataType @default(TEXT)
+  selectOptions Json?
+  isRequired    Boolean                  @default(false)
+  order         Int                      @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([stageId, key])
+  @@index([stageId])
+}
+
+/// The running counterpart to a WorkflowTemplate version — one per business
+/// record going through production. `templateId` is frozen at creation
+/// (Workflow Versioning); `workOrderId` is nullable + unique (one instance
+/// per work order this milestone) — see this model's own file-header note
+/// on why the owner linkage isn't a generic ownerType/ownerId pair.
+model WorkflowInstance {
+  id         String           @id @default(uuid()) @db.Uuid
+  templateId String           @db.Uuid
+  template   WorkflowTemplate @relation(fields: [templateId], references: [id])
+
+  workOrderId String?    @unique @db.Uuid
+  workOrder   WorkOrder? @relation(fields: [workOrderId], references: [id])
+
+  status WorkflowInstanceStatus @default(IN_PROGRESS)
+
+  currentStageId String?        @db.Uuid
+  currentStage   WorkflowStage? @relation(fields: [currentStageId], references: [id])
+
+  stageInstances StageInstance[]
+  events         WorkflowEvent[]
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([templateId])
+  @@index([status])
+  @@index([isDeleted])
+}
+
+/// One row per stage a WorkflowInstance passes through (FEATURE-004
+/// 00_REQUIREMENTS.md §6). `departmentId` is denormalized from
+/// `stage.departmentId` at creation — immutable, since the source stage is
+/// immutable once published; queue lookups filter on this column directly
+/// rather than joining through WorkflowStage on every query (the same
+/// "snapshot for query performance" reasoning as OrderItem.breakdown).
+/// External-stage fields are populated only when the stage is EXTERNAL —
+/// unused otherwise, exactly like QuotationItem's unused fields per item
+/// type. `priority`/`dueDate` are queue metadata (Refinement 4); delay is
+/// deliberately NOT a stored column — computed at read time from `dueDate`
+/// (see FEATURE-004 01_ANALYSIS.md's Queue Metadata reasoning).
+model StageInstance {
+  id                 String           @id @default(uuid()) @db.Uuid
+  workflowInstanceId String           @db.Uuid
+  workflowInstance   WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+  stageId            String           @db.Uuid
+  stage              WorkflowStage    @relation(fields: [stageId], references: [id])
+
+  departmentId String?     @db.Uuid
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  status             StageInstanceStatus @default(WAITING)
+  assignedEmployeeId String?             @db.Uuid
+  assignedEmployee   StaffProfile?       @relation(fields: [assignedEmployeeId], references: [id])
+
+  startedAt                DateTime?
+  finishedAt               DateTime?
+  estimatedDurationMinutes Int?
+  actualDurationMinutes    Int?
+
+  waitingReason  String?
+  blockingReason String?
+  notes          String?
+
+  priority WorkflowPriority @default(NORMAL)
+  dueDate  DateTime?
+
+  /// Answered values for this stage's WorkflowStageVariable definitions,
+  /// keyed by `key`. Validated for required-variable presence in the
+  /// routing function, not at the database level.
+  variableValues Json?
+
+  // External Supplier fields (VISION.md's External Supplier Workflow) —
+  // populated only when stage.stageType is EXTERNAL. assignedSupplierId
+  // reuses BusinessPartner (a SUPPLIER-role partner), not a parallel
+  // Supplier model, per Reuse Before Create.
+  assignedSupplierId String?          @db.Uuid
+  assignedSupplier   BusinessPartner? @relation(fields: [assignedSupplierId], references: [id])
+  sentDate           DateTime?
+  expectedReturnDate DateTime?
+  actualReturnDate   DateTime?
+  externalCost       Decimal?         @db.Decimal(12, 2)
+  supplierStatus     String?
+
+  attachments Attachment[]
+  events      WorkflowEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workflowInstanceId])
+  @@index([stageId])
+  @@index([departmentId, status])
+  @@index([assignedEmployeeId])
+  @@index([assignedSupplierId])
+}
+
+/// The append-only domain-event feed (FEATURE-004 Refinement 3). No
+/// UPDATE/DELETE path in this milestone's API — correcting history is
+/// future work, not this one's. `payload` is a structured snapshot (not a
+/// pointer to current state) so a consumer never has to join back to
+/// mutable rows to make sense of an event after the fact.
+model WorkflowEvent {
+  id                 String           @id @default(uuid()) @db.Uuid
+  workflowInstanceId String           @db.Uuid
+  workflowInstance   WorkflowInstance @relation(fields: [workflowInstanceId], references: [id], onDelete: Cascade)
+  stageInstanceId    String?          @db.Uuid
+  stageInstance      StageInstance?   @relation(fields: [stageInstanceId], references: [id])
+
+  eventType WorkflowEventType
+  payload   Json
+
+  performedById String?       @db.Uuid
+  performedBy   StaffProfile? @relation(fields: [performedById], references: [id])
+
+  occurredAt DateTime @default(now())
+
+  @@index([workflowInstanceId, occurredAt])
+  @@index([stageInstanceId])
+}
+
+// ---------------------------------------------------------------------------
+// Treasury. API/UI built in FEATURE-006 M3/M4; per-wallet `method`
+// breakdown added in FEATURE-007 M3. Every field from Requirement 5 is a
+// direct column, not a join.
 // ---------------------------------------------------------------------------
 
 model TreasuryEntry {
@@ -640,13 +1687,19 @@ model TreasuryEntry {
   note       String?
   date       DateTime
   sourceType TreasurySourceType @default(MANUAL)
+  /// FEATURE-007 M3 — which wallet the money moved through (كاش/فودافون
+  /// كاش/انستاباي/حساب بنكي), enabling the per-wallet balance breakdown the
+  /// owner asked for. Nullable only for historical rows predating this
+  /// column; the service layer requires it on every new entry (backfilled
+  /// from `Payment.method` for existing `INVOICE_PAYMENT` rows).
+  method     PaymentMethod?
 
-  orderId    String?   @db.Uuid // = invoice id (Order doubles as invoice)
-  order      Order?    @relation(fields: [orderId], references: [id])
-  paymentId  String?   @unique @db.Uuid
-  payment    Payment?  @relation(fields: [paymentId], references: [id])
-  customerId String?   @db.Uuid
-  customer   Customer? @relation(fields: [customerId], references: [id])
+  orderId   String?          @db.Uuid // = invoice id (Order doubles as invoice)
+  order     Order?           @relation(fields: [orderId], references: [id])
+  paymentId String?          @unique @db.Uuid
+  payment   Payment?         @relation(fields: [paymentId], references: [id])
+  partnerId String?          @db.Uuid
+  partner   BusinessPartner? @relation(fields: [partnerId], references: [id])
 
   staffId  String       @db.Uuid // employee who recorded it (or who saved the source invoice)
   staff    StaffProfile @relation(fields: [staffId], references: [id])
@@ -667,33 +1720,16 @@ model TreasuryEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Suppliers (schema only — API/UI in Phase 11). Shared across branches.
+// Supplier purchases/payments (schema only — API/UI in Phase 11). The
+// Supplier role is now just a PartnerRole on BusinessPartner (FEATURE-002),
+// not a separate model — see the BusinessPartner section above.
 // ---------------------------------------------------------------------------
 
-model Supplier {
-  id    String  @id @default(uuid()) @db.Uuid
-  name  String
-  phone String?
-  notes String?
-
-  purchases SupplierPurchase[]
-  payments  SupplierPayment[]
-
-  isDeleted Boolean   @default(false)
-  deletedAt DateTime?
-  deletedBy String?   @db.Uuid
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([isDeleted])
-}
-
 model SupplierPurchase {
-  id          String   @id @default(uuid()) @db.Uuid
-  supplierId  String   @db.Uuid
-  supplier    Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  amount      Decimal  @db.Decimal(12, 2)
+  id          String          @id @default(uuid()) @db.Uuid
+  partnerId   String          @db.Uuid
+  partner     BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  amount      Decimal         @db.Decimal(12, 2)
   description String?
   date        DateTime
 
@@ -701,12 +1737,12 @@ model SupplierPurchase {
 }
 
 model SupplierPayment {
-  id         String   @id @default(uuid()) @db.Uuid
-  supplierId String   @db.Uuid
-  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
-  amount     Decimal  @db.Decimal(12, 2)
-  note       String?
-  date       DateTime
+  id        String          @id @default(uuid()) @db.Uuid
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  amount    Decimal         @db.Decimal(12, 2)
+  note      String?
+  date      DateTime
 
   createdAt DateTime @default(now())
 }
@@ -716,14 +1752,14 @@ model SupplierPayment {
 // ---------------------------------------------------------------------------
 
 model Tender {
-  id         String       @id @default(uuid()) @db.Uuid
-  customerId String?      @db.Uuid
-  customer   Customer?    @relation(fields: [customerId], references: [id])
-  clientName String? // free-text fallback if not linked to a Customer record
+  id         String           @id @default(uuid()) @db.Uuid
+  partnerId  String?          @db.Uuid
+  partner    BusinessPartner? @relation(fields: [partnerId], references: [id])
+  clientName String? // free-text fallback if not linked to a BusinessPartner record
   title      String
-  value      Decimal      @db.Decimal(12, 2)
+  value      Decimal          @db.Decimal(12, 2)
   deadline   DateTime?
-  status     TenderStatus @default(OPEN)
+  status     TenderStatus     @default(OPEN)
   notes      String?
 
   isDeleted Boolean   @default(false)
@@ -738,15 +1774,15 @@ model Tender {
 }
 
 // ---------------------------------------------------------------------------
-// Inventory readiness (Requirement 9) — schema only, no API/UI/logic
-// anywhere. Reserves relationships for Paper, Ink, Plates, Finishing
-// materials, and Consumables without wiring any stock-affecting behavior
-// into the calculation engine or order flow.
+// Inventory (Requirement 9). FEATURE-007 M2 is the first real application
+// code against this — schema existed since Phase 1. PAPER-category items
+// optionally link back to the existing pricing catalog (SheetType) so paper
+// isn't defined twice; other categories (ink, plates, finishing,
+// consumables) stand alone. `reorderLevel` is the low-stock threshold,
+// configurable per item (never hardcoded) — surfaces in the "needs from
+// supplier" list once `StockLevel.quantityOnHand <= reorderLevel`.
 // ---------------------------------------------------------------------------
 
-/// The material catalog. PAPER-category items optionally link back to the
-/// existing pricing catalog (SheetType) so paper isn't defined twice; other
-/// categories (ink, plates, finishing, consumables) stand alone.
 model InventoryItem {
   id           String           @id @default(uuid()) @db.Uuid
   category     MaterialCategory
@@ -758,6 +1794,7 @@ model InventoryItem {
 
   stockLevels    StockLevel[]
   stockMovements StockMovement[]
+  orderItems     OrderItem[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -814,27 +1851,34 @@ model Attachment {
   fileType    String
   storagePath String? // reserved for a future Supabase Storage key
   sizeBytes   Int?
+  /// Free string, not an enum — same zero-migration extensibility as
+  /// QuotationItem.itemType/OrderItem.kind. Suggested values (not
+  /// enforced): DESIGN, CUSTOMER, INTERNAL, AI_GENERATED
+  /// (FEATURE-003 M2, Decision 9 — prep only, no upload endpoint yet).
+  category    String?
 
   uploadedById String?       @db.Uuid
   uploadedBy   StaffProfile? @relation(fields: [uploadedById], references: [id])
 
-  customerId  String?    @db.Uuid
-  customer    Customer?  @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  quotationId String?    @db.Uuid
-  quotation   Quotation? @relation(fields: [quotationId], references: [id], onDelete: Cascade)
-  orderId     String?    @db.Uuid
-  order       Order?     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  workOrderId String?    @db.Uuid
-  workOrder   WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  partnerId   String?          @db.Uuid
+  partner     BusinessPartner? @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+  quotationId String?          @db.Uuid
+  quotation   Quotation?       @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  orderId     String?          @db.Uuid
+  order       Order?           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  workOrderId String?          @db.Uuid
+  workOrder   WorkOrder?       @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
 
-  createdAt DateTime @default(now())
+  createdAt       DateTime       @default(now())
+  stageInstance   StageInstance? @relation(fields: [stageInstanceId], references: [id])
+  stageInstanceId String?        @db.Uuid
 
   @@index([isDeleted])
-  @@index([customerId])
+  @@index([partnerId])
   @@index([quotationId])
   @@index([orderId])
   @@index([workOrderId])
@@ -848,13 +1892,34 @@ model Attachment {
 
 model AuditLog {
   id            String        @id @default(uuid()) @db.Uuid
-  entityType    String // e.g. "Order", "Quotation", "Customer", "TreasuryEntry"
+  entityType    String // e.g. "Order", "Quotation", "BusinessPartner", "TreasuryEntry"
   entityId      String        @db.Uuid
   action        AuditAction
   performedById String?       @db.Uuid
   performedBy   StaffProfile? @relation(fields: [performedById], references: [id])
   branchId      String?       @db.Uuid
   branch        Branch?       @relation(fields: [branchId], references: [id])
+
+  // FEATURE-002 pre-M6 (Timeline Preparation / Activity Feed Ready).
+  // Denormalized and nullable — NOT a substitute for entityType/entityId,
+  // an addition alongside them. Every partner-scoped audit entry
+  // (BusinessPartner itself, ContactPerson, PartnerAddress, PartnerNote,
+  // Category/Tag assignment, and future Commercial Profile/Attachment
+  // events) also carries the owning partner's id here, so a future unified
+  // partner Timeline can query `WHERE partnerId = X ORDER BY createdAt`
+  // directly in one indexed pass across every entity type, instead of
+  // joining per entityType by entityId — which does not scale as entity
+  // types grow and would scatter business history across per-type lookups.
+  // Left null for non-partner-scoped entries (IAM, auth, settings/catalog
+  // CRUD). A formal relation (not a bare UUID like `deletedBy`) is used
+  // here deliberately: unlike `deletedBy`, which would need a differently
+  // -named relation on StaffProfile for every soft-deletable model, this
+  // is the one place a single `partnerId` relation is needed, so the
+  // usual FK-relation benefits (referential integrity, `include`
+  // ergonomics for the future Timeline) aren't worth giving up.
+  partnerId String?          @db.Uuid
+  partner   BusinessPartner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+
   previousValue Json?
   newValue      Json?
 
@@ -862,4 +1927,5 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@index([performedById])
+  @@index([partnerId, createdAt])
 }

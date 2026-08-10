@@ -16,13 +16,27 @@ type ModuleDef = {
 
 const MODULES: ModuleDef[] = [
   {
-    module: 'customers',
-    moduleLabel: 'Customers',
+    // FEATURE-002: Business Partners. Namespace is `partners.*`, not
+    // `customers.*` — approved in
+    // docs/AI/FEATURES/FEATURE-002-CUSTOMERS/02_PLAN.md. Only the actions
+    // each milestone actually enforces are seeded here as it ships;
+    // attachments/merge/import/export are added as their own milestones
+    // are implemented, not reserved in advance.
+    module: 'partners',
+    moduleLabel: 'Business Partners',
     actions: [
-      { action: 'view', label: 'View customers' },
-      { action: 'create', label: 'Create customers' },
-      { action: 'edit', label: 'Edit customers' },
-      { action: 'delete', label: 'Delete customers' },
+      { action: 'view', label: 'View business partners' },
+      { action: 'create', label: 'Create business partners' },
+      { action: 'edit', label: 'Edit business partners' },
+      { action: 'delete', label: 'Deactivate business partners' },
+      // FEATURE-002 M2 — resolves to key `partners.contacts.manage`.
+      { action: 'contacts.manage', label: 'Manage business partner contacts' },
+      // FEATURE-002 M3 — resolves to key `partners.addresses.manage`.
+      { action: 'addresses.manage', label: 'Manage business partner addresses' },
+      // FEATURE-002 M6 — resolves to key `partners.credit.manage`. Covers
+      // both viewing and changing the Commercial & Credit Profile (no
+      // separate view-only credit permission, per 02_PLAN.md §5's note).
+      { action: 'credit.manage', label: 'View and manage business partner commercial & credit profiles' },
     ],
   },
   {
@@ -57,6 +71,22 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
+    // FEATURE-004 M1. Administering Workflow Templates/Stages is a
+    // separate concern from operating within them (advancing a
+    // WorkflowInstance stays under `work-orders.edit`, per
+    // 01_ANALYSIS.md's Permission Mapping) — the same `roles`/`permissions`
+    // split precedent (administering the rules vs. operating within them).
+    module: 'workflow-templates',
+    moduleLabel: 'Workflow Templates',
+    actions: [
+      { action: 'view', label: 'View workflow templates' },
+      { action: 'create', label: 'Create workflow templates' },
+      { action: 'edit', label: 'Edit draft workflow templates' },
+      { action: 'delete', label: 'Delete workflow templates' },
+      { action: 'publish', label: 'Publish a workflow template version' },
+    ],
+  },
+  {
     module: 'treasury',
     moduleLabel: 'Treasury',
     actions: [
@@ -67,13 +97,17 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
-    module: 'suppliers',
-    moduleLabel: 'Suppliers',
+    // FEATURE-007 M2 — Inventory. `create` covers both registering a new
+    // stock item and recording a stock movement (add/adjust); auto-deduct
+    // on Order creation happens inside the Order transaction and is not a
+    // separately-gated action (the caller only needs `orders.create`).
+    module: 'inventory',
+    moduleLabel: 'Inventory',
     actions: [
-      { action: 'view', label: 'View suppliers' },
-      { action: 'create', label: 'Create suppliers' },
-      { action: 'edit', label: 'Edit suppliers' },
-      { action: 'delete', label: 'Delete suppliers' },
+      { action: 'view', label: 'View inventory stock' },
+      { action: 'create', label: 'Register stock items and record movements' },
+      { action: 'edit', label: 'Edit stock items' },
+      { action: 'delete', label: 'Delete stock items' },
     ],
   },
   {
