@@ -22,32 +22,32 @@ export function RolesPage() {
         setPermissions(p);
       })
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : 'Failed to load roles'),
+        setError(err instanceof Error ? err.message : 'تعذر تحميل الأدوار'),
       );
   };
 
   useEffect(load, []);
 
   const deleteRole = async (role: RoleWithPermissions) => {
-    if (!confirm(`Delete role "${role.label}"?`)) return;
+    if (!confirm(`حذف الدور "${role.label}"؟`)) return;
     try {
       await apiDelete(`/api/roles/${role.id}`);
       load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to delete role');
+      alert(err instanceof Error ? err.message : 'تعذر حذف الدور');
     }
   };
 
   if (error) return <div className="text-destructive">{error}</div>;
-  if (!roles) return <div className="text-muted-foreground">Loading roles…</div>;
+  if (!roles) return <div className="text-muted-foreground">جارٍ تحميل الأدوار…</div>;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Roles</h1>
+        <h1 className="text-2xl font-bold">الأدوار</h1>
         {can('roles.create') && (
           <Button onClick={() => setShowCreate((v) => !v)}>
-            {showCreate ? 'Cancel' : '+ Add Role'}
+            {showCreate ? 'إلغاء' : '+ إضافة دور'}
           </Button>
         )}
       </div>
@@ -70,7 +70,7 @@ export function RolesPage() {
                   <b>{role.label}</b>
                   {role.isSystem && (
                     <span className="bg-secondary text-secondary-foreground rounded-full px-2 py-0.5 text-xs">
-                      System
+                      نظامي
                     </span>
                   )}
                 </div>
@@ -78,12 +78,12 @@ export function RolesPage() {
               </div>
               {can('roles.delete') && !role.isSystem && (
                 <Button variant="ghost" size="sm" onClick={() => void deleteRole(role)}>
-                  Delete
+                  حذف
                 </Button>
               )}
             </div>
             <p className="text-muted-foreground mt-2 text-xs">
-              {role.permissions.length} permissions granted
+              {role.permissions.length} صلاحية ممنوحة
             </p>
             {can('roles.edit') && (
               <Button
@@ -92,7 +92,7 @@ export function RolesPage() {
                 className="mt-2"
                 onClick={() => setEditing(role)}
               >
-                Edit permissions
+                تعديل الصلاحيات
               </Button>
             )}
           </div>
@@ -133,7 +133,7 @@ function CreateRoleForm({ onCreated }: { onCreated: () => void }) {
       });
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create role');
+      setError(err instanceof Error ? err.message : 'تعذر إنشاء الدور');
     } finally {
       setSubmitting(false);
     }
@@ -145,27 +145,27 @@ function CreateRoleForm({ onCreated }: { onCreated: () => void }) {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <input
           required
-          placeholder="Internal name (e.g. REGIONAL_MANAGER)"
+          placeholder="الاسم الداخلي (مثال: REGIONAL_MANAGER)"
           value={name}
           onChange={(e) => setName(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         />
         <input
           required
-          placeholder="Display label"
+          placeholder="الاسم المعروض"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         />
         <input
-          placeholder="Description (optional)"
+          placeholder="الوصف (اختياري)"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         />
       </div>
       <Button type="submit" disabled={submitting}>
-        {submitting ? 'Creating…' : 'Create role'}
+        {submitting ? 'جارٍ الإنشاء…' : 'إنشاء الدور'}
       </Button>
     </form>
   );
@@ -196,13 +196,13 @@ function EditRolePermissionsPanel({
       await apiPut(`/api/roles/${role.id}/permissions`, { permissionIds: selected });
       onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update permissions');
+      setError(err instanceof Error ? err.message : 'تعذر تحديث الصلاحيات');
     }
   };
 
   return (
     <div className="border-border bg-card rounded-2xl border p-4">
-      <h2 className="mb-3 font-semibold">Permissions for {role.label}</h2>
+      <h2 className="mb-3 font-semibold">صلاحيات {role.label}</h2>
       {error && <div className="text-destructive mb-2 text-sm">{error}</div>}
       <div className="max-h-96 space-y-3 overflow-y-auto">
         {Object.entries(grouped).map(([module, perms]) => (
@@ -228,9 +228,9 @@ function EditRolePermissionsPanel({
         ))}
       </div>
       <div className="mt-4 flex gap-2">
-        <Button onClick={() => void save()}>Save</Button>
+        <Button onClick={() => void save()}>حفظ</Button>
         <Button variant="secondary" onClick={onClose}>
-          Cancel
+          إلغاء
         </Button>
       </div>
     </div>

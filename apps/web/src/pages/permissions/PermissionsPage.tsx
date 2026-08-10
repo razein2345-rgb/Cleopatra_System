@@ -14,24 +14,24 @@ export function PermissionsPage() {
     apiGet<Permission[]>('/api/permissions')
       .then(setPermissions)
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : 'Failed to load permissions'),
+        setError(err instanceof Error ? err.message : 'تعذر تحميل الصلاحيات'),
       );
   };
 
   useEffect(load, []);
 
   const deletePermission = async (permission: Permission) => {
-    if (!confirm(`Delete permission "${permission.key}"?`)) return;
+    if (!confirm(`حذف الصلاحية "${permission.key}"؟`)) return;
     try {
       await apiDelete(`/api/permissions/${permission.id}`);
       load();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to delete permission');
+      alert(err instanceof Error ? err.message : 'تعذر حذف الصلاحية');
     }
   };
 
   if (error) return <div className="text-destructive">{error}</div>;
-  if (!permissions) return <div className="text-muted-foreground">Loading permissions…</div>;
+  if (!permissions) return <div className="text-muted-foreground">جارٍ تحميل الصلاحيات…</div>;
 
   const grouped = permissions.reduce<Record<string, Permission[]>>((acc, p) => {
     (acc[p.module] ??= []).push(p);
@@ -41,10 +41,10 @@ export function PermissionsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Permissions</h1>
+        <h1 className="text-2xl font-bold">الصلاحيات</h1>
         {can('permissions.create') && (
           <Button onClick={() => setShowCreate((v) => !v)}>
-            {showCreate ? 'Cancel' : '+ New Permission'}
+            {showCreate ? 'إلغاء' : '+ صلاحية جديدة'}
           </Button>
         )}
       </div>
@@ -68,9 +68,9 @@ export function PermissionsPage() {
                   <tr key={p.id} className="border-border border-t">
                     <td className="py-2 font-mono text-xs">{p.key}</td>
                     <td className="py-2">{p.label}</td>
-                    <td className="py-2 text-right">
+                    <td className="py-2 text-end">
                       {p.isSystem ? (
-                        <span className="text-muted-foreground text-xs">System</span>
+                        <span className="text-muted-foreground text-xs">نظامية</span>
                       ) : (
                         can('permissions.delete') && (
                           <Button
@@ -78,7 +78,7 @@ export function PermissionsPage() {
                             size="sm"
                             onClick={() => void deletePermission(p)}
                           >
-                            Delete
+                            حذف
                           </Button>
                         )
                       )}
@@ -109,7 +109,7 @@ function CreatePermissionForm({ onCreated }: { onCreated: () => void }) {
       await apiPost('/api/permissions', { key, module, label });
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create permission');
+      setError(err instanceof Error ? err.message : 'تعذر إنشاء الصلاحية');
     } finally {
       setSubmitting(false);
     }
@@ -121,28 +121,28 @@ function CreatePermissionForm({ onCreated }: { onCreated: () => void }) {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <input
           required
-          placeholder="key (e.g. inventory.view)"
+          placeholder="المفتاح (مثال: inventory.view)"
           value={key}
           onChange={(e) => setKey(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         />
         <input
           required
-          placeholder="module (e.g. inventory)"
+          placeholder="الوحدة (مثال: inventory)"
           value={module}
           onChange={(e) => setModule(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         />
         <input
           required
-          placeholder="label"
+          placeholder="الاسم المعروض"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         />
       </div>
       <Button type="submit" disabled={submitting}>
-        {submitting ? 'Creating…' : 'Create permission'}
+        {submitting ? 'جارٍ الإنشاء…' : 'إنشاء الصلاحية'}
       </Button>
     </form>
   );

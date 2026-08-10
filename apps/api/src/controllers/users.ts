@@ -12,6 +12,7 @@ import { getUserDto, mapStaffToUser, userInclude } from '../services/userService
 import { canAccessBranch } from '../services/authContext.js';
 import { recordAudit } from '../services/auditService.js';
 import { env } from '../config/env.js';
+import { AdminSafetyService, hasAdminRole, LastActiveAdminError } from '../services/adminSafety.js';
 
 // Where invite/recovery email links send the user to complete account setup
 // (FEATURE-001.2). CORS_ORIGIN is already the frontend's own origin — reused
@@ -155,6 +156,25 @@ export async function updateUser(req: Request<{ id: string }>, res: Response) {
     return;
   }
 
+  if (input.isActive === false) {
+    try {
+      await AdminSafetyService.assertNotLastActiveAdmin({
+        staffId: existing.id,
+        willRemainActiveAdmin: false,
+        performedById: auth.staffId,
+        operation: 'DEACTIVATE',
+      });
+    } catch (err) {
+      if (err instanceof LastActiveAdminError) {
+        res
+          .status(409)
+          .json({ success: false, error: { message: err.message, code: 'LAST_ACTIVE_ADMIN' } });
+        return;
+      }
+      throw err;
+    }
+  }
+
   const updated = await prisma.staffProfile.update({
     where: { id: req.params.id },
     data: input,
@@ -194,6 +214,23 @@ export async function deleteUser(req: Request<{ id: string }>, res: Response) {
     return;
   }
 
+  try {
+    await AdminSafetyService.assertNotLastActiveAdmin({
+      staffId: existing.id,
+      willRemainActiveAdmin: false,
+      performedById: auth.staffId,
+      operation: 'DELETE',
+    });
+  } catch (err) {
+    if (err instanceof LastActiveAdminError) {
+      res
+        .status(409)
+        .json({ success: false, error: { message: err.message, code: 'LAST_ACTIVE_ADMIN' } });
+      return;
+    }
+    throw err;
+  }
+
   const deleted = await prisma.staffProfile.update({
     where: { id: req.params.id },
     data: { isDeleted: true, deletedAt: new Date(), deletedBy: auth.staffId, isActive: false },
@@ -224,6 +261,26 @@ export async function setUserRoles(req: Request<{ id: string }>, res: Response) 
       .status(403)
       .json({ success: false, error: { message: 'You do not have access to this branch' } });
     return;
+  }
+
+  const newRoles = await prisma.role.findMany({ where: { id: { in: input.roleIds } } });
+  const willRemainActiveAdmin =
+    existing.isActive && hasAdminRole(newRoles.map((role) => role.name));
+  try {
+    await AdminSafetyService.assertNotLastActiveAdmin({
+      staffId: existing.id,
+      willRemainActiveAdmin,
+      performedById: auth.staffId,
+      operation: 'REMOVE_ADMIN_ROLE',
+    });
+  } catch (err) {
+    if (err instanceof LastActiveAdminError) {
+      res
+        .status(409)
+        .json({ success: false, error: { message: err.message, code: 'LAST_ACTIVE_ADMIN' } });
+      return;
+    }
+    throw err;
   }
 
   await prisma.$transaction([
