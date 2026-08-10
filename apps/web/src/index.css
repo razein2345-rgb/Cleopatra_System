@@ -1,7 +1,14 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap');
 @import 'tailwindcss';
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Design tokens — Cleopatra Design System.
+ * These are the single source of truth for branding. A future rebrand
+ * changes values here only; components never hardcode a color, spacing,
+ * font, radius, or shadow value directly.
+ */
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);
@@ -10,18 +17,56 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+
+  /* Brand — deep Nile teal primary, papyrus gold secondary/accent */
+  --primary: oklch(0.4 0.08 200);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.78 0.14 85);
+  --secondary-foreground: oklch(0.22 0.05 85);
+
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --accent: oklch(0.94 0.03 200);
+  --accent-foreground: oklch(0.3 0.07 200);
+
+  /* Semantic status colors — used by StatusBadge and Dashboard widgets */
+  --success: oklch(0.6 0.15 145);
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.78 0.16 80);
+  --warning-foreground: oklch(0.24 0.05 80);
+  --info: oklch(0.6 0.12 235);
+  --info-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --danger: var(--destructive);
+  --danger-foreground: var(--destructive-foreground);
+
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --ring: oklch(0.4 0.08 200 / 50%);
+
+  /* Spacing scale */
+  --spacing-xs: 0.25rem;
+  --spacing-sm: 0.5rem;
+  --spacing-md: 1rem;
+  --spacing-lg: 1.5rem;
+  --spacing-xl: 2rem;
+  --spacing-2xl: 3rem;
+
+  /* Typography — Cairo covers both Arabic and Latin glyphs well */
+  --font-sans: 'Cairo', ui-sans-serif, system-ui, sans-serif;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+
+  /* Elevation scale */
+  --shadow-sm: 0 1px 2px 0 oklch(0.145 0 0 / 6%);
+  --shadow-md: 0 4px 10px -2px oklch(0.145 0 0 / 10%);
+  --shadow-lg: 0 12px 24px -4px oklch(0.145 0 0 / 14%);
 }
 
 .dark {
@@ -31,18 +76,35 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.75 0.1 200);
+  --primary-foreground: oklch(0.145 0 0);
+  --secondary: oklch(0.7 0.13 85);
+  --secondary-foreground: oklch(0.145 0 0);
+
   --muted: oklch(0.269 0 0);
   --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --accent: oklch(0.28 0.05 200);
+  --accent-foreground: oklch(0.9 0.04 200);
+
+  --success: oklch(0.65 0.15 145);
+  --success-foreground: oklch(0.145 0 0);
+  --warning: oklch(0.75 0.15 80);
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.65 0.12 235);
+  --info-foreground: oklch(0.145 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.145 0 0);
+  --danger: var(--destructive);
+  --danger-foreground: var(--destructive-foreground);
+
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --ring: oklch(0.75 0.1 200 / 50%);
+
+  --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 30%);
+  --shadow-md: 0 4px 10px -2px oklch(0 0 0 / 40%);
+  --shadow-lg: 0 12px 24px -4px oklch(0 0 0 / 50%);
 }
 
 @theme inline {
@@ -60,21 +122,67 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+
+  --font-sans: var(--font-sans);
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 12px);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    font-family: var(--font-sans);
+  }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/*
+ * FEATURE-006 M7 — one shared print stylesheet for every document type
+ * (Quotation/Invoice/Work Order, M8–M10), instead of the legacy system's
+ * four independently duplicated inline <style> blocks. `DocumentRenderer`
+ * is the only component that carries `.document-print-root`; printing
+ * from anywhere else in the app shows a blank page by design, since no
+ * other screen is meant to be printed directly.
+ */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .document-print-root,
+  .document-print-root * {
+    visibility: visible;
+  }
+  .document-print-root {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 0;
   }
 }

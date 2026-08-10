@@ -1,50 +1,116 @@
-import { NavLink, Outlet } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
+import { useEffect, useMemo, useState } from 'react';
+import { Outlet } from 'react-router-dom';
+import {
+  LayoutDashboard,
+  Settings as SettingsIcon,
+  Building2,
+  FileText,
+  Factory,
+  UserCog,
+  ShieldCheck,
+  KeyRound,
+  Wallet,
+  Package,
+} from 'lucide-react';
+import type { WorkflowDashboardSummary } from '@cleopatra/shared';
+import { apiGet } from '@/lib/api';
+import { Sidebar, Topbar, CommandPalette, MobileNavDrawer } from '@/components/cleopatra';
+import type { NavEntry } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
-const NAV_ITEMS: Array<{ to: string; label: string; permission?: string }> = [
-  { to: '/', label: 'Dashboard' },
-  { to: '/settings', label: 'Settings', permission: 'settings.view' },
-  { to: '/users', label: 'Users', permission: 'employees.view' },
-  { to: '/roles', label: 'Roles', permission: 'roles.view' },
-  { to: '/permissions', label: 'Permissions', permission: 'permissions.view' },
+const NAV_ITEMS: NavEntry[] = [
+  { kind: 'link', to: '/', label: 'لوحة التحكم', icon: LayoutDashboard, end: true },
+  { kind: 'link', to: '/settings', label: 'الإعدادات', icon: SettingsIcon, permission: 'settings.view' },
+  { kind: 'link', to: '/partners', label: 'العملاء', icon: Building2, permission: 'partners.view' },
+  { kind: 'link', to: '/quotations', label: 'المستندات', icon: FileText, permission: 'quotations.view' },
+  {
+    kind: 'link',
+    to: '/treasury',
+    label: 'الخزينة والنقدية',
+    icon: Wallet,
+    // FEATURE-007 M3 — reception (treasury.create only) sees a scoped
+    // view of this same page; treasury.view sees the full ledger/balance.
+    permission: ['treasury.view', 'treasury.create'],
+  },
+  { kind: 'link', to: '/inventory', label: 'المخزن', icon: Package, permission: 'inventory.view' },
+  { kind: 'link', to: '/production-board', label: 'لوحة الإنتاج', icon: Factory, permission: 'work-orders.view' },
+  { kind: 'link', to: '/users', label: 'المستخدمون', icon: UserCog, permission: 'employees.view' },
+  { kind: 'link', to: '/roles', label: 'الأدوار', icon: ShieldCheck, permission: 'roles.view' },
+  { kind: 'link', to: '/permissions', label: 'الصلاحيات', icon: KeyRound, permission: 'permissions.view' },
 ];
 
+/**
+ * FEATURE-005 Sprint 2.5 — the sidebar's delayed-job badge. A second,
+ * independent fetch of `dashboard-summary` (the same endpoint
+ * `WorkflowQueueSummaryProvider` reads for the Dashboard page), not a
+ * shared context — the provider is scoped inside `DashboardPage`, which
+ * doesn't wrap the always-mounted Sidebar. Approved as the smaller, lower-
+ * risk option over lifting that provider into `AppShell` (01_ANALYSIS.md's
+ * Architecture Decision). Mirrors `Topbar.tsx`'s own independent
+ * `GET /api/branches` fetch — an existing precedent, not a new pattern.
+ */
+function useDelayedJobsBadge(canView: boolean): number | undefined {
+  const [delayed, setDelayed] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!canView) return;
+    let cancelled = false;
+    apiGet<WorkflowDashboardSummary>('/api/workflow-instances/dashboard-summary')
+      .then((summary) => {
+        if (!cancelled) setDelayed(summary.totals.delayed);
+      })
+      .catch(() => {
+        if (!cancelled) setDelayed(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canView]);
+
+  return delayed;
+}
+
 export function AppShell() {
-  const { authContext, can, signOut } = useAuth();
+  const [desktopCollapsed, setDesktopCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const { can } = useAuth();
+  const delayedCount = useDelayedJobsBadge(can('work-orders.view'));
+
+  const navItems = useMemo<NavEntry[]>(
+    () =>
+      NAV_ITEMS.map((entry) =>
+        entry.kind === 'link' && entry.to === '/production-board' ? { ...entry, badgeCount: delayedCount } : entry,
+      ),
+    [delayedCount],
+  );
 
   return (
-    <div className="min-h-svh">
-      <header className="border-border bg-card flex items-center justify-between border-b px-6 py-3">
-        <div className="flex items-center gap-6">
-          <span className="font-bold">Cleopatra System</span>
-          <nav className="flex gap-4 text-sm">
-            {NAV_ITEMS.filter((item) => !item.permission || can(item.permission)).map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === '/'}
-                className={({ isActive }) =>
-                  isActive
-                    ? 'text-primary font-semibold'
-                    : 'text-muted-foreground hover:text-foreground'
-                }
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
-        </div>
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-muted-foreground">{authContext?.user.name}</span>
-          <Button variant="secondary" onClick={() => void signOut()}>
-            Sign out
-          </Button>
-        </div>
-      </header>
-      <main className="mx-auto max-w-5xl p-6">
-        <Outlet />
-      </main>
+    <div className="flex h-svh overflow-hidden">
+      <aside
+        className="border-border bg-card hidden shrink-0 border-e transition-[width] duration-200 lg:block"
+        style={{ width: desktopCollapsed ? '4.5rem' : '16rem' }}
+      >
+        <Sidebar entries={navItems} collapsed={desktopCollapsed} />
+      </aside>
+
+      <MobileNavDrawer entries={navItems} open={mobileNavOpen} onOpenChange={setMobileNavOpen} />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Topbar
+          sidebarCollapsed={desktopCollapsed}
+          onToggleSidebar={() => setDesktopCollapsed((v) => !v)}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        />
+        <main className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-5xl p-4 sm:p-6">
+            <Outlet />
+          </div>
+        </main>
+      </div>
+
+      <CommandPalette entries={navItems} open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
     </div>
   );
 }

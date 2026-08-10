@@ -86,18 +86,15 @@ export function LoginPage() {
   };
 
   return (
-    <main
-      dir="rtl"
-      className="bg-muted/30 flex min-h-svh items-center justify-center p-4 sm:p-8"
-    >
+    <main className="bg-muted/30 flex min-h-svh items-center justify-center p-4 sm:p-8">
       <form
         onSubmit={handleSubmit}
         className="border-border bg-card w-full max-w-sm rounded-2xl border p-6 shadow-sm sm:p-8"
       >
-        <h1 className="mb-1 text-center text-2xl font-bold tracking-tight sm:text-right">
+        <h1 className="mb-1 text-center text-2xl font-bold tracking-tight sm:text-start">
           Cleopatra System
         </h1>
-        <p className="text-muted-foreground mb-6 text-center text-sm sm:text-right">
+        <p className="text-muted-foreground mb-6 text-center text-sm sm:text-start">
           سجّل الدخول للمتابعة
         </p>
 

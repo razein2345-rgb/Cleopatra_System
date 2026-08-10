@@ -8,7 +8,7 @@ import { useAuth } from '@/state/AuthContext';
  * `requirePermission` in apps/api), because client-side checks can always
  * be bypassed by whoever controls the client.
  */
-export function ProtectedRoute({ permission }: { permission?: string }) {
+export function ProtectedRoute({ permission }: { permission?: string | string[] }) {
   const { loading, authContext, can } = useAuth();
 
   if (loading) {
@@ -23,7 +23,9 @@ export function ProtectedRoute({ permission }: { permission?: string }) {
     return <Navigate to="/login" replace />;
   }
 
-  if (permission && !can(permission)) {
+  // A string requires that exact permission; an array is satisfied by holding any one of them.
+  const permitted = !permission || (Array.isArray(permission) ? permission.some(can) : can(permission));
+  if (!permitted) {
     return (
       <div className="flex min-h-svh items-center justify-center p-8 text-center">
         <div>
