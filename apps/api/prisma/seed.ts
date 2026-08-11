@@ -1,6 +1,7 @@
 import { prisma } from '../src/lib/prisma.js';
 import { DocumentType } from '../src/generated/prisma/enums.js';
 import { GLOBAL_PERMISSION, PERMISSION_CATALOG } from '@cleopatra/shared';
+import { replaceTemplateStages } from '../src/services/workflowTemplateService.js';
 
 // The 8 default roles required by Phase 2. `isSystem: true` protects these
 // from deletion via the Role management UI (they can still be renamed or
@@ -119,6 +120,90 @@ const DEFAULT_DEPARTMENTS = [
   { code: 'DELIVERY', name: 'التسليم' },
   { code: 'CUSTOMER_SERVICE', name: 'خدمة العملاء' },
 ] as const;
+
+/**
+ * FEATURE-007 WF-A — one WorkflowTemplate per confirmed production track.
+ *
+ * Owner decision, 2026-08-10 (see FEATURE-007-OPERATIONAL-MVP/02_PLAN.md's
+ * WF-A note): Design is not four independent stages, it is one shared
+ * intake every track routes through first, regardless of product type.
+ * The schema has no cross-template shared-stage entity — each track's
+ * "التصميم" stage is still its own row — so the unification happens at
+ * the Department level instead: every track's first stage points at the
+ * exact same DESIGN department, so the Production Board's per-department
+ * view already shows every item awaiting design in one place, and design
+ * staff never need to know or care which track an item continues on
+ * after they finish it.
+ */
+const DEFAULT_WORKFLOW_TEMPLATES: Array<{
+  code: string;
+  name: string;
+  description: string;
+  stages: Array<{
+    tempKey: string;
+    order: number;
+    name: string;
+    departmentCode: (typeof DEFAULT_DEPARTMENTS)[number]['code'];
+    nextStageTempKey?: string;
+    requiresFiles?: boolean;
+    variables?: Array<{ key: string; label: string; isRequired?: boolean; order?: number }>;
+  }>;
+}> = [
+  {
+    code: 'OFFSET',
+    name: 'مسار الطباعة الأوفست',
+    description: 'التصميم ← تجهيز الزنكات ← الطباعة الأوفست ← التشطيب ← التسليم ← خدمة العملاء.',
+    stages: [
+      { tempKey: 'design', order: 1, name: 'التصميم', departmentCode: 'DESIGN', requiresFiles: true, nextStageTempKey: 'plate' },
+      { tempKey: 'plate', order: 2, name: 'تجهيز الزنكات', departmentCode: 'PLATE_PREPARATION', nextStageTempKey: 'print' },
+      { tempKey: 'print', order: 3, name: 'الطباعة الأوفست', departmentCode: 'OFFSET_PRINTING', nextStageTempKey: 'finish' },
+      { tempKey: 'finish', order: 4, name: 'التشطيب', departmentCode: 'FINISHING', nextStageTempKey: 'delivery' },
+      { tempKey: 'delivery', order: 5, name: 'التسليم', departmentCode: 'DELIVERY', nextStageTempKey: 'service' },
+      { tempKey: 'service', order: 6, name: 'خدمة العملاء', departmentCode: 'CUSTOMER_SERVICE' },
+    ],
+  },
+  {
+    code: 'DIGITAL',
+    name: 'مسار الطباعة الديجيتال',
+    description: 'التصميم ← الطباعة الديجيتال ← التشطيب ← التسليم ← خدمة العملاء.',
+    stages: [
+      { tempKey: 'design', order: 1, name: 'التصميم', departmentCode: 'DESIGN', requiresFiles: true, nextStageTempKey: 'print' },
+      { tempKey: 'print', order: 2, name: 'الطباعة الديجيتال', departmentCode: 'DIGITAL_PRINTING', nextStageTempKey: 'finish' },
+      { tempKey: 'finish', order: 3, name: 'التشطيب', departmentCode: 'FINISHING', nextStageTempKey: 'delivery' },
+      { tempKey: 'delivery', order: 4, name: 'التسليم', departmentCode: 'DELIVERY', nextStageTempKey: 'service' },
+      { tempKey: 'service', order: 5, name: 'خدمة العملاء', departmentCode: 'CUSTOMER_SERVICE' },
+    ],
+  },
+  {
+    code: 'BOARDS_SIGNAGE',
+    name: 'مسار اللوحات والإعلانات',
+    description: 'التصميم ← إنتاج اللوحات والإعلانات ← التسليم ← خدمة العملاء.',
+    stages: [
+      { tempKey: 'design', order: 1, name: 'التصميم', departmentCode: 'DESIGN', requiresFiles: true, nextStageTempKey: 'produce' },
+      { tempKey: 'produce', order: 2, name: 'إنتاج اللوحات والإعلانات', departmentCode: 'FINISHING', nextStageTempKey: 'delivery' },
+      { tempKey: 'delivery', order: 3, name: 'التسليم', departmentCode: 'DELIVERY', nextStageTempKey: 'service' },
+      { tempKey: 'service', order: 4, name: 'خدمة العملاء', departmentCode: 'CUSTOMER_SERVICE' },
+    ],
+  },
+  {
+    code: 'OTHER_PRODUCTS',
+    name: 'مسار المنتجات الأخرى (أختام، أكريليك، إلخ)',
+    description: 'التصميم ← الإنتاج ← التسليم ← خدمة العملاء — لمنتجات زي الأختام النحاسية والأكريليك اللي محتاجة بيانات خاصة بكل قطعة.',
+    stages: [
+      { tempKey: 'design', order: 1, name: 'التصميم', departmentCode: 'DESIGN', requiresFiles: true, nextStageTempKey: 'produce' },
+      {
+        tempKey: 'produce',
+        order: 2,
+        name: 'الإنتاج',
+        departmentCode: 'FINISHING',
+        nextStageTempKey: 'delivery',
+        variables: [{ key: 'customer_text', label: 'نص/بيانات العميل على المنتج', isRequired: true, order: 1 }],
+      },
+      { tempKey: 'delivery', order: 3, name: 'التسليم', departmentCode: 'DELIVERY', nextStageTempKey: 'service' },
+      { tempKey: 'service', order: 4, name: 'خدمة العملاء', departmentCode: 'CUSTOMER_SERVICE' },
+    ],
+  },
+];
 
 // Mirrors legacy DEFAULT_FAMILIES exactly (LEGACY_ANALYSIS §3/§4).
 const DEFAULT_FAMILIES = [
@@ -302,6 +387,43 @@ async function main() {
       where: { code: dept.code },
       update: {},
       create: { code: dept.code, name: dept.name },
+    });
+  }
+
+  // FEATURE-007 WF-A — one published template per confirmed production
+  // track, created + published only the first time (a published template
+  // version is immutable by design — see `assertTemplateEditable` — so a
+  // template that already exists here is left completely alone on rerun,
+  // same discipline as DEFAULT_ROLE_PERMISSIONS above).
+  const departmentByCode = new Map((await prisma.department.findMany()).map((d) => [d.code, d.id]));
+
+  for (const tmpl of DEFAULT_WORKFLOW_TEMPLATES) {
+    const existing = await prisma.workflowTemplate.findFirst({
+      where: { code: tmpl.code, isDeleted: false },
+    });
+    if (existing) continue;
+
+    await prisma.$transaction(async (tx) => {
+      const created = await tx.workflowTemplate.create({
+        data: { code: tmpl.code, name: tmpl.name, description: tmpl.description },
+      });
+      await replaceTemplateStages(
+        tx,
+        created.id,
+        tmpl.stages.map((s) => ({
+          tempKey: s.tempKey,
+          order: s.order,
+          name: s.name,
+          departmentId: departmentByCode.get(s.departmentCode),
+          nextStageTempKey: s.nextStageTempKey,
+          requiresFiles: s.requiresFiles,
+          variables: s.variables,
+        })),
+      );
+      await tx.workflowTemplate.update({
+        where: { id: created.id },
+        data: { publishedAt: new Date() },
+      });
     });
   }
 
