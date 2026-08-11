@@ -125,6 +125,18 @@ Uses existing FEATURE-004 infrastructure entirely — no new engine, this is con
 
 Sequenced after PE-E and M8 (the Quotation-shows-final-price-only requirement is already implicit in M8's existing scope) — not before, since WF-B specifically needs PE-E's item-kind data to route correctly.
 
+**WF-A — done, 2026-08-12.** Implemented in `prisma/seed.ts` (`DEFAULT_WORKFLOW_TEMPLATES`), not as an API/UI feature — templates are reference data, seeded and published once, exactly like `DEFAULT_ROLES`/`DEFAULT_DEPARTMENTS`. Four templates, each created + staged (reusing `replaceTemplateStages` so the tempKey→id graph-resolution logic isn't duplicated) + published in one transaction:
+- **OFFSET**: التصميم → تجهيز الزنكات → الطباعة الأوفست → التشطيب → التسليم → خدمة العملاء
+- **DIGITAL**: التصميم → الطباعة الديجيتال → التشطيب → التسليم → خدمة العملاء
+- **BOARDS_SIGNAGE**: التصميم → إنتاج اللوحات والإعلانات → التسليم → خدمة العملاء
+- **OTHER_PRODUCTS**: التصميم → الإنتاج (with a `customer_text` `WorkflowStageVariable`) → التسليم → خدمة العملاء
+
+The owner's shared-design-department decision above is satisfied at the `Department` level, not by inventing a cross-template stage entity the schema doesn't have: all four tracks' "التصميم" stage points at the identical `DESIGN` department row (verified live — same `departmentId` on all four). The Production Board's existing per-department grouping is what turns that into one queue design staff see regardless of which track an item continues on afterward.
+
+Seeding is intentionally idempotent-once, not sync-forever: a template `code` that already exists is left completely alone on rerun (a published version is immutable by design — `assertTemplateEditable` — so there's nothing to sync). Live-verified against the shared DB: all 4 templates return `publishedAt` set, correct stage order/names, and the `GenerateWorkOrderPanel` built earlier this session (which showed an honest "no published template" empty state until now) has real options to pick from.
+
+**Still open:** WF-B (automatic routing) and WF-C (reorder reminders).
+
 ## Explicitly deferred (not part of this feature)
 
 - FEATURE-006 M7–M11 (DocumentRenderer, Quotation/Invoice/WorkOrder documents, Customer Profile tabs) — paused, resumes after this feature or once the quotation reference image arrives, whichever the owner prefers.
