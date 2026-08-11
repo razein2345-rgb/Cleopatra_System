@@ -5,7 +5,7 @@ services:
     plan: starter
     region: frankfurt
     branch: main
-    buildCommand: npm ci && npm run build --workspace=packages/shared && npm run build --workspace=apps/api && npx prisma migrate deploy --schema=apps/api/prisma/schema.prisma
+    buildCommand: npm ci && npm run build --workspace=packages/shared && npm run build --workspace=apps/api && (cd apps/api && npx prisma migrate deploy)
     startCommand: npm run start --workspace=apps/api
     healthCheckPath: /health
     envVars:
