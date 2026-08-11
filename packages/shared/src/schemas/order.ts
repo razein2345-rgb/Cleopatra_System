@@ -13,6 +13,16 @@ export const orderStatusSchema = z.enum([
 ]);
 
 /**
+ * FEATURE-007 WF-B — matches `WorkflowTemplate.code` for the 4 tracks
+ * seeded by WF-A. Chosen explicitly by staff at order-creation time
+ * (owner decision, 2026-08-12: "بنفرق على حسب الطلب من الأول") — never
+ * inferred from item kind, since e.g. loose paper can legitimately go
+ * either Offset or Digital and only the person taking the order knows
+ * which. `createWorkOrder` reads this to auto-resolve `templateCode`.
+ */
+export const productionTrackSchema = z.enum(['OFFSET', 'DIGITAL', 'BOARDS_SIGNAGE', 'OTHER_PRODUCTS']);
+
+/**
  * A historical line item snapshot — `kind`/`modelName`/`breakdown` are
  * frozen at the moment of creation and never recomputed from a live
  * source. See ADR 0010 and FEATURE-003 02_PLAN.md's Milestone 2 section
@@ -65,6 +75,7 @@ export const orderSchema = z.object({
   customerNotes: z.string().nullable(),
   internalNotes: z.string().nullable(),
   status: orderStatusSchema,
+  productionTrack: productionTrackSchema.nullable(),
   quotationOriginId: z.string().uuid().nullable(),
   items: z.array(orderItemSchema),
   // FEATURE-006 M3 — deposits/remaining balance (Approved Addition,
@@ -113,6 +124,7 @@ export const createOrderSchema = z.object({
   deliveryDate: z.string().optional(),
   customerNotes: z.string().trim().min(1).max(2000).optional(),
   internalNotes: z.string().trim().min(1).max(2000).optional(),
+  productionTrack: productionTrackSchema.optional(),
   items: z.array(createOrderItemSchema).min(1),
   // FEATURE-007 — PRICING_ENGINE_SPEC.md §4's multi-payment array,
   // collected at creation time (e.g. cash + bank transfer for the same
@@ -121,6 +133,7 @@ export const createOrderSchema = z.object({
 });
 
 export type OrderStatus = z.infer<typeof orderStatusSchema>;
+export type ProductionTrack = z.infer<typeof productionTrackSchema>;
 export type OrderItem = z.infer<typeof orderItemSchema>;
 export type Order = z.infer<typeof orderSchema>;
 export type CreateOrderItemInput = z.infer<typeof createOrderItemSchema>;

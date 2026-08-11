@@ -66,6 +66,18 @@ enum OrderStatus {
   CANCELLED
 }
 
+/// FEATURE-007 WF-B. Matches `WorkflowTemplate.code` for the 4 tracks
+/// seeded by WF-A (prisma/seed.ts's `DEFAULT_WORKFLOW_TEMPLATES`) — chosen
+/// explicitly by staff at order-creation time, never inferred from item
+/// kind (owner decision, 2026-08-12: "بنفرق على حسب الطلب من الأول" — the
+/// customer's chosen track, not a heuristic, is what routes the order).
+enum ProductionTrack {
+  OFFSET
+  DIGITAL
+  BOARDS_SIGNAGE
+  OTHER_PRODUCTS
+}
+
 /// @deprecated FEATURE-004 M1. See `WorkOrder.productionStatus`'s own doc
 /// comment — a hardcoded, Printing-specific pipeline the Workflow Engine
 /// replaces. Kept only because the field using it is kept; never
@@ -1064,6 +1076,13 @@ model Order {
   customerNotes   String?
   internalNotes   String?
   status          OrderStatus @default(DRAFT)
+
+  // FEATURE-007 WF-B — nullable: an order made only of PRODUCT/SERVICE
+  // items may never need a production Work Order at all, so this isn't
+  // forced on every order. Set once at creation (the "chosen from the
+  // start" decision above) and read by `createWorkOrder` to auto-resolve
+  // `templateCode` instead of requiring a manual pick every time.
+  productionTrack ProductionTrack?
 
   // FEATURE-006 — Document Templates & Printing. `documentOverrides` is
   // this document's one-time presentation customization (never written

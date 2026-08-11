@@ -15,6 +15,7 @@ import { DocumentsPage } from '@/pages/documents/DocumentsPage';
 import { QuotationDetailPage } from '@/pages/quotations/QuotationDetailPage';
 import { NewOrderPage } from '@/pages/orders/NewOrderPage';
 import { OrderDocumentPage } from '@/pages/orders/OrderDocumentPage';
+import { WorkOrderDocumentPage } from '@/pages/orders/WorkOrderDocumentPage';
 import { TreasuryPage } from '@/pages/treasury/TreasuryPage';
 import { InventoryPage } from '@/pages/inventory/InventoryPage';
 import { ProductionBoardPage } from '@/pages/production-board/ProductionBoardPage';
@@ -62,6 +63,11 @@ function App() {
               {/* FEATURE-006 M9 — Invoice document (print). */}
               <Route element={<ProtectedRoute permission="orders.view" />}>
                 <Route path="/orders/:id" element={<OrderDocumentPage />} />
+              </Route>
+
+              {/* FEATURE-006 M10 — Work Order document (print). */}
+              <Route element={<ProtectedRoute permission="work-orders.view" />}>
+                <Route path="/work-orders/:id" element={<WorkOrderDocumentPage />} />
               </Route>
 
               {/* FEATURE-006 M4 — Treasury as a first-class module.

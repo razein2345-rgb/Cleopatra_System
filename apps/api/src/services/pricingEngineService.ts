@@ -33,6 +33,8 @@ export interface PricingContext {
   boardsConstants: BoardsPricingConstants;
   vatRate: number;
   sheetPriceByInventoryItemId: Map<string, number>;
+  /** Frozen into `breakdown` at creation time (same "freeze by default" discipline as `modelName`) so a later paper rename never changes what an already-printed Work Order shows it used. */
+  paperNameByInventoryItemId: Map<string, string>;
   catalogPriceById: Map<string, number>;
 }
 
@@ -136,8 +138,10 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
   ]);
 
   const sheetPriceByInventoryItemId = new Map<string, number>();
+  const paperNameByInventoryItemId = new Map<string, string>();
   for (const ii of inventoryItems) {
     if (ii.sheetType) sheetPriceByInventoryItemId.set(ii.id, ii.sheetType.price.toNumber());
+    paperNameByInventoryItemId.set(ii.id, ii.name);
   }
 
   const catalogPriceById = new Map<string, number>();
@@ -150,6 +154,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
     boardsConstants: mapSettingToBoardsPricingConstants(setting),
     vatRate: setting.vatRate.toNumber(),
     sheetPriceByInventoryItemId,
+    paperNameByInventoryItemId,
     catalogPriceById,
   };
 }
@@ -222,7 +227,20 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         // by document printing (DocumentRenderer) so an invoice can show
         // what was ordered without exposing internal figures like
         // `sheetsNeeded` (§5.3 — internal calc never shown to the customer).
-        breakdown: { ...result, quantity: pricing.quantity } as unknown as Prisma.InputJsonValue,
+        // The rest (colorCount/sides/isNewDesign/numberingStartNumber/
+        // paperName) are `pricing` INPUT fields, not part of the pricing
+        // engine's own result — merged in for the same reason `quantity`
+        // is: the Offset Work Order document (§4) needs them and nothing
+        // else keeps them once this transaction commits.
+        breakdown: {
+          ...result,
+          quantity: pricing.quantity,
+          colorCount: pricing.colorCount,
+          sides: pricing.sides,
+          isNewDesign: pricing.isNewDesign,
+          numberingStartNumber: pricing.numberingStartNumber ?? null,
+          paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+        } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: result.sheetsNeeded,
         inventoryItemId: pricing.inventoryItemId,
         sizeFamilyKey: pricing.sizeFamilyKey,
@@ -254,7 +272,16 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       });
       return {
         total: result.total,
-        breakdown: { ...result, quantity: pricing.notebookQuantity } as unknown as Prisma.InputJsonValue,
+        breakdown: {
+          ...result,
+          quantity: pricing.notebookQuantity,
+          colorCount: pricing.colorCount,
+          isNewDesign: pricing.isNewDesign,
+          numberingStartNumber: pricing.numberingStartNumber ?? null,
+          contentType: pricing.contentType,
+          copies: pricing.copies ?? null,
+          paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+        } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: result.sheetsNeeded,
         inventoryItemId: pricing.inventoryItemId,
         sizeFamilyKey: pricing.sizeFamilyKey,
@@ -275,7 +302,13 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       });
       return {
         total: result.total,
-        breakdown: { ...result, quantity: pricing.quantity } as unknown as Prisma.InputJsonValue,
+        breakdown: {
+          ...result,
+          quantity: pricing.quantity,
+          colorCount: pricing.colorCount,
+          isNewDesign: pricing.isNewDesign,
+          readyEnvelopePricePerPiece: pricing.readyEnvelopePricePerPiece,
+        } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: null,
         inventoryItemId: null,
         sizeFamilyKey: null,
@@ -309,7 +342,15 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       });
       return {
         total: result.total,
-        breakdown: { ...result, quantity: pricing.quantity } as unknown as Prisma.InputJsonValue,
+        breakdown: {
+          ...result,
+          quantity: pricing.quantity,
+          colorCount: pricing.colorCount,
+          sides: pricing.sides,
+          isNewDesign: pricing.isNewDesign,
+          sellophaneEnabled: pricing.sellophaneEnabled,
+          paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+        } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: result.sheetsNeeded,
         inventoryItemId: pricing.inventoryItemId,
         sizeFamilyKey: pricing.sizeFamilyKey,
@@ -329,7 +370,15 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       });
       return {
         total: result.total,
-        breakdown: { ...result, quantity: pricing.quantity } as unknown as Prisma.InputJsonValue,
+        breakdown: {
+          ...result,
+          quantity: pricing.quantity,
+          material: pricing.material,
+          widthCm: pricing.widthCm,
+          heightCm: pricing.heightCm,
+          hasDesign: pricing.hasDesign ?? null,
+          hasSellophane: pricing.hasSellophane ?? null,
+        } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: null,
         inventoryItemId: null,
         sizeFamilyKey: null,

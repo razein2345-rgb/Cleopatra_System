@@ -20,6 +20,13 @@ function canSeeInternal(req: Request): boolean {
  * requested template's latest published version, in one transaction —
  * mirrors quotation-conversion's create-plus-link transaction shape
  * (FEATURE-003 M2).
+ *
+ * FEATURE-007 WF-B — `templateCode` is optional: when omitted, resolved
+ * from `order.productionTrack` (the track chosen at order-creation time,
+ * per the owner's "differentiate from the start" decision, 2026-08-12)
+ * instead of requiring a manual pick every time. An explicit
+ * `templateCode` still wins if supplied — e.g. an older order created
+ * before `productionTrack` existed.
  */
 export async function createWorkOrder(req: Request, res: Response) {
   const auth = req.auth!;
@@ -31,7 +38,19 @@ export async function createWorkOrder(req: Request, res: Response) {
     return;
   }
 
-  const template = await getLatestPublishedTemplate(input.templateCode);
+  const templateCode = input.templateCode ?? order.productionTrack;
+  if (!templateCode) {
+    res.status(400).json({
+      success: false,
+      error: {
+        message: 'This order has no production track set — pass templateCode explicitly or set one on the order',
+        code: 'NO_PRODUCTION_TRACK',
+      },
+    });
+    return;
+  }
+
+  const template = await getLatestPublishedTemplate(templateCode);
   if (!template) {
     res.status(400).json({
       success: false,

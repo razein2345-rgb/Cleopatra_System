@@ -1,5 +1,5 @@
 import type { Prisma } from '../generated/prisma/client.js';
-import type { CreateOrderItemInput, CreatePaymentInput, Order, OrderItem, Payment } from '@cleopatra/shared';
+import type { CreateOrderItemInput, CreatePaymentInput, Order, OrderItem, Payment, ProductionTrack } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { deductStockForOrderItem } from './inventoryService.js';
 import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
@@ -75,6 +75,7 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
     customerNotes: order.customerNotes,
     internalNotes: canSeeInternal ? order.internalNotes : null,
     status: order.status,
+    productionTrack: order.productionTrack,
     quotationOriginId: order.quotationOrigin?.id ?? null,
     items: order.items.map(mapOrderItemToDto),
     // FEATURE-006 M3 — computed from `payments` at read time, never
@@ -236,6 +237,7 @@ export async function createOrder(
     deliveryDate?: string;
     customerNotes?: string;
     internalNotes?: string;
+    productionTrack?: ProductionTrack;
     items: CreateOrderItemInput[];
     payments?: CreatePaymentInput[];
   },
@@ -270,6 +272,7 @@ export async function createOrder(
         deliveryDate: input.deliveryDate ? new Date(input.deliveryDate) : null,
         customerNotes: input.customerNotes ?? null,
         internalNotes: input.internalNotes ?? null,
+        productionTrack: input.productionTrack ?? null,
         status: 'CONFIRMED',
         // quotationOriginId is intentionally never set here — this is the
         // reverse relation from Quotation.convertedOrderId; a directly
@@ -286,7 +289,14 @@ export async function createOrder(
               serviceId: item.serviceId,
               serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
               itemTotal: result.total,
-              breakdownOverride: result.breakdown,
+              // `computeItemPricing`'s breakdown is pricing-only — it has
+              // no access to `notes` (not part of `PricingLineItem`). Merge
+              // it in here, the one place both the frozen pricing result
+              // and the caller's free-text note are both in scope, or it's
+              // silently lost: `buildOrderItemCreate`'s own `notes` param
+              // only feeds its ad-hoc fallback shape, which this
+              // `breakdownOverride` always bypasses.
+              breakdownOverride: { ...(result.breakdown as Record<string, unknown>), notes: item.notes ?? null },
               sizeFamilyKey: result.sizeFamilyKey,
               realSizeLabel: result.realSizeLabel,
               inventoryItemId: result.inventoryItemId,

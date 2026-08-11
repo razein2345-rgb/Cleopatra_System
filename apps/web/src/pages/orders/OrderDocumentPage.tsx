@@ -42,13 +42,13 @@ export function OrderDocumentPage() {
   if (!order || !partner || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
 
   const items: DocumentRendererItem[] = order.items.map((item) => {
-    const breakdown = item.breakdown as { quantity?: number } | null;
+    const breakdown = item.breakdown as { quantity?: number; notes?: string | null } | null;
     return {
       itemType: item.kind ?? '—',
       quantity: breakdown?.quantity ?? 0,
       size: item.realSizeLabel,
       description: item.modelName,
-      notes: null,
+      notes: breakdown?.notes ?? null,
     };
   });
 

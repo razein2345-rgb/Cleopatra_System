@@ -10,6 +10,7 @@ import type {
   Order,
   OrderItemPricingInput,
   PricingReference,
+  ProductionTrack,
   Quotation,
   ReadyProduct,
   Service,
@@ -43,6 +44,15 @@ const KIND_LABELS: Record<PricingKind, string> = {
   SERVICE: 'خدمة',
 };
 const KIND_OPTIONS = Object.keys(KIND_LABELS) as PricingKind[];
+
+/** FEATURE-007 WF-B — matches `WorkflowTemplate.code` for the 4 tracks seeded by WF-A; the customer's chosen track routes the eventual Work Order, never inferred from item kind (owner, 2026-08-12). */
+const PRODUCTION_TRACK_LABELS: Record<ProductionTrack, string> = {
+  OFFSET: 'أوفست',
+  DIGITAL: 'ديجيتال',
+  BOARDS_SIGNAGE: 'لوحات وإعلانات',
+  OTHER_PRODUCTS: 'منتجات أخرى',
+};
+const PRODUCTION_TRACK_OPTIONS = Object.keys(PRODUCTION_TRACK_LABELS) as ProductionTrack[];
 
 const BOARD_MATERIAL_LABELS: Record<BoardMaterial, string> = {
   BANNER: 'بنر',
@@ -394,7 +404,7 @@ export function NewOrderPage() {
             مستند جديد آخر
           </Button>
         </div>
-        <GenerateWorkOrderPanel orderId={order.id} />
+        <GenerateWorkOrderPanel orderId={order.id} productionTrack={order.productionTrack} />
       </div>
     );
   }
@@ -445,7 +455,14 @@ export function NewOrderPage() {
  * (FEATURE-007 WF-A, still pending) — until one exists this honestly
  * shows that instead of pretending the action is available.
  */
-function GenerateWorkOrderPanel({ orderId }: { orderId: string }) {
+function GenerateWorkOrderPanel({
+  orderId,
+  productionTrack,
+}: {
+  orderId: string;
+  productionTrack: ProductionTrack | null;
+}) {
+  const navigate = useNavigate();
   const { can } = useAuth();
   const [templates, setTemplates] = useState<WorkflowTemplate[] | null>(null);
   const [templateCode, setTemplateCode] = useState('');
@@ -469,10 +486,15 @@ function GenerateWorkOrderPanel({ orderId }: { orderId: string }) {
         }
         const list = [...latestPublishedByCode.values()];
         setTemplates(list);
-        setTemplateCode(list[0]?.code ?? '');
+        // FEATURE-007 WF-B — pre-select the track chosen at order creation
+        // (still overridable below) instead of just whichever came first.
+        const preferred = productionTrack && latestPublishedByCode.has(productionTrack)
+          ? productionTrack
+          : (list[0]?.code ?? '');
+        setTemplateCode(preferred);
       })
       .catch(() => setTemplates([]));
-  }, [can]);
+  }, [can, productionTrack]);
 
   if (!can('work-orders.edit')) return null;
 
@@ -492,9 +514,12 @@ function GenerateWorkOrderPanel({ orderId }: { orderId: string }) {
 
   if (created) {
     return (
-      <div className="border-border bg-muted/30 space-y-1 rounded-xl border p-3 text-sm">
+      <div className="border-border bg-muted/30 space-y-2 rounded-xl border p-3 text-sm">
         <p className="font-medium">تم إنشاء أمر الشغل</p>
         <p className="text-muted-foreground">{created.workOrderNumber}</p>
+        <Button type="button" size="sm" variant="secondary" onClick={() => navigate(`/work-orders/${created.id}`)}>
+          طباعة أمر الشغل
+        </Button>
       </div>
     );
   }
@@ -554,6 +579,7 @@ function NewOrderForm({
   const [documentType, setDocumentType] = useState<DocumentType>(canInvoice ? 'INVOICE' : 'QUOTATION');
   const [partnerId, setPartnerId] = useState(partners[0]?.id ?? '');
   const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
+  const [productionTrack, setProductionTrack] = useState<ProductionTrack | ''>('');
   const [deliveryDate, setDeliveryDate] = useState('');
   const [validUntil, setValidUntil] = useState(() => {
     const d = new Date();
@@ -669,6 +695,7 @@ function NewOrderForm({
           deliveryDate: deliveryDate ? new Date(deliveryDate).toISOString() : undefined,
           customerNotes: customerNotes || undefined,
           internalNotes: internalNotes || undefined,
+          productionTrack: productionTrack || undefined,
           items: outputItems,
         };
         const order = await apiPost<Order>('/api/orders', input);
@@ -763,15 +790,32 @@ function NewOrderForm({
                 />
               </label>
             ) : (
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">تاريخ التسليم (اختياري)</span>
-                <input
-                  type="date"
-                  value={deliveryDate}
-                  onChange={(e) => setDeliveryDate(e.target.value)}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
+              <>
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">تاريخ التسليم (اختياري)</span>
+                  <input
+                    type="date"
+                    value={deliveryDate}
+                    onChange={(e) => setDeliveryDate(e.target.value)}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">المسار الإنتاجي (اختياري)</span>
+                  <select
+                    value={productionTrack}
+                    onChange={(e) => setProductionTrack(e.target.value as ProductionTrack | '')}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  >
+                    <option value="">— بدون —</option>
+                    {PRODUCTION_TRACK_OPTIONS.map((t) => (
+                      <option key={t} value={t}>
+                        {PRODUCTION_TRACK_LABELS[t]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
             )}
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">نسبة الخصم %</span>

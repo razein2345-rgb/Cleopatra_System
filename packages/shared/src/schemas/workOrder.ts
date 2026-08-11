@@ -20,8 +20,15 @@ export const workOrderSchema = z.object({
 
 export const createWorkOrderSchema = z.object({
   orderId: z.string().uuid(),
-  /** Which Workflow Template to start — resolved to its latest published version. */
-  templateCode: z.string().trim().min(1),
+  /**
+   * Which Workflow Template to start — resolved to its latest published
+   * version. Optional as of FEATURE-007 WF-B: omit it to auto-resolve
+   * from the order's own `productionTrack` (the track chosen at order
+   * creation, per the owner's "differentiate from the start" decision);
+   * still overridable by passing it explicitly (e.g. an older order with
+   * no `productionTrack` set).
+   */
+  templateCode: z.string().trim().min(1).optional(),
 });
 
 export type WorkOrder = z.infer<typeof workOrderSchema>;
