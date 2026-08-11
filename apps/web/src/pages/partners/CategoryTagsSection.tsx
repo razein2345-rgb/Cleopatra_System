@@ -49,7 +49,7 @@ export function CategoryTagsSection({
         setTags(t);
       })
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : 'Failed to load categories/tags'),
+        setError(err instanceof Error ? err.message : 'تعذر تحميل التصنيفات والتاجات'),
       );
   }, []);
 
@@ -62,7 +62,7 @@ export function CategoryTagsSection({
       });
       onSaved(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to change category');
+      setError(err instanceof Error ? err.message : 'تعذر تغيير التصنيف');
     } finally {
       setCategorySubmitting(false);
     }
@@ -83,7 +83,7 @@ export function CategoryTagsSection({
       });
       onSaved(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save tags');
+      setError(err instanceof Error ? err.message : 'تعذر حفظ التاجات');
     } finally {
       setTagsSubmitting(false);
     }
@@ -91,7 +91,7 @@ export function CategoryTagsSection({
 
   if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (!categories || !tags) {
-    return <div className="text-muted-foreground text-sm">Loading category/tags…</div>;
+    return <div className="text-muted-foreground text-sm">جارٍ تحميل التصنيفات والتاجات…</div>;
   }
 
   // Inactive options stay selectable only if the partner already holds them
@@ -105,28 +105,28 @@ export function CategoryTagsSection({
 
   return (
     <div className="border-border bg-card space-y-4 rounded-2xl border p-4">
-      <h2 className="font-semibold">Category &amp; Tags</h2>
+      <h2 className="font-semibold">التصنيف والتاجات</h2>
 
       <label className="block space-y-1 text-sm sm:max-w-xs">
-        <span className="text-muted-foreground">Category</span>
+        <span className="text-muted-foreground">التصنيف</span>
         <select
           disabled={!canEdit || categorySubmitting}
           value={partner.categoryId ?? ''}
           onChange={(e) => void changeCategory(e.target.value)}
           className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
         >
-          <option value="">— none —</option>
+          <option value="">— بدون —</option>
           {categoryOptions.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
-              {!c.isActive ? ' (inactive)' : ''}
+              {!c.isActive ? ' (غير نشط)' : ''}
             </option>
           ))}
         </select>
       </label>
 
       <div>
-        <p className="text-muted-foreground mb-1.5 text-sm">Tags</p>
+        <p className="text-muted-foreground mb-1.5 text-sm">التاجات</p>
         <div className="flex flex-wrap gap-3">
           {tagOptions.map((tag) => (
             <label key={tag.id} className="flex items-center gap-1.5 text-sm">
@@ -137,10 +137,10 @@ export function CategoryTagsSection({
                 onChange={() => toggleTag(tag.id)}
               />
               {tag.name}
-              {!tag.isActive ? ' (inactive)' : ''}
+              {!tag.isActive ? ' (غير نشط)' : ''}
             </label>
           ))}
-          {tagOptions.length === 0 && <span className="text-muted-foreground text-sm">No tags yet.</span>}
+          {tagOptions.length === 0 && <span className="text-muted-foreground text-sm">لا توجد تاجات بعد.</span>}
         </div>
         {canEdit && (
           <Button
@@ -149,7 +149,7 @@ export function CategoryTagsSection({
             disabled={!tagsDirty || tagsSubmitting}
             onClick={() => void saveTags()}
           >
-            {tagsSubmitting ? 'Saving…' : 'Save Tags'}
+            {tagsSubmitting ? 'جارٍ الحفظ…' : 'حفظ التاجات'}
           </Button>
         )}
       </div>

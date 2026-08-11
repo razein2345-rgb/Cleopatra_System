@@ -9,10 +9,10 @@ import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 
 const PREFERRED_METHOD_OPTIONS: Array<[PreferredContactMethod, string]> = [
-  ['PHONE', 'Phone'],
-  ['MOBILE', 'Mobile'],
-  ['WHATSAPP', 'WhatsApp'],
-  ['EMAIL', 'Email'],
+  ['PHONE', 'تليفون'],
+  ['MOBILE', 'موبايل'],
+  ['WHATSAPP', 'واتساب'],
+  ['EMAIL', 'بريد إلكتروني'],
 ];
 
 /** Contacts tab — FEATURE-002 Milestone 2. */
@@ -32,7 +32,7 @@ export function ContactsTab({
     apiGet<ContactPerson[]>(`/api/partners/${partnerId}/contacts`)
       .then(setContacts)
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : 'Failed to load contacts'),
+        setError(err instanceof Error ? err.message : 'تعذر تحميل جهات الاتصال'),
       );
   };
 
@@ -44,29 +44,29 @@ export function ContactsTab({
       await apiPut(`/api/partners/${partnerId}/contacts/${contact.id}/primary`, {});
       load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to set primary contact');
+      setError(err instanceof Error ? err.message : 'تعذر تعيين جهة الاتصال الأساسية');
     }
   };
 
   const removeContact = async (contact: ContactPerson) => {
-    if (!confirm(`Remove ${contact.fullName}?`)) return;
+    if (!confirm(`حذف "${contact.fullName}"؟`)) return;
     setError(null);
     try {
       await apiDelete(`/api/partners/${partnerId}/contacts/${contact.id}`);
       load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to remove contact');
+      setError(err instanceof Error ? err.message : 'تعذر حذف جهة الاتصال');
     }
   };
 
   if (error) return <div className="text-destructive text-sm">{error}</div>;
-  if (!contacts) return <div className="text-muted-foreground text-sm">Loading contacts…</div>;
+  if (!contacts) return <div className="text-muted-foreground text-sm">جارٍ تحميل جهات الاتصال…</div>;
 
   return (
     <div className="space-y-4">
       {canManage && (
         <Button onClick={() => setShowCreate((v) => !v)}>
-          {showCreate ? 'Cancel' : '+ Add Contact'}
+          {showCreate ? 'إلغاء' : '+ إضافة جهة اتصال'}
         </Button>
       )}
 
@@ -85,11 +85,11 @@ export function ContactsTab({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
-              <th className="p-3">Name</th>
-              <th className="p-3">Title / Department</th>
-              <th className="p-3">Contact</th>
-              <th className="p-3">Approvals</th>
-              <th className="p-3">Status</th>
+              <th className="p-3">الاسم</th>
+              <th className="p-3">المسمى الوظيفي / القسم</th>
+              <th className="p-3">التواصل</th>
+              <th className="p-3">صلاحيات الاعتماد</th>
+              <th className="p-3">الحالة</th>
               <th className="p-3"></th>
             </tr>
           </thead>
@@ -100,7 +100,7 @@ export function ContactsTab({
                   {contact.fullName}
                   {contact.isPrimary && (
                     <span className="bg-primary/10 text-primary ms-2 rounded-full px-2 py-0.5 text-xs">
-                      Primary
+                      أساسية
                     </span>
                   )}
                 </td>
@@ -111,7 +111,7 @@ export function ContactsTab({
                   <div className="flex flex-col gap-0.5">
                     {contact.mobile && <span>{contact.mobile}</span>}
                     {contact.phone && <span>{contact.phone}</span>}
-                    {contact.whatsapp && <span>WhatsApp: {contact.whatsapp}</span>}
+                    {contact.whatsapp && <span>واتساب: {contact.whatsapp}</span>}
                     {contact.email && <span>{contact.email}</span>}
                     {!contact.mobile && !contact.phone && !contact.whatsapp && !contact.email && (
                       <span>—</span>
@@ -122,31 +122,31 @@ export function ContactsTab({
                   <div className="flex flex-wrap gap-1">
                     {contact.canApproveQuotations && (
                       <span className="bg-secondary rounded-full px-2 py-0.5 text-xs">
-                        Quotations
+                        عروض الأسعار
                       </span>
                     )}
                     {contact.canApproveWorkOrders && (
                       <span className="bg-secondary rounded-full px-2 py-0.5 text-xs">
-                        Work Orders
+                        أوامر الشغل
                       </span>
                     )}
                     {contact.canApproveFinancialDocuments && (
                       <span className="bg-secondary rounded-full px-2 py-0.5 text-xs">
-                        Financial Docs
+                        المستندات المالية
                       </span>
                     )}
                   </div>
                 </td>
                 <td className="p-3">
                   <span className={contact.isActive ? 'text-green-600' : 'text-muted-foreground'}>
-                    {contact.isActive ? 'Active' : 'Inactive'}
+                    {contact.isActive ? 'نشط' : 'غير نشط'}
                   </span>
                 </td>
                 <td className="p-3">
                   {canManage && (
                     <div className="flex flex-wrap gap-2">
                       <Button variant="secondary" size="sm" onClick={() => setEditing(contact)}>
-                        Edit
+                        تعديل
                       </Button>
                       {!contact.isPrimary && contact.isActive && (
                         <Button
@@ -154,11 +154,11 @@ export function ContactsTab({
                           size="sm"
                           onClick={() => void setPrimary(contact)}
                         >
-                          Make Primary
+                          جعلها أساسية
                         </Button>
                       )}
                       <Button variant="ghost" size="sm" onClick={() => void removeContact(contact)}>
-                        Remove
+                        حذف
                       </Button>
                     </div>
                   )}
@@ -168,7 +168,7 @@ export function ContactsTab({
             {contacts.length === 0 && (
               <tr>
                 <td className="text-muted-foreground p-3" colSpan={6}>
-                  No contacts yet.
+                  لا توجد جهات اتصال بعد.
                 </td>
               </tr>
             )}
@@ -275,7 +275,7 @@ function ContactForm({
       }
       onSaved(saved);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save contact');
+      setError(err instanceof Error ? err.message : 'تعذر حفظ جهة الاتصال');
     } finally {
       setSubmitting(false);
     }
@@ -283,12 +283,12 @@ function ContactForm({
 
   return (
     <form onSubmit={submit} className="border-border bg-card space-y-4 rounded-2xl border p-4">
-      <h3 className="font-semibold">{contact ? `Edit ${contact.fullName}` : 'New Contact'}</h3>
+      <h3 className="font-semibold">{contact ? `تعديل "${contact.fullName}"` : 'جهة اتصال جديدة'}</h3>
       {error && <div className="text-destructive text-sm">{error}</div>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Full name</span>
+          <span className="text-muted-foreground">الاسم بالكامل</span>
           <input
             required
             value={fullName}
@@ -297,7 +297,7 @@ function ContactForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Job title</span>
+          <span className="text-muted-foreground">المسمى الوظيفي</span>
           <input
             value={jobTitle}
             onChange={(e) => setJobTitle(e.target.value)}
@@ -305,7 +305,7 @@ function ContactForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Department</span>
+          <span className="text-muted-foreground">القسم</span>
           <input
             value={department}
             onChange={(e) => setDepartment(e.target.value)}
@@ -313,7 +313,7 @@ function ContactForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Preferred contact method</span>
+          <span className="text-muted-foreground">طريقة التواصل المفضلة</span>
           <select
             value={preferredContactMethod}
             onChange={(e) =>
@@ -321,7 +321,7 @@ function ContactForm({
             }
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           >
-            <option value="">— unspecified —</option>
+            <option value="">— غير محدد —</option>
             {PREFERRED_METHOD_OPTIONS.map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
@@ -331,7 +331,7 @@ function ContactForm({
         </label>
 
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Mobile</span>
+          <span className="text-muted-foreground">موبايل</span>
           <input
             value={mobile}
             onChange={(e) => setMobile(e.target.value)}
@@ -339,7 +339,7 @@ function ContactForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Phone</span>
+          <span className="text-muted-foreground">تليفون</span>
           <input
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
@@ -347,7 +347,7 @@ function ContactForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">WhatsApp</span>
+          <span className="text-muted-foreground">واتساب</span>
           <input
             value={whatsapp}
             onChange={(e) => setWhatsapp(e.target.value)}
@@ -355,7 +355,7 @@ function ContactForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Email</span>
+          <span className="text-muted-foreground">البريد الإلكتروني</span>
           <input
             type="email"
             value={email}
@@ -366,7 +366,7 @@ function ContactForm({
       </div>
 
       <div>
-        <p className="text-muted-foreground mb-1.5 text-sm">Approval authority</p>
+        <p className="text-muted-foreground mb-1.5 text-sm">صلاحيات الاعتماد</p>
         <div className="flex flex-wrap gap-3 text-sm">
           <label className="flex items-center gap-1.5">
             <input
@@ -374,7 +374,7 @@ function ContactForm({
               checked={canApproveQuotations}
               onChange={(e) => setCanApproveQuotations(e.target.checked)}
             />
-            Can approve quotations
+            يقدر يعتمد عروض الأسعار
           </label>
           <label className="flex items-center gap-1.5">
             <input
@@ -382,7 +382,7 @@ function ContactForm({
               checked={canApproveWorkOrders}
               onChange={(e) => setCanApproveWorkOrders(e.target.checked)}
             />
-            Can approve work orders
+            يقدر يعتمد أوامر الشغل
           </label>
           <label className="flex items-center gap-1.5">
             <input
@@ -390,7 +390,7 @@ function ContactForm({
               checked={canApproveFinancialDocuments}
               onChange={(e) => setCanApproveFinancialDocuments(e.target.checked)}
             />
-            Can approve financial documents
+            يقدر يعتمد المستندات المالية
           </label>
         </div>
       </div>
@@ -402,17 +402,17 @@ function ContactForm({
             checked={isActive}
             onChange={(e) => setIsActive(e.target.checked)}
           />
-          Active
+          نشط
           {contact.isPrimary && isActive === false && (
             <span className="text-muted-foreground">
-              (deactivating removes this contact as Primary)
+              (تعطيلها يلغي كونها جهة الاتصال الأساسية)
             </span>
           )}
         </label>
       )}
 
       <label className="block space-y-1 text-sm">
-        <span className="text-muted-foreground">Notes</span>
+        <span className="text-muted-foreground">ملاحظات</span>
         <textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -423,10 +423,10 @@ function ContactForm({
 
       <div className="flex gap-2">
         <Button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : 'Save'}
+          {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
         </Button>
         <Button type="button" variant="secondary" onClick={onCancel}>
-          Cancel
+          إلغاء
         </Button>
       </div>
     </form>

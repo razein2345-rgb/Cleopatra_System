@@ -21,7 +21,7 @@ export function AddressesTab({
     apiGet<PartnerAddress[]>(`/api/partners/${partnerId}/addresses`)
       .then(setAddresses)
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : 'Failed to load addresses'),
+        setError(err instanceof Error ? err.message : 'تعذر تحميل العناوين'),
       );
   };
 
@@ -33,29 +33,29 @@ export function AddressesTab({
       await apiPut(`/api/partners/${partnerId}/addresses/${address.id}/default`, {});
       load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to set default address');
+      setError(err instanceof Error ? err.message : 'تعذر تعيين العنوان الافتراضي');
     }
   };
 
   const removeAddress = async (address: PartnerAddress) => {
-    if (!confirm(`Remove ${address.name}?`)) return;
+    if (!confirm(`حذف "${address.name}"؟`)) return;
     setError(null);
     try {
       await apiDelete(`/api/partners/${partnerId}/addresses/${address.id}`);
       load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to remove address');
+      setError(err instanceof Error ? err.message : 'تعذر حذف العنوان');
     }
   };
 
   if (error) return <div className="text-destructive text-sm">{error}</div>;
-  if (!addresses) return <div className="text-muted-foreground text-sm">Loading addresses…</div>;
+  if (!addresses) return <div className="text-muted-foreground text-sm">جارٍ تحميل العناوين…</div>;
 
   return (
     <div className="space-y-4">
       {canManage && (
         <Button onClick={() => setShowCreate((v) => !v)}>
-          {showCreate ? 'Cancel' : '+ Add Address'}
+          {showCreate ? 'إلغاء' : '+ إضافة عنوان'}
         </Button>
       )}
 
@@ -74,10 +74,10 @@ export function AddressesTab({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
-              <th className="p-3">Name / Type</th>
-              <th className="p-3">Location</th>
-              <th className="p-3">Map</th>
-              <th className="p-3">Status</th>
+              <th className="p-3">الاسم / النوع</th>
+              <th className="p-3">الموقع</th>
+              <th className="p-3">الخريطة</th>
+              <th className="p-3">الحالة</th>
               <th className="p-3"></th>
             </tr>
           </thead>
@@ -92,7 +92,7 @@ export function AddressesTab({
                     </span>
                     {address.isDefault && (
                       <span className="bg-primary/10 text-primary rounded-full px-2 py-0.5 text-xs">
-                        Default
+                        افتراضي
                       </span>
                     )}
                   </div>
@@ -100,16 +100,16 @@ export function AddressesTab({
                 <td className="text-muted-foreground p-3">
                   {[
                     address.street,
-                    address.building && `Bldg ${address.building}`,
-                    address.floor && `Floor ${address.floor}`,
-                    address.apartment && `Apt ${address.apartment}`,
+                    address.building && `مبنى ${address.building}`,
+                    address.floor && `الدور ${address.floor}`,
+                    address.apartment && `شقة ${address.apartment}`,
                     address.district,
                     address.city,
                     address.governorate,
                     address.country,
                   ]
                     .filter(Boolean)
-                    .join(', ') || '—'}
+                    .join('، ') || '—'}
                 </td>
                 <td className="p-3">
                   {address.googleMapsUrl ? (
@@ -119,7 +119,7 @@ export function AddressesTab({
                       rel="noreferrer"
                       className="text-primary underline"
                     >
-                      Open map
+                      فتح الخريطة
                     </a>
                   ) : (
                     '—'
@@ -127,14 +127,14 @@ export function AddressesTab({
                 </td>
                 <td className="p-3">
                   <span className={address.isActive ? 'text-green-600' : 'text-muted-foreground'}>
-                    {address.isActive ? 'Active' : 'Inactive'}
+                    {address.isActive ? 'نشط' : 'غير نشط'}
                   </span>
                 </td>
                 <td className="p-3">
                   {canManage && (
                     <div className="flex flex-wrap gap-2">
                       <Button variant="secondary" size="sm" onClick={() => setEditing(address)}>
-                        Edit
+                        تعديل
                       </Button>
                       {!address.isDefault && address.isActive && (
                         <Button
@@ -142,11 +142,11 @@ export function AddressesTab({
                           size="sm"
                           onClick={() => void setDefault(address)}
                         >
-                          Set Default
+                          جعله افتراضيًا
                         </Button>
                       )}
                       <Button variant="ghost" size="sm" onClick={() => void removeAddress(address)}>
-                        Remove
+                        حذف
                       </Button>
                     </div>
                   )}
@@ -156,7 +156,7 @@ export function AddressesTab({
             {addresses.length === 0 && (
               <tr>
                 <td className="text-muted-foreground p-3" colSpan={5}>
-                  No addresses yet.
+                  لا توجد عناوين بعد.
                 </td>
               </tr>
             )}
@@ -271,7 +271,7 @@ function AddressForm({
       }
       onSaved(saved);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save address');
+      setError(err instanceof Error ? err.message : 'تعذر حفظ العنوان');
     } finally {
       setSubmitting(false);
     }
@@ -279,12 +279,12 @@ function AddressForm({
 
   return (
     <form onSubmit={submit} className="border-border bg-card space-y-4 rounded-2xl border p-4">
-      <h3 className="font-semibold">{address ? `Edit ${address.name}` : 'New Address'}</h3>
+      <h3 className="font-semibold">{address ? `تعديل "${address.name}"` : 'عنوان جديد'}</h3>
       {error && <div className="text-destructive text-sm">{error}</div>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Address name</span>
+          <span className="text-muted-foreground">اسم العنوان</span>
           <input
             required
             value={name}
@@ -293,7 +293,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Type</span>
+          <span className="text-muted-foreground">النوع</span>
           <select
             value={type}
             onChange={(e) => setType(e.target.value as AddressType)}
@@ -308,7 +308,7 @@ function AddressForm({
         </label>
 
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Country</span>
+          <span className="text-muted-foreground">الدولة</span>
           <input
             value={country}
             onChange={(e) => setCountry(e.target.value)}
@@ -316,7 +316,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Governorate</span>
+          <span className="text-muted-foreground">المحافظة</span>
           <input
             value={governorate}
             onChange={(e) => setGovernorate(e.target.value)}
@@ -324,7 +324,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">City</span>
+          <span className="text-muted-foreground">المدينة</span>
           <input
             value={city}
             onChange={(e) => setCity(e.target.value)}
@@ -332,7 +332,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">District</span>
+          <span className="text-muted-foreground">الحي</span>
           <input
             value={district}
             onChange={(e) => setDistrict(e.target.value)}
@@ -340,7 +340,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Street</span>
+          <span className="text-muted-foreground">الشارع</span>
           <input
             value={street}
             onChange={(e) => setStreet(e.target.value)}
@@ -348,7 +348,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Building</span>
+          <span className="text-muted-foreground">المبنى</span>
           <input
             value={building}
             onChange={(e) => setBuilding(e.target.value)}
@@ -356,7 +356,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Floor</span>
+          <span className="text-muted-foreground">الدور</span>
           <input
             value={floor}
             onChange={(e) => setFloor(e.target.value)}
@@ -364,7 +364,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Apartment</span>
+          <span className="text-muted-foreground">الشقة</span>
           <input
             value={apartment}
             onChange={(e) => setApartment(e.target.value)}
@@ -372,7 +372,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Postal code</span>
+          <span className="text-muted-foreground">الرمز البريدي</span>
           <input
             value={postalCode}
             onChange={(e) => setPostalCode(e.target.value)}
@@ -380,7 +380,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Google Maps URL</span>
+          <span className="text-muted-foreground">رابط خرائط جوجل</span>
           <input
             type="url"
             value={googleMapsUrl}
@@ -389,7 +389,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Latitude</span>
+          <span className="text-muted-foreground">خط العرض</span>
           <input
             value={latitude}
             onChange={(e) => setLatitude(e.target.value)}
@@ -398,7 +398,7 @@ function AddressForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Longitude</span>
+          <span className="text-muted-foreground">خط الطول</span>
           <input
             value={longitude}
             onChange={(e) => setLongitude(e.target.value)}
@@ -415,17 +415,17 @@ function AddressForm({
             checked={isActive}
             onChange={(e) => setIsActive(e.target.checked)}
           />
-          Active
+          نشط
           {address.isDefault && isActive === false && (
             <span className="text-muted-foreground">
-              (deactivating removes this address as Default)
+              (تعطيله يلغي كونه العنوان الافتراضي)
             </span>
           )}
         </label>
       )}
 
       <label className="block space-y-1 text-sm">
-        <span className="text-muted-foreground">Notes</span>
+        <span className="text-muted-foreground">ملاحظات</span>
         <textarea
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
@@ -436,10 +436,10 @@ function AddressForm({
 
       <div className="flex gap-2">
         <Button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : 'Save'}
+          {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
         </Button>
         <Button type="button" variant="secondary" onClick={onCancel}>
-          Cancel
+          إلغاء
         </Button>
       </div>
     </form>

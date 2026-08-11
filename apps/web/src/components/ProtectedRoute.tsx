@@ -14,7 +14,7 @@ export function ProtectedRoute({ permission }: { permission?: string | string[] 
   if (loading) {
     return (
       <div className="text-muted-foreground flex min-h-svh items-center justify-center">
-        Loading…
+        جارٍ التحميل…
       </div>
     );
   }
@@ -29,8 +29,8 @@ export function ProtectedRoute({ permission }: { permission?: string | string[] 
     return (
       <div className="flex min-h-svh items-center justify-center p-8 text-center">
         <div>
-          <h1 className="mb-2 text-xl font-bold">Access denied</h1>
-          <p className="text-muted-foreground">You do not have permission to view this page.</p>
+          <h1 className="mb-2 text-xl font-bold">الوصول مرفوض</h1>
+          <p className="text-muted-foreground">لا تملك صلاحية لعرض هذه الصفحة.</p>
         </div>
       </div>
     );

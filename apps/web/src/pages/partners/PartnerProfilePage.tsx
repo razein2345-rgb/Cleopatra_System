@@ -49,7 +49,7 @@ export function PartnerProfilePage() {
     apiGet<BusinessPartner>(`/api/partners/${id}`)
       .then(setPartner)
       .catch((err: unknown) =>
-        setLoadError(err instanceof Error ? err.message : 'Failed to load business partner'),
+        setLoadError(err instanceof Error ? err.message : 'تعذر تحميل بيانات الشريك التجاري'),
       );
     apiGet<BranchSummary[]>('/api/branches')
       .then(setBranches)
@@ -63,21 +63,21 @@ export function PartnerProfilePage() {
   }, [id]);
 
   const deactivate = async () => {
-    if (!partner || !confirm(`Deactivate ${partner.nameAr}?`)) return;
+    if (!partner || !confirm(`تعطيل "${partner.nameAr}"؟`)) return;
     await apiDelete(`/api/partners/${partner.id}`);
     navigate('/partners', { replace: true });
   };
 
   if (loadError) return <div className="text-destructive">{loadError}</div>;
-  if (!partner) return <div className="text-muted-foreground">Loading…</div>;
+  if (!partner) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
 
   const tabs: Array<{ id: Tab; label: string }> = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'contacts', label: 'Contacts' },
-    { id: 'addresses', label: 'Addresses' },
-    ...(can('partners.edit') ? [{ id: 'notes' as const, label: 'Notes' }] : []),
+    { id: 'overview', label: 'نظرة عامة' },
+    { id: 'contacts', label: 'جهات الاتصال' },
+    { id: 'addresses', label: 'العناوين' },
+    ...(can('partners.edit') ? [{ id: 'notes' as const, label: 'الملاحظات' }] : []),
     ...(can('partners.credit.manage')
-      ? [{ id: 'commercial' as const, label: 'Commercial' }]
+      ? [{ id: 'commercial' as const, label: 'الملف التجاري' }]
       : []),
   ];
 
@@ -87,7 +87,7 @@ export function PartnerProfilePage() {
         <h1 className="text-2xl font-bold">{partner.nameAr}</h1>
         {can('partners.delete') && partner.status !== 'INACTIVE' && (
           <Button variant="ghost" onClick={() => void deactivate()}>
-            Deactivate
+            تعطيل
           </Button>
         )}
       </div>
@@ -194,7 +194,7 @@ function OverviewForm({
       const updated = await apiPut<BusinessPartner>(`/api/partners/${partner.id}`, input);
       onSaved(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save business partner');
+      setError(err instanceof Error ? err.message : 'تعذر حفظ بيانات الشريك التجاري');
     } finally {
       setSubmitting(false);
     }
@@ -202,12 +202,12 @@ function OverviewForm({
 
   return (
     <form onSubmit={submit} className="border-border bg-card space-y-4 rounded-2xl border p-4">
-      <h2 className="font-semibold">Overview</h2>
+      <h2 className="font-semibold">نظرة عامة</h2>
       {error && <div className="text-destructive text-sm">{error}</div>}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Name</span>
+          <span className="text-muted-foreground">الاسم</span>
           <input
             required
             disabled={!canEdit}
@@ -217,7 +217,7 @@ function OverviewForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Name (English, optional)</span>
+          <span className="text-muted-foreground">الاسم (إنجليزي، اختياري)</span>
           <input
             disabled={!canEdit}
             value={nameEn}
@@ -226,7 +226,7 @@ function OverviewForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Short name (optional)</span>
+          <span className="text-muted-foreground">الاسم المختصر (اختياري)</span>
           <input
             disabled={!canEdit}
             value={shortName}
@@ -241,11 +241,11 @@ function OverviewForm({
             checked={isIndividual}
             onChange={(e) => setIsIndividual(e.target.checked)}
           />
-          Individual (not an organization)
+          فرد (وليس جهة/مؤسسة)
         </label>
 
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Status</span>
+          <span className="text-muted-foreground">الحالة</span>
           <select
             disabled={!canEdit}
             value={status}
@@ -260,7 +260,7 @@ function OverviewForm({
           </select>
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Branch</span>
+          <span className="text-muted-foreground">الفرع</span>
           <select
             disabled={!canEdit}
             value={branchId}
@@ -277,14 +277,14 @@ function OverviewForm({
 
         {staff.length > 0 && (
           <label className="space-y-1 text-sm">
-            <span className="text-muted-foreground">Sales representative (optional)</span>
+            <span className="text-muted-foreground">مندوب المبيعات (اختياري)</span>
             <select
               disabled={!canEdit}
               value={salesRepId}
               onChange={(e) => setSalesRepId(e.target.value)}
               className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
             >
-              <option value="">— none —</option>
+              <option value="">— بدون —</option>
               {staff.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}
@@ -295,7 +295,7 @@ function OverviewForm({
         )}
 
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Phone</span>
+          <span className="text-muted-foreground">الهاتف</span>
           <input
             disabled={!canEdit}
             value={phone}
@@ -304,7 +304,7 @@ function OverviewForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Email</span>
+          <span className="text-muted-foreground">البريد الإلكتروني</span>
           <input
             type="email"
             disabled={!canEdit}
@@ -316,7 +316,7 @@ function OverviewForm({
       </div>
 
       <div>
-        <p className="text-muted-foreground mb-1.5 text-sm">Roles</p>
+        <p className="text-muted-foreground mb-1.5 text-sm">الأدوار</p>
         <div className="flex flex-wrap gap-3">
           {PARTNER_ROLE_OPTIONS.map(([value, label]) => (
             <label key={value} className="flex items-center gap-1.5 text-sm">
@@ -333,7 +333,7 @@ function OverviewForm({
       </div>
 
       <label className="block space-y-1 text-sm">
-        <span className="text-muted-foreground">Notes</span>
+        <span className="text-muted-foreground">ملاحظات</span>
         <textarea
           disabled={!canEdit}
           value={notes}
@@ -345,7 +345,7 @@ function OverviewForm({
 
       {canEdit && (
         <Button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : 'Save changes'}
+          {submitting ? 'جارٍ الحفظ…' : 'حفظ التغييرات'}
         </Button>
       )}
     </form>

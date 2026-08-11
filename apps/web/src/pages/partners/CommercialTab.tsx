@@ -23,7 +23,7 @@ export function CommercialTab({ partnerId, canManage }: { partnerId: string; can
     apiGet<PartnerCommercialProfile | null>(`/api/partners/${partnerId}/commercial-profile`)
       .then(setProfile)
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : 'Failed to load commercial profile'),
+        setError(err instanceof Error ? err.message : 'تعذر تحميل الملف التجاري'),
       );
   };
 
@@ -31,7 +31,7 @@ export function CommercialTab({ partnerId, canManage }: { partnerId: string; can
 
   if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (profile === undefined) {
-    return <div className="text-muted-foreground text-sm">Loading commercial profile…</div>;
+    return <div className="text-muted-foreground text-sm">جارٍ تحميل الملف التجاري…</div>;
   }
 
   return (
@@ -92,7 +92,7 @@ function CommercialForm({
       );
       onSaved(saved);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save commercial profile');
+      setError(err instanceof Error ? err.message : 'تعذر حفظ الملف التجاري');
     } finally {
       setSubmitting(false);
     }
@@ -101,10 +101,10 @@ function CommercialForm({
   return (
     <form onSubmit={submit} className="border-border bg-card space-y-4 rounded-2xl border p-4">
       <div>
-        <h2 className="font-semibold">Commercial &amp; Credit Profile</h2>
+        <h2 className="font-semibold">الملف التجاري والائتماني</h2>
         {!profile && (
           <p className="text-muted-foreground mt-1 text-sm">
-            No commercial profile has been set up for this partner yet.
+            لم يتم إعداد ملف تجاري لهذا الشريك بعد.
           </p>
         )}
       </div>
@@ -112,7 +112,7 @@ function CommercialForm({
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Credit limit</span>
+          <span className="text-muted-foreground">حد الائتمان</span>
           <input
             type="number"
             min={0}
@@ -124,7 +124,7 @@ function CommercialForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Payment terms (days)</span>
+          <span className="text-muted-foreground">شروط الدفع (بالأيام)</span>
           <input
             type="number"
             min={0}
@@ -136,14 +136,14 @@ function CommercialForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Preferred payment method</span>
+          <span className="text-muted-foreground">طريقة الدفع المفضلة</span>
           <select
             disabled={!canManage}
             value={preferredPaymentMethod}
             onChange={(e) => setPreferredPaymentMethod(e.target.value as typeof preferredPaymentMethod)}
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
           >
-            <option value="">— unspecified —</option>
+            <option value="">— غير محدد —</option>
             {PAYMENT_METHOD_OPTIONS.map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
@@ -152,7 +152,7 @@ function CommercialForm({
           </select>
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Price tier / commercial classification</span>
+          <span className="text-muted-foreground">فئة السعر / التصنيف التجاري</span>
           <input
             disabled={!canManage}
             value={priceTier}
@@ -161,7 +161,7 @@ function CommercialForm({
           />
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Account status</span>
+          <span className="text-muted-foreground">حالة الحساب</span>
           <select
             disabled={!canManage}
             value={status}
@@ -176,14 +176,14 @@ function CommercialForm({
           </select>
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Risk level</span>
+          <span className="text-muted-foreground">مستوى الخطورة</span>
           <select
             disabled={!canManage}
             value={riskLevel}
             onChange={(e) => setRiskLevel(e.target.value as typeof riskLevel)}
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
           >
-            <option value="">— unspecified —</option>
+            <option value="">— غير محدد —</option>
             {RISK_LEVEL_OPTIONS.map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
@@ -192,19 +192,19 @@ function CommercialForm({
           </select>
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">Preferred currency (future-ready)</span>
+          <span className="text-muted-foreground">العملة المفضلة (لاستخدام مستقبلي)</span>
           <input
             disabled={!canManage}
             value={preferredCurrency}
             onChange={(e) => setPreferredCurrency(e.target.value)}
-            placeholder="e.g. EGP"
+            placeholder="مثال: جنيه مصري"
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
           />
         </label>
       </div>
 
       <label className="block space-y-1 text-sm">
-        <span className="text-muted-foreground">Internal commercial notes</span>
+        <span className="text-muted-foreground">ملاحظات تجارية داخلية</span>
         <textarea
           disabled={!canManage}
           value={internalNotes}
@@ -216,7 +216,7 @@ function CommercialForm({
 
       {canManage && (
         <Button type="submit" disabled={submitting}>
-          {submitting ? 'Saving…' : 'Save commercial profile'}
+          {submitting ? 'جارٍ الحفظ…' : 'حفظ الملف التجاري'}
         </Button>
       )}
     </form>
