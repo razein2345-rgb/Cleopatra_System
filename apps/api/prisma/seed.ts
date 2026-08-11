@@ -8,32 +8,32 @@ import { GLOBAL_PERMISSION, PERMISSION_CATALOG } from '@cleopatra/shared';
 const DEFAULT_ROLES = [
   {
     name: 'SUPER_ADMIN',
-    label: 'Super Admin',
-    description: 'Full access to every branch and every permission.',
+    label: 'مسؤول عام',
+    description: 'صلاحية كاملة على كل الفروع وكل الصلاحيات.',
   },
-  { name: 'ADMIN', label: 'Admin', description: 'Full access within their assigned branch.' },
-  { name: 'SALES', label: 'Sales', description: 'Manages customers, orders, and quotations.' },
+  { name: 'ADMIN', label: 'مدير', description: 'صلاحية كاملة داخل الفرع المخصص له.' },
+  { name: 'SALES', label: 'مبيعات', description: 'يدير العملاء والطلبات وعروض الأسعار.' },
   {
     name: 'CASHIER',
-    label: 'Cashier',
-    description: 'Manages treasury and views orders/customers.',
+    label: 'أمين خزينة',
+    description: 'يدير الخزينة ويشاهد الطلبات والعملاء.',
   },
   {
     name: 'PRODUCTION_MANAGER',
-    label: 'Production Manager',
-    description: 'Manages the work-order production queue.',
+    label: 'مدير الإنتاج',
+    description: 'يدير طابور إنتاج أوامر الشغل.',
   },
   {
     name: 'DESIGNER',
-    label: 'Designer',
-    description: 'Views orders and work orders relevant to design.',
+    label: 'مصمم',
+    description: 'يشاهد الطلبات وأوامر الشغل الخاصة بالتصميم.',
   },
   {
     name: 'PRINTING_OPERATOR',
-    label: 'Printing Operator',
-    description: 'Views and updates work-order production status.',
+    label: 'مشغّل طباعة',
+    description: 'يشاهد ويحدّث حالة إنتاج أوامر الشغل.',
   },
-  { name: 'VIEWER', label: 'Viewer', description: 'Read-only access across modules.' },
+  { name: 'VIEWER', label: 'مشاهد', description: 'صلاحية اطلاع فقط على كل الأقسام.' },
 ] as const;
 
 // Default permission grants per role, expressed as the permission keys each
@@ -107,17 +107,17 @@ const DEFAULT_SETTINGS = {
 // add to, or remove (not `isSystem`-protected, unlike Role: no code ever
 // branches on a specific department's identity).
 const DEFAULT_DEPARTMENTS = [
-  { code: 'SALES', name: 'Sales' },
-  { code: 'DESIGN', name: 'Design' },
-  { code: 'OFFSET_PRINTING', name: 'Offset Printing' },
-  { code: 'DIGITAL_PRINTING', name: 'Digital Printing' },
-  { code: 'PLATE_PREPARATION', name: 'Plate Preparation' },
-  { code: 'FINISHING', name: 'Finishing' },
-  { code: 'WAREHOUSE', name: 'Warehouse' },
-  { code: 'PURCHASING', name: 'Purchasing' },
-  { code: 'EXTERNAL_SUPPLIER', name: 'External Supplier' },
-  { code: 'DELIVERY', name: 'Delivery' },
-  { code: 'CUSTOMER_SERVICE', name: 'Customer Service' },
+  { code: 'SALES', name: 'المبيعات' },
+  { code: 'DESIGN', name: 'التصميم' },
+  { code: 'OFFSET_PRINTING', name: 'الطباعة الأوفست' },
+  { code: 'DIGITAL_PRINTING', name: 'الطباعة الديجيتال' },
+  { code: 'PLATE_PREPARATION', name: 'تجهيز الزنكات' },
+  { code: 'FINISHING', name: 'التشطيب' },
+  { code: 'WAREHOUSE', name: 'المخزن' },
+  { code: 'PURCHASING', name: 'المشتريات' },
+  { code: 'EXTERNAL_SUPPLIER', name: 'مورّد خارجي' },
+  { code: 'DELIVERY', name: 'التسليم' },
+  { code: 'CUSTOMER_SERVICE', name: 'خدمة العملاء' },
 ] as const;
 
 // Mirrors legacy DEFAULT_FAMILIES exactly (LEGACY_ANALYSIS §3/§4).
