@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { BranchSummary, BusinessIdentity, BusinessPartner, Quotation, User } from '@cleopatra/shared';
+import type { BranchSummary, BusinessIdentity, BusinessPartner, Quotation } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
@@ -18,7 +18,6 @@ export function QuotationDocumentPage() {
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
-  const [staff, setStaff] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -30,14 +29,12 @@ export function QuotationDocumentPage() {
           apiGet<BusinessPartner>(`/api/partners/${q.partnerId}`),
           apiGet<BusinessIdentity>('/api/settings/business-identity'),
           apiGet<BranchSummary[]>('/api/branches').catch(() => []),
-          apiGet<User[]>('/api/users').catch(() => []),
         ]);
       })
-      .then(([p, b, br, s]) => {
+      .then(([p, b, br]) => {
         setPartner(p);
         setBusiness(b);
         setBranches(br);
-        setStaff(s);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل عرض السعر'));
   }, [id]);
@@ -59,7 +56,6 @@ export function QuotationDocumentPage() {
 
   const branch = branches.find((b) => b.id === quotation.branchId);
   const snapshot = resolveDocumentSnapshot(business, null, null, branch);
-  const createdByName = staff.find((s) => s.id === quotation.staffId)?.name ?? null;
 
   return (
     <div className="space-y-4">
@@ -77,7 +73,6 @@ export function QuotationDocumentPage() {
 
       <DocumentRenderer
         snapshot={snapshot}
-        createdByName={createdByName}
         logoSizeCm={3.5}
         contactIconTheme={branch && !branch.isDefault ? 'blue-pink' : 'red'}
         documentTypeLabel="عرض سعر"

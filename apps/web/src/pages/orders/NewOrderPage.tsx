@@ -19,6 +19,7 @@ import type {
   Service,
   SizeFamily,
   UpdateOrderInput,
+  UpdateQuotationInput,
   WorkflowTemplate,
   WorkOrder,
 } from '@cleopatra/shared';
@@ -511,6 +512,8 @@ interface StoredBreakdown {
   extraCosts?: number;
   notes?: string | null;
   referenceImageUrl?: string | null;
+  /** FEATURE-007 (2026-08-12, owner: "المفروض أقدر أعدل في عرض السعر إني أضيف مثلا بند") — `QuotationItem` has no top-level `inventoryItemId` column (a Quotation never draws down stock) and the pricing engine never freezes the raw id into `breakdown` either (only `orderService`'s own `OrderItem.inventoryItemId` column gets it, from the pricing result's sibling field, not from `breakdown` itself). `paperName`, however, IS frozen into `breakdown` for LOOSE_PAPER/NOTEBOOK/FOLDER (see `pricingEngineService.ts`'s per-kind breakdown merge) — matched back to a live `InventoryItem` by name below, the same "match by name" fallback `matchCatalogIdByName` already uses for PRODUCT/SERVICE catalog references. */
+  paperName?: string | null;
 }
 
 /**
@@ -631,6 +634,12 @@ function matchCatalogIdByName(
   return kind === 'PRODUCT' ? readyProducts.find((p) => p.name === modelName)?.id : services.find((s) => s.name === modelName)?.id;
 }
 
+/** Same "match by name" fallback as `matchCatalogIdByName`, for the paper an existing LOOSE_PAPER/NOTEBOOK/FOLDER item used — see `StoredBreakdown.paperName`'s own doc comment for why this is needed at all. */
+function matchInventoryItemIdByName(paperName: string | null | undefined, inventoryItems: InventoryItem[]): string | null {
+  if (!paperName) return null;
+  return inventoryItems.find((i) => i.name === paperName)?.id ?? null;
+}
+
 interface ReconstructedLine {
   line: CartLine | null;
   /** Set when a PRODUCT/SERVICE item's catalog reference couldn't be matched by name any more — the item was dropped and the caller should tell the user why. */
@@ -642,9 +651,10 @@ function reconstructCartLine(
   item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null },
   readyProducts: ReadyProduct[],
   services: Service[],
+  inventoryItems: InventoryItem[],
 ): ReconstructedLine {
   const b = (item.breakdown as StoredBreakdown | null) ?? {};
-  const inventoryItemId = item.inventoryItemId ?? null;
+  const inventoryItemId = item.inventoryItemId ?? matchInventoryItemIdByName(b.paperName, inventoryItems);
   const kind = inferStoredKind(item.sizeFamilyKey, b);
   if (!kind) {
     return { line: null, warning: `تعذر التعرف على نوع البند "${item.modelName ?? item.kind ?? ''}" — احذفه وأضفه من جديد` };
@@ -705,6 +715,7 @@ export function NewOrderPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const editOrderId = searchParams.get('editOrder');
+  const editQuotationId = searchParams.get('editQuotation');
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [readyProducts, setReadyProducts] = useState<ReadyProduct[]>([]);
@@ -712,6 +723,7 @@ export function NewOrderPage() {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [pricingReference, setPricingReference] = useState<PricingReference | null>(null);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
+  const [editQuotation, setEditQuotation] = useState<Quotation | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [created, setCreated] = useState<CreatedResult | null>(null);
@@ -725,8 +737,9 @@ export function NewOrderPage() {
       apiGet<InventoryItem[]>('/api/inventory-items').catch(() => []),
       apiGet<PricingReference>('/api/pricing-reference'),
       editOrderId ? apiGet<Order>(`/api/orders/${editOrderId}`) : Promise.resolve(null),
+      editQuotationId ? apiGet<Quotation>(`/api/quotations/${editQuotationId}`) : Promise.resolve(null),
     ])
-      .then(([p, b, rp, s, inv, pricing, order]) => {
+      .then(([p, b, rp, s, inv, pricing, order, quotation]) => {
         setPartners(p);
         setBranches(b);
         setReadyProducts(rp);
@@ -734,14 +747,16 @@ export function NewOrderPage() {
         setInventoryItems(inv);
         setPricingReference(pricing);
         setEditOrder(order);
+        setEditQuotation(quotation);
       })
       .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : 'تعذر تحميل البيانات'))
       .finally(() => setLoading(false));
-  }, [editOrderId]);
+  }, [editOrderId, editQuotationId]);
 
   if (loadError) return <div className="text-destructive text-sm">{loadError}</div>;
   if (loading || !pricingReference) return <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>;
   if (editOrderId && !editOrder) return <div className="text-destructive text-sm">الفاتورة غير موجودة.</div>;
+  if (editQuotationId && !editQuotation) return <div className="text-destructive text-sm">عرض السعر غير موجود.</div>;
 
   if (created?.type === 'INVOICE') {
     const { order } = created;
@@ -801,6 +816,7 @@ export function NewOrderPage() {
       pricingReference={pricingReference}
       onCreated={setCreated}
       editOrder={editOrder}
+      editQuotation={editQuotation}
     />
   );
 }
@@ -952,6 +968,7 @@ function NewOrderForm({
   pricingReference,
   onCreated,
   editOrder,
+  editQuotation,
 }: {
   partners: BusinessPartner[];
   branches: BranchSummary[];
@@ -962,40 +979,46 @@ function NewOrderForm({
   onCreated: (result: CreatedResult) => void;
   /** FEATURE-007 — full item-replacement edit (owner, 2026-08-12: "استبدال كامل للأصناف"). Present only when reached via `/orders/new?editOrder=<id>`. */
   editOrder?: Order | null;
+  /** FEATURE-007 (2026-08-12, owner: "المفروض أقدر أعدل في عرض السعر إني أضيف مثلا بند") — same full item-replacement edit, for a Quotation. Present only when reached via `/orders/new?editQuotation=<id>`. Mutually exclusive with `editOrder` — never both set. */
+  editQuotation?: Quotation | null;
 }) {
   const { can } = useAuth();
   const canInvoice = can('orders.create');
   const canQuotation = can('quotations.create');
-  const isEditing = Boolean(editOrder);
-  const [documentType, setDocumentType] = useState<DocumentType>(isEditing ? 'INVOICE' : canInvoice ? 'INVOICE' : 'QUOTATION');
+  const isEditing = Boolean(editOrder) || Boolean(editQuotation);
+  const [documentType, setDocumentType] = useState<DocumentType>(
+    editOrder ? 'INVOICE' : editQuotation ? 'QUOTATION' : canInvoice ? 'INVOICE' : 'QUOTATION',
+  );
   // نسخة محلية قابلة للتحديث — عشان لما تتضاف عميل جديد من نفس الشاشة يظهر فورًا بدون إعادة تحميل الصفحة.
   const [localPartners, setLocalPartners] = useState<BusinessPartner[]>(partners);
   const [showAddPartner, setShowAddPartner] = useState(false);
-  const [partnerId, setPartnerId] = useState(editOrder?.partnerId ?? partners[0]?.id ?? '');
-  const [branchId, setBranchId] = useState(editOrder?.branchId ?? branches[0]?.id ?? '');
+  const [partnerId, setPartnerId] = useState(editOrder?.partnerId ?? editQuotation?.partnerId ?? partners[0]?.id ?? '');
+  const [branchId, setBranchId] = useState(editOrder?.branchId ?? editQuotation?.branchId ?? branches[0]?.id ?? '');
   const [productionTrack, setProductionTrack] = useState<ProductionTrack | ''>(editOrder?.productionTrack ?? '');
   const [deliveryDate, setDeliveryDate] = useState(editOrder?.deliveryDate?.slice(0, 10) ?? '');
   const [validUntil, setValidUntil] = useState(() => {
+    if (editQuotation) return editQuotation.validUntil?.slice(0, 10) ?? '';
     const d = new Date();
     d.setDate(d.getDate() + 14);
     return d.toISOString().slice(0, 10);
   });
-  const [discountPercent, setDiscountPercent] = useState(String(editOrder?.discountPercent ?? 0));
-  const [vatOn, setVatOn] = useState(editOrder?.vatOn ?? false);
-  const [customerNotes, setCustomerNotes] = useState(editOrder?.customerNotes ?? '');
-  const [internalNotes, setInternalNotes] = useState(editOrder?.internalNotes ?? '');
+  const [discountPercent, setDiscountPercent] = useState(String(editOrder?.discountPercent ?? editQuotation?.discountPercent ?? 0));
+  const [vatOn, setVatOn] = useState(editOrder?.vatOn ?? editQuotation?.vatOn ?? false);
+  const [customerNotes, setCustomerNotes] = useState(editOrder?.customerNotes ?? editQuotation?.customerNotes ?? '');
+  const [internalNotes, setInternalNotes] = useState(editOrder?.internalNotes ?? editQuotation?.internalNotes ?? '');
 
-  // بنود الفاتورة — السلة الفعلية (بعد "إضافة للفاتورة" بس)، أو معاد بناؤها من فاتورة موجودة عند التعديل.
+  // بنود الفاتورة/العرض — السلة الفعلية (بعد "إضافة للفاتورة" بس)، أو معاد بناؤها من مستند موجود عند التعديل.
+  const editingItems = editOrder?.items ?? editQuotation?.items;
   const [cart, setCart] = useState<CartLine[]>(() => {
-    if (!editOrder) return [];
-    return editOrder.items
-      .map((item) => reconstructCartLine(item, readyProducts, services).line)
+    if (!editingItems) return [];
+    return editingItems
+      .map((item) => reconstructCartLine(item, readyProducts, services, inventoryItems).line)
       .filter((line): line is CartLine => line !== null);
   });
   const [reconstructWarnings] = useState<string[]>(() => {
-    if (!editOrder) return [];
-    return editOrder.items
-      .map((item) => reconstructCartLine(item, readyProducts, services).warning)
+    if (!editingItems) return [];
+    return editingItems
+      .map((item) => reconstructCartLine(item, readyProducts, services, inventoryItems).warning)
       .filter((w): w is string => w !== null);
   });
   // النموذج على اليمين — بند واحد بيتصمم في المرة (نمط الفيديو)
@@ -1144,7 +1167,18 @@ function NewOrderForm({
 
     setSubmitting(intent);
     try {
-      if (documentType === 'QUOTATION') {
+      if (isEditing && editQuotation) {
+        const input: UpdateQuotationInput = {
+          validUntil: validUntil ? new Date(validUntil).toISOString() : null,
+          discountPercent: discountNum,
+          vatOn,
+          customerNotes: customerNotes || null,
+          internalNotes: internalNotes || null,
+          items: outputItems,
+        };
+        const quotation = await apiPut<Quotation>(`/api/quotations/${editQuotation.id}`, input);
+        navigate(`/quotations/${quotation.id}`);
+      } else if (documentType === 'QUOTATION') {
         const input: CreateQuotationInput = {
           partnerId,
           branchId,
@@ -1200,9 +1234,11 @@ function NewOrderForm({
       setError(
         err instanceof Error
           ? err.message
-          : documentType === 'QUOTATION'
-            ? 'تعذر إنشاء عرض السعر'
-            : 'تعذر إنشاء الفاتورة',
+          : isEditing
+            ? 'تعذر حفظ التعديلات'
+            : documentType === 'QUOTATION'
+              ? 'تعذر إنشاء عرض السعر'
+              : 'تعذر إنشاء الفاتورة',
       );
     } finally {
       setSubmitting(null);
@@ -1366,7 +1402,13 @@ function NewOrderForm({
 
       {/* عمود يمين — نموذج إضافة بند + بيانات المستند */}
       <div className="order-1 space-y-4">
-        <h1 className="text-2xl font-bold">{isEditing ? `تعديل الفاتورة ${editOrder?.invoiceNumber ?? ''}` : 'الطلبات والمستندات'}</h1>
+        <h1 className="text-2xl font-bold">
+          {editOrder
+            ? `تعديل الفاتورة ${editOrder.invoiceNumber}`
+            : editQuotation
+              ? `تعديل عرض السعر ${editQuotation.quotationNumber}`
+              : 'الطلبات والمستندات'}
+        </h1>
 
         {reconstructWarnings.length > 0 && (
           <div className="border-warning bg-warning/10 space-y-1 rounded-xl border p-3 text-sm">
@@ -1450,7 +1492,7 @@ function NewOrderForm({
             <div className="space-y-1 text-sm">
               <span className="text-muted-foreground">{documentType === 'QUOTATION' ? 'رقم عرض السعر' : 'رقم الفاتورة'}</span>
               <p className="border-input bg-muted/30 text-muted-foreground rounded-md border px-3 py-2">
-                {editOrder?.invoiceNumber ?? 'يُحدَّد تلقائيًا بعد الحفظ'}
+                {editOrder?.invoiceNumber ?? editQuotation?.quotationNumber ?? 'يُحدَّد تلقائيًا بعد الحفظ'}
               </p>
             </div>
             {documentType === 'QUOTATION' ? (

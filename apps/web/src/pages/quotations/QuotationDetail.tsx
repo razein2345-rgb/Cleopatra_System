@@ -272,6 +272,13 @@ function QuotationLifecycle({
         )}
       </div>
 
+      {/* FEATURE-007 (2026-08-12, owner: "المفروض أقدر أعدل في عرض السعر إني أضيف مثلا بند") — full item-replacement edit, reusing the exact same unified-screen edit mode `/orders/new?editOrder=<id>` already uses for invoices. Hidden once converted — the resulting Order is the thing to edit at that point, not a quotation that's already become one. */}
+      {canEdit && !quotation.convertedOrderId && (
+        <Button type="button" variant="secondary" onClick={() => navigate(`/orders/new?editQuotation=${quotation.id}`)}>
+          تعديل بنود عرض السعر
+        </Button>
+      )}
+
       {/* FEATURE-003 M2 — Order Conversion. Visible only when it's actually
           legal (ACCEPTED, not yet converted); the server enforces the same
           rule regardless, per this component's "no workflow knowledge"
