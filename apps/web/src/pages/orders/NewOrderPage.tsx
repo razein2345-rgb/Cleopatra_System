@@ -32,6 +32,7 @@ import {
 import { apiGet, apiPost, apiPostFormData } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/state/AuthContext';
 
 type PricingKind = OrderItemPricingInput['kind'];
@@ -749,6 +750,9 @@ function NewOrderForm({
   const canInvoice = can('orders.create');
   const canQuotation = can('quotations.create');
   const [documentType, setDocumentType] = useState<DocumentType>(canInvoice ? 'INVOICE' : 'QUOTATION');
+  // نسخة محلية قابلة للتحديث — عشان لما تتضاف عميل جديد من نفس الشاشة يظهر فورًا بدون إعادة تحميل الصفحة.
+  const [localPartners, setLocalPartners] = useState<BusinessPartner[]>(partners);
+  const [showAddPartner, setShowAddPartner] = useState(false);
   const [partnerId, setPartnerId] = useState(partners[0]?.id ?? '');
   const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
   const [productionTrack, setProductionTrack] = useState<ProductionTrack | ''>('');
@@ -976,9 +980,9 @@ function NewOrderForm({
   const hasPrintSection = draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK' || draft.kind === 'ENVELOPE' || draft.kind === 'FOLDER';
 
   return (
-    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
-      {/* عمود يمين — السلة (بنود الفاتورة/العرض) */}
-      <aside className="border-border bg-card sticky top-4 order-2 h-fit space-y-3 rounded-2xl border p-4 lg:order-1">
+    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
+      {/* عمود شمال — السلة (بنود الفاتورة/العرض)، زي الفيديو بالظبط */}
+      <aside className="border-border bg-card sticky top-4 order-2 h-fit space-y-3 rounded-2xl border p-4">
         <p className="flex items-center gap-1 text-sm font-bold">🛒 {documentType === 'QUOTATION' ? 'بنود عرض السعر' : 'بنود الفاتورة'}</p>
 
         {cart.length === 0 ? (
@@ -1106,7 +1110,8 @@ function NewOrderForm({
       </aside>
 
       {/* عمود شمال — نموذج إضافة بند + بيانات المستند */}
-      <div className="order-1 space-y-4 lg:order-2">
+      {/* عمود يمين — نموذج إضافة بند + بيانات المستند */}
+      <div className="order-1 space-y-4">
         <h1 className="text-2xl font-bold">الطلبات والمستندات</h1>
 
         {canInvoice && canQuotation && (
@@ -1134,19 +1139,26 @@ function NewOrderForm({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">العميل</span>
-              <select
-                required
-                value={partnerId}
-                onChange={(e) => setPartnerId(e.target.value)}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              >
-                <option value="">— اختر —</option>
-                {partners.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nameAr}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1">
+                <select
+                  required
+                  value={partnerId}
+                  onChange={(e) => setPartnerId(e.target.value)}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— اختر —</option>
+                  {localPartners.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.nameAr}
+                    </option>
+                  ))}
+                </select>
+                {can('partners.create') && (
+                  <Button type="button" variant="secondary" size="sm" onClick={() => setShowAddPartner(true)}>
+                    + عميل جديد
+                  </Button>
+                )}
+              </div>
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">الفرع</span>
@@ -1786,6 +1798,100 @@ function NewOrderForm({
           />
         </label>
       </div>
+
+      {showAddPartner && (
+        <QuickAddPartnerDialog
+          branchId={branchId}
+          onClose={() => setShowAddPartner(false)}
+          onCreated={(partner) => {
+            setLocalPartners((prev) => [...prev, partner]);
+            setPartnerId(partner.id);
+            setShowAddPartner(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * FEATURE-007 — quick "+ عميل جديد" (owner, 2026-08-12: عايز اقدر اضيف
+ * عميل من شاشة الطلب على طول). A real, saved `BusinessPartner` row (never
+ * a local-only draft — the owner was explicit it must persist), just with
+ * a minimal field set (name + phone) instead of the full Partner Profile
+ * form; anything else can be filled in later from `/partners/:id`.
+ */
+function QuickAddPartnerDialog({
+  branchId,
+  onClose,
+  onCreated,
+}: {
+  branchId: string;
+  onClose: () => void;
+  onCreated: (partner: BusinessPartner) => void;
+}) {
+  const [nameAr, setNameAr] = useState('');
+  const [phone, setPhone] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      const partner = await apiPost<BusinessPartner>('/api/partners', {
+        nameAr,
+        phone: phone || undefined,
+        branchId,
+        roles: ['CUSTOMER'],
+      });
+      onCreated(partner);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر إضافة العميل');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>عميل جديد</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">اسم العميل</span>
+            <input
+              required
+              autoFocus
+              value={nameAr}
+              onChange={(e) => setNameAr(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">الهاتف (اختياري)</span>
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              dir="ltr"
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'حفظ العميل'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

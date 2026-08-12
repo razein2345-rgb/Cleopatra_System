@@ -18,16 +18,16 @@
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
 
-  /* Brand — deep Nile teal primary, papyrus gold secondary/accent */
-  --primary: oklch(0.4 0.08 200);
+  /* Brand — matches the Cleopatra Press logo (black "P" mark, red wordmark) — owner, 2026-08-12: "محتاج الثيم يكون شبه اللوجو". Replaces the earlier teal/gold "Nile" palette. */
+  --primary: oklch(0.47 0.19 25);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.78 0.14 85);
-  --secondary-foreground: oklch(0.22 0.05 85);
+  --secondary: oklch(0.2 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
 
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.94 0.03 200);
-  --accent-foreground: oklch(0.3 0.07 200);
+  --accent: oklch(0.94 0.03 25);
+  --accent-foreground: oklch(0.35 0.15 25);
 
   /* Semantic status colors — used by StatusBadge and Dashboard widgets */
   --success: oklch(0.6 0.15 145);
@@ -43,7 +43,7 @@
 
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.4 0.08 200 / 50%);
+  --ring: oklch(0.47 0.19 25 / 50%);
 
   /* Spacing scale */
   --spacing-xs: 0.25rem;
@@ -77,15 +77,15 @@
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
 
-  --primary: oklch(0.75 0.1 200);
-  --primary-foreground: oklch(0.145 0 0);
-  --secondary: oklch(0.7 0.13 85);
+  --primary: oklch(0.65 0.2 25);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.8 0 0);
   --secondary-foreground: oklch(0.145 0 0);
 
   --muted: oklch(0.269 0 0);
   --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.28 0.05 200);
-  --accent-foreground: oklch(0.9 0.04 200);
+  --accent: oklch(0.28 0.06 25);
+  --accent-foreground: oklch(0.9 0.05 25);
 
   --success: oklch(0.65 0.15 145);
   --success-foreground: oklch(0.145 0 0);
@@ -100,7 +100,7 @@
 
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.75 0.1 200 / 50%);
+  --ring: oklch(0.65 0.2 25 / 50%);
 
   --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 30%);
   --shadow-md: 0 4px 10px -2px oklch(0 0 0 / 40%);

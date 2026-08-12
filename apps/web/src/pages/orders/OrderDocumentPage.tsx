@@ -49,6 +49,7 @@ export function OrderDocumentPage() {
       size: item.realSizeLabel,
       description: item.modelName,
       notes: breakdown?.notes ?? null,
+      lineTotal: item.itemTotal,
     };
   });
 

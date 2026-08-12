@@ -47,6 +47,7 @@ export function QuotationDocumentPage() {
       size: item.realSizeLabel,
       description: item.modelName ?? item.description,
       notes: breakdown?.notes ?? item.notes,
+      lineTotal: item.itemTotal,
     };
   });
 
