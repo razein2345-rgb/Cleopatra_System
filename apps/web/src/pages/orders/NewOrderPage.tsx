@@ -1283,6 +1283,32 @@ function NewOrderForm({
           </div>
         )}
 
+        {/* نسبة الربح — تعديل يدوي اختياري (عايزة اقدر اعدلها وانا بطلب). موقعها اتنقل تحت قائمة بنود السلة نفسها (owner, 2026-08-13) — كانت قبل كده جوه نموذج تصميم البند نفسه، قبل "سعر البند" مباشرة. */}
+        {hasPrintSection && (
+          <div className="border-border flex flex-wrap items-center gap-2 rounded-lg border p-2">
+            <Checkbox
+              checked={draft.profitPercentEnabled}
+              onCheckedChange={(v) => updateDraft({ profitPercentEnabled: v === true })}
+            />
+            <span className="text-sm">نسبة الربح</span>
+            {draft.profitPercentEnabled ? (
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step="0.1"
+                value={draft.profitPercentOverride}
+                onChange={(e) => updateDraft({ profitPercentOverride: e.target.value })}
+                className="border-input bg-background w-24 rounded-md border px-2 py-1 text-end text-sm"
+              />
+            ) : (
+              <span className="text-muted-foreground text-xs">
+                الافتراضي من الإعدادات: {pricingReference.pricingConstants.profitPercent}%
+              </span>
+            )}
+          </div>
+        )}
+
         <label className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">تطبيق ضريبة القيمة المضافة ({pricingReference.vatRate}%)</span>
           <input type="checkbox" checked={vatOn} onChange={(e) => setVatOn(e.target.checked)} />
@@ -2074,32 +2100,6 @@ function NewOrderForm({
             )}
             {draft.attachmentError && <p className="text-destructive text-xs">{draft.attachmentError}</p>}
           </div>
-
-          {/* نسبة الربح — تعديل يدوي اختياري، قبل الإجمالي مباشرة (عايزة اقدر اعدلها وانا بطلب / زرار نسبة الربح قبل الإجمالي) */}
-          {hasPrintSection && (
-            <div className="border-border flex flex-wrap items-center gap-2 rounded-lg border p-2">
-              <Checkbox
-                checked={draft.profitPercentEnabled}
-                onCheckedChange={(v) => updateDraft({ profitPercentEnabled: v === true })}
-              />
-              <span className="text-sm">نسبة الربح</span>
-              {draft.profitPercentEnabled ? (
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step="0.1"
-                  value={draft.profitPercentOverride}
-                  onChange={(e) => updateDraft({ profitPercentOverride: e.target.value })}
-                  className="border-input bg-background w-24 rounded-md border px-2 py-1 text-end text-sm"
-                />
-              ) : (
-                <span className="text-muted-foreground text-xs">
-                  الافتراضي من الإعدادات: {pricingReference.pricingConstants.profitPercent}%
-                </span>
-              )}
-            </div>
-          )}
 
           <div className="flex items-center justify-between border-t pt-2">
             <p className="text-sm font-medium">
