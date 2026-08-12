@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { Attachment, Setting, UpdateSettingInput } from '@cleopatra/shared';
 import { apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/state/AuthContext';
 
 const TEXT_FIELDS: Array<{ key: keyof UpdateSettingInput; label: string }> = [
@@ -122,6 +123,7 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
   );
   const [logoUrl, setLogoUrl] = useState(setting.logoUrl ?? '');
   const [stampUrl, setStampUrl] = useState(setting.stampUrl ?? '');
+  const [showStampOnInvoice, setShowStampOnInvoice] = useState(setting.showStampOnInvoice);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -136,6 +138,7 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
               setValues(Object.fromEntries(TEXT_FIELDS.map((f) => [f.key, (setting[f.key] as string | null) ?? ''])));
               setLogoUrl(setting.logoUrl ?? '');
               setStampUrl(setting.stampUrl ?? '');
+              setShowStampOnInvoice(setting.showStampOnInvoice);
               setEditing(true);
             }}
           >
@@ -158,6 +161,9 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
             )}
           </div>
         </div>
+        <p className="text-muted-foreground text-sm">
+          إظهار الختم في الفاتورة: <span className="font-medium">{setting.showStampOnInvoice ? 'نعم' : 'لا'}</span>
+        </p>
         <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
           {TEXT_FIELDS.map((f) => (
             <div key={f.key} className="border-border flex flex-col gap-1 border-b border-dashed py-2 text-sm">
@@ -180,6 +186,7 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
         ...Object.fromEntries(TEXT_FIELDS.map((f) => [f.key, values[f.key].trim() === '' ? null : values[f.key].trim()])),
         logoUrl: logoUrl.trim() === '' ? null : logoUrl.trim(),
         stampUrl: stampUrl.trim() === '' ? null : stampUrl.trim(),
+        showStampOnInvoice,
       } satisfies UpdateSettingInput;
       await apiPut('/api/settings', payload);
       setEditing(false);
@@ -205,6 +212,11 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
           heightClass="h-20"
         />
       </div>
+
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={showStampOnInvoice} onCheckedChange={(v) => setShowStampOnInvoice(v === true)} />
+        <span>إظهار الختم في الفاتورة (عرض السعر وأمر الشغل يظهر فيهم دايمًا لو مرفوع)</span>
+      </label>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {TEXT_FIELDS.map((f) => (

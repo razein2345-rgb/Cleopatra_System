@@ -113,6 +113,8 @@ export function OrderDocumentPage() {
       <DocumentRenderer
         snapshot={snapshot}
         showBranding={false}
+        hideCustomerSignature
+        showStamp={business.showStampOnInvoice}
         createdByName={createdByName}
         documentTypeLabel="فاتورة"
         documentNumber={order.invoiceNumber}

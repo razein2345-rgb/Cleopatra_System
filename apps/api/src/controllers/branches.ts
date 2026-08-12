@@ -13,6 +13,7 @@ const BRANCH_SELECT = {
   email: true,
   landlinePhone: true,
   facebookUrl: true,
+  stampUrl: true,
 };
 
 /**

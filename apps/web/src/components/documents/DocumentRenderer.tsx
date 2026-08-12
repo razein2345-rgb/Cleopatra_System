@@ -74,6 +74,10 @@ export interface DocumentRendererProps {
   logoSizeCm?: number;
   /** FEATURE-007 (2026-08-12, owner: "الاحمر لكليوباترا والأزرق والبينك لبيت الطباعة") — contact-badge color theme, chosen by the caller from the issuing branch (e.g. `branch?.isDefault === false ? 'blue-pink' : 'red'`). Defaults to 'red' (Cleopatra, the default branch). */
   contactIconTheme?: 'red' | 'blue-pink';
+  /** FEATURE-007 (2026-08-12, owner: "محتاج في الفاتورة ميكونش في توقيع العميل... توقيع المستلم ماشي خليه") — the Invoice doesn't need a customer-signature box, only a recipient-signature one; Quotation/Work Order keep both. Defaults to `false` (both boxes shown). */
+  hideCustomerSignature?: boolean;
+  /** FEATURE-007 (2026-08-12, owner: "الختم المفروض اكون مخير إنه يظهر في الفاتورة ولا لا") — whether the stamp prints at all, an owner choice (`Setting.showStampOnInvoice`) the caller resolves for Invoice specifically. Defaults to `true` (Quotation/Work Order always show it when uploaded — unaffected by this toggle). */
+  showStamp?: boolean;
 }
 
 function money(n: number) {
@@ -112,6 +116,8 @@ export function DocumentRenderer({
   createdByName,
   logoSizeCm,
   contactIconTheme = 'red',
+  hideCustomerSignature = false,
+  showStamp = true,
 }: DocumentRendererProps) {
   const { business, config } = snapshot;
   const showLogo = showBranding && Boolean(config.showLogo) && business.logoUrl;
@@ -281,13 +287,16 @@ export function DocumentRenderer({
           </section>
         )}
 
-        {showBranding && business.stampUrl && <img src={business.stampUrl} alt="" className="mb-3 h-24 object-contain" />}
-        <p className="mb-2 text-sm">وتفضلوا بقبول وافر الاحترام...</p>
+        {/* owner (2026-08-12, invoice): "تفضلوا بقبول وافر الأحترام عايزها على الشمال والختم فوقيها" — stamp + closing line moved to the end (left, in this RTL layout) and the stamp no longer waits on `showBranding` (the invoice omits the logo/business-name/watermark but still wants its own stamp). */}
+        <div className="mb-2 flex flex-col items-end text-end">
+          {showStamp && business.stampUrl && <img src={business.stampUrl} alt="" className="mb-3 h-24 object-contain" />}
+          <p className="text-sm">وتفضلوا بقبول وافر الاحترام...</p>
+        </div>
 
         {Boolean(config.showSignatureArea) && (
-          <section className="mt-10 grid grid-cols-2 gap-8 text-xs">
-            <div className="border-border border-t pt-2">توقيع العميل</div>
-            <div className="border-border border-t pt-2">توقيع المسؤول</div>
+          <section className={`mt-10 grid gap-8 text-xs ${hideCustomerSignature ? 'grid-cols-1' : 'grid-cols-2'}`}>
+            {!hideCustomerSignature && <div className="border-border border-t pt-2">توقيع العميل</div>}
+            <div className="border-border border-t pt-2">{hideCustomerSignature ? 'توقيع المستلم' : 'توقيع المسؤول'}</div>
           </section>
         )}
 

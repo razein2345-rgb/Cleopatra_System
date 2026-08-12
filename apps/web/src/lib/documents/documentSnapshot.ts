@@ -43,6 +43,7 @@ export interface DocumentBranchIdentity {
   logoUrl?: string | null;
   landlinePhone?: string | null;
   facebookUrl?: string | null;
+  stampUrl?: string | null;
 }
 
 /**
@@ -71,7 +72,7 @@ export function resolveDocumentSnapshot(
       taxNumber: setting?.taxNumber ?? null,
       commercialRegisterNumber: setting?.commercialRegisterNumber ?? null,
       logoUrl: branch?.logoUrl ?? setting?.logoUrl ?? null,
-      stampUrl: setting?.stampUrl ?? null,
+      stampUrl: branch?.stampUrl ?? setting?.stampUrl ?? null,
       landlinePhone: branch?.landlinePhone ?? setting?.landlinePhone ?? null,
       facebookUrl: branch?.facebookUrl ?? setting?.facebookUrl ?? null,
     },

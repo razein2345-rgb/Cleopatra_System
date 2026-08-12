@@ -35,6 +35,7 @@ export async function getBusinessIdentity(_req: Request, res: Response) {
       stampUrl: true,
       landlinePhone: true,
       facebookUrl: true,
+      showStampOnInvoice: true,
     },
   });
   if (!setting) {

@@ -51,6 +51,10 @@ export const settingSchema = z.object({
   // document footer.
   landlinePhone: z.string().nullable(),
   facebookUrl: z.string().nullable(),
+  // FEATURE-007 (2026-08-12, owner: "الختم المفروض اكون مخير إنه يظهر في
+  // الفاتورة ولا لا") — whether the stamp prints on the Invoice
+  // specifically (Quotation/Work Order always show it when uploaded).
+  showStampOnInvoice: z.boolean(),
 });
 
 export const updateSettingSchema = settingSchema.omit({ id: true }).partial();
@@ -77,6 +81,7 @@ export const businessIdentitySchema = settingSchema.pick({
   stampUrl: true,
   landlinePhone: true,
   facebookUrl: true,
+  showStampOnInvoice: true,
 });
 
 export type Setting = z.infer<typeof settingSchema>;

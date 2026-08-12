@@ -44,6 +44,11 @@ export function BranchesEditor() {
           </Button>
         )}
       </div>
+      {canManage && !showCreate && branches.length > 0 && (
+        <p className="text-muted-foreground mb-2 text-xs">
+          لرفع شعار الفرع أو ختمه أو باقي بياناته — اضغط "تعديل" بجانب اسم الفرع.
+        </p>
+      )}
       {error && <div className="text-destructive mb-2 text-sm">{error}</div>}
       {showCreate && (
         <BranchForm
@@ -118,27 +123,35 @@ function BranchForm({
   const [facebookUrl, setFacebookUrl] = useState(branch?.facebookUrl ?? '');
   const [logoUrl, setLogoUrl] = useState(branch?.logoUrl ?? '');
   const [logoUploading, setLogoUploading] = useState(false);
+  const [stampUrl, setStampUrl] = useState(branch?.stampUrl ?? '');
+  const [stampUploading, setStampUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const stampInputRef = useRef<HTMLInputElement>(null);
 
-  const uploadLogo = async (file: File) => {
+  const uploadImage = async (
+    file: File,
+    category: string,
+    onDone: (url: string) => void,
+    setUploading: (v: boolean) => void,
+  ) => {
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       setError('نوع الملف غير مدعوم — JPG أو PNG أو WEBP فقط');
       return;
     }
     setError(null);
-    setLogoUploading(true);
+    setUploading(true);
     try {
       const fd = new FormData();
       fd.append('file', file);
-      fd.append('category', 'BRANCH_LOGO');
+      fd.append('category', category);
       const attachment = await apiPostFormData<Attachment>('/api/attachments', fd);
-      setLogoUrl(attachment.url);
+      onDone(attachment.url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر رفع الشعار');
+      setError(err instanceof Error ? err.message : 'تعذر رفع الصورة');
     } finally {
-      setLogoUploading(false);
+      setUploading(false);
     }
   };
 
@@ -157,6 +170,7 @@ function BranchForm({
           landlinePhone: landlinePhone || null,
           facebookUrl: facebookUrl || null,
           logoUrl: logoUrl || null,
+          stampUrl: stampUrl || null,
         });
       } else {
         await apiPost('/api/branches', { name, code, address: address || undefined });
@@ -257,7 +271,7 @@ function BranchForm({
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) void uploadLogo(file);
+              if (file) void uploadImage(file, 'BRANCH_LOGO', setLogoUrl, setLogoUploading);
               e.target.value = '';
             }}
           />
@@ -268,6 +282,33 @@ function BranchForm({
             </Button>
             {logoUrl && (
               <button type="button" onClick={() => setLogoUrl('')} className="text-destructive text-xs">
+                إزالة
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {branch && (
+        <div className="w-full space-y-1 text-xs">
+          <span className="text-muted-foreground">ختم الفرع (اختياري — لو فاضي بياخد ختم الشركة العام)</span>
+          <input
+            ref={stampInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void uploadImage(file, 'BRANCH_STAMP', setStampUrl, setStampUploading);
+              e.target.value = '';
+            }}
+          />
+          <div className="flex items-center gap-2">
+            {stampUrl && <img src={stampUrl} alt="" className="h-10 object-contain" />}
+            <Button type="button" variant="secondary" size="sm" onClick={() => stampInputRef.current?.click()}>
+              {stampUploading ? 'جارٍ الرفع…' : stampUrl ? 'استبدال الختم' : 'رفع ختم'}
+            </Button>
+            {stampUrl && (
+              <button type="button" onClick={() => setStampUrl('')} className="text-destructive text-xs">
                 إزالة
               </button>
             )}

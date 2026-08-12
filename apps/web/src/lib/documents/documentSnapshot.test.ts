@@ -40,6 +40,7 @@ const baseSetting: Setting = {
   stampUrl: null,
   landlinePhone: null,
   facebookUrl: null,
+  showStampOnInvoice: false,
 };
 
 const baseTemplate: DocumentTemplate = {
