@@ -17,8 +17,9 @@ import { AddressesTab } from './AddressesTab';
 import { CategoryTagsSection } from './CategoryTagsSection';
 import { NotesTab } from './NotesTab';
 import { CommercialTab } from './CommercialTab';
+import { OrdersHistoryTab } from './OrdersHistoryTab';
 
-type Tab = 'overview' | 'contacts' | 'addresses' | 'notes' | 'commercial';
+type Tab = 'overview' | 'orders' | 'contacts' | 'addresses' | 'notes' | 'commercial';
 
 /**
  * Partner Profile. Overview (FEATURE-002 M1), Contacts (M2), Addresses
@@ -62,8 +63,8 @@ export function PartnerProfilePage() {
       .catch(() => setStaff([]));
   }, [id]);
 
-  const deactivate = async () => {
-    if (!partner || !confirm(`تعطيل "${partner.nameAr}"؟`)) return;
+  const removePartner = async () => {
+    if (!partner || !confirm(`حذف "${partner.nameAr}"؟ لن يظهر بعدها في قائمة العملاء.`)) return;
     await apiDelete(`/api/partners/${partner.id}`);
     navigate('/partners', { replace: true });
   };
@@ -73,6 +74,7 @@ export function PartnerProfilePage() {
 
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: 'overview', label: 'نظرة عامة' },
+    ...(can('orders.view') ? [{ id: 'orders' as const, label: 'الطلبات' }] : []),
     { id: 'contacts', label: 'جهات الاتصال' },
     { id: 'addresses', label: 'العناوين' },
     ...(can('partners.edit') ? [{ id: 'notes' as const, label: 'الملاحظات' }] : []),
@@ -85,9 +87,9 @@ export function PartnerProfilePage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{partner.nameAr}</h1>
-        {can('partners.delete') && partner.status !== 'INACTIVE' && (
-          <Button variant="ghost" onClick={() => void deactivate()}>
-            تعطيل
+        {can('partners.delete') && (
+          <Button variant="destructive" onClick={() => void removePartner()}>
+            حذف العميل
           </Button>
         )}
       </div>
@@ -121,6 +123,8 @@ export function PartnerProfilePage() {
           <CategoryTagsSection partner={partner} canEdit={can('partners.edit')} onSaved={setPartner} />
         </>
       )}
+
+      {tab === 'orders' && can('orders.view') && <OrdersHistoryTab partnerId={partner.id} />}
 
       {tab === 'contacts' && (
         <ContactsTab partnerId={partner.id} canManage={can('partners.contacts.manage')} />
