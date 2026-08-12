@@ -30,12 +30,14 @@ const baseSetting: Setting = {
   boardsGapMM: 0,
   businessNameAr: 'مطبعة كليوباترا',
   businessNameEn: 'Cleopatra Press',
+  businessTagline: null,
   address: 'القاهرة',
   phone: '0100000000',
   email: 'info@example.com',
   website: 'https://example.com',
   taxNumber: '12345',
   commercialRegisterNumber: '67890',
+  stampUrl: null,
 };
 
 const baseTemplate: DocumentTemplate = {
@@ -65,6 +67,7 @@ describe('resolveDocumentSnapshot', () => {
     expect(snapshot.business).toEqual({
       nameAr: 'مطبعة كليوباترا',
       nameEn: 'Cleopatra Press',
+      tagline: null,
       address: 'القاهرة',
       phone: '0100000000',
       email: 'info@example.com',
@@ -72,6 +75,7 @@ describe('resolveDocumentSnapshot', () => {
       taxNumber: '12345',
       commercialRegisterNumber: '67890',
       logoUrl: 'https://example.com/logo.png',
+      stampUrl: null,
     });
     expect(snapshot.templateName).toBeNull();
     // untouched keys fall through to the default config

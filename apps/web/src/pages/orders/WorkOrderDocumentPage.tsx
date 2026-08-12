@@ -137,9 +137,10 @@ export function WorkOrderDocumentPage() {
   const responsibleStaff = staff.find((s) => s.id === order.staffId)?.name ?? '—';
   const qrData = encodeURIComponent(`WorkOrder:${workOrder.workOrderNumber}|Client:${partner.nameAr}`);
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${qrData}`;
-  // FEATURE-007 (2026-08-12) — the issuing branch's own logo wins over the global one.
+  // FEATURE-007 (2026-08-12) — the issuing branch's own identity wins over the global one.
   const branch = branches.find((b) => b.id === order.branchId);
   const effectiveLogoUrl = branch?.logoUrl || business.logoUrl;
+  const effectiveName = branch?.name || business.businessNameAr;
 
   if (order.productionTrack !== 'OFFSET') {
     const items: DocumentRendererItem[] = order.items.map((item) => {
@@ -152,7 +153,7 @@ export function WorkOrderDocumentPage() {
         notes: breakdown?.notes ?? null,
       };
     });
-    const snapshot = resolveDocumentSnapshot(business, null, null, branch?.logoUrl);
+    const snapshot = resolveDocumentSnapshot(business, null, null, branch);
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between print:hidden">
@@ -205,7 +206,7 @@ export function WorkOrderDocumentPage() {
         )}
         <header className="border-border relative mb-6 flex items-start justify-between border-b pb-4">
           <div className="text-end">
-            <div className="text-lg font-bold">{business.businessNameAr || '—'}</div>
+            <div className="text-lg font-bold">{effectiveName || '—'}</div>
             <div className="text-lg font-bold">أمر شغل — أوفست</div>
             <div className="text-xs">
               رقم: <span dir="ltr">{workOrder.workOrderNumber}</span>

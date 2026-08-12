@@ -206,7 +206,7 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
     return tx.quotation.update({
       where: { id: existing.id },
       data: {
-        validUntil: input.validUntil ? new Date(input.validUntil) : undefined,
+        validUntil: input.validUntil !== undefined ? (input.validUntil ? new Date(input.validUntil) : null) : undefined,
         subtotal: recomputedTotals?.subtotal,
         discountPercent: input.discountPercent,
         vatOn: input.vatOn,

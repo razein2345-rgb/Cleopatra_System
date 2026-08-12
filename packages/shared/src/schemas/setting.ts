@@ -35,6 +35,11 @@ export const settingSchema = z.object({
   // field, not a file upload).
   businessNameAr: z.string().nullable(),
   businessNameEn: z.string().nullable(),
+  // FEATURE-007 (2026-08-12) — short tagline under the business name on
+  // documents (e.g. "للدعاية والإعلان"), and the company stamp/seal image
+  // printed above the closing line.
+  businessTagline: z.string().nullable(),
+  stampUrl: z.string().nullable(),
   address: z.string().nullable(),
   phone: z.string().nullable(),
   email: z.string().nullable(),
@@ -56,6 +61,7 @@ export const updateSettingSchema = settingSchema.omit({ id: true }).partial();
 export const businessIdentitySchema = settingSchema.pick({
   businessNameAr: true,
   businessNameEn: true,
+  businessTagline: true,
   address: true,
   phone: true,
   email: true,
@@ -63,6 +69,7 @@ export const businessIdentitySchema = settingSchema.pick({
   taxNumber: true,
   commercialRegisterNumber: true,
   logoUrl: true,
+  stampUrl: true,
 });
 
 export type Setting = z.infer<typeof settingSchema>;

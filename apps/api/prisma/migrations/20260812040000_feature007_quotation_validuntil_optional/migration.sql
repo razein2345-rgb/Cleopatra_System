@@ -1,0 +1,1 @@
+ALTER TABLE "Quotation" ALTER COLUMN "validUntil" DROP NOT NULL;

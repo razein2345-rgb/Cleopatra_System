@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { CreateInventoryItemInput, InventoryItem, MaterialCategory } from '@cleopatra/shared';
-import { apiGet, apiPost } from '@/lib/api';
+import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { StatusBadge } from '@/components/cleopatra';
+import { StatusBadge, EditableTextCell } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 const CATEGORY_LABELS: Record<MaterialCategory, string> = {
@@ -38,6 +38,16 @@ export function InventoryPage() {
   };
 
   useEffect(load, []);
+
+  /** FEATURE-007 (2026-08-12, owner: "عايز اقدر اتحكم في ليميت عدد الأفرخ") — `reorderLevel` was only settable at creation time; the endpoint already existed (`PUT /api/inventory-items/:id`), just no UI to reach it for an already-created item. */
+  const saveReorderLevel = async (item: InventoryItem, next: string) => {
+    const parsed = next.trim() === '' ? null : Number(next);
+    if (parsed !== null && (Number.isNaN(parsed) || parsed < 0)) {
+      throw new Error('لازم يكون رقم صحيح موجب');
+    }
+    await apiPut(`/api/inventory-items/${item.id}`, { reorderLevel: parsed });
+    load();
+  };
 
   if (error) return <div className="text-destructive">{error}</div>;
 
@@ -100,7 +110,17 @@ export function InventoryPage() {
                   <td className="p-3">
                     {item.quantityOnHand.toLocaleString('en-US')} {item.unit === 'SHEET' ? 'فرخ' : ''}
                   </td>
-                  <td className="text-muted-foreground p-3">{item.reorderLevel?.toLocaleString('en-US') ?? '—'}</td>
+                  <td className="text-muted-foreground p-3">
+                    {can('inventory.edit') ? (
+                      <EditableTextCell
+                        value={item.reorderLevel?.toString() ?? ''}
+                        placeholder="بدون حد تنبيه"
+                        onSave={(next) => saveReorderLevel(item, next)}
+                      />
+                    ) : (
+                      (item.reorderLevel?.toLocaleString('en-US') ?? '—')
+                    )}
+                  </td>
                   <td className="p-3">
                     {item.isLowStock ? (
                       <StatusBadge tone="danger">ناقصة</StatusBadge>

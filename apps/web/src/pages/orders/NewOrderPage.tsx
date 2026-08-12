@@ -1125,11 +1125,6 @@ function NewOrderForm({
       setError('أضف بندًا واحدًا على الأقل للفاتورة قبل الحفظ');
       return;
     }
-    if (documentType === 'QUOTATION' && !validUntil) {
-      setError('حدد تاريخ صلاحية عرض السعر');
-      return;
-    }
-
     // Same item shape either way — `createQuotationItemSchema` and
     // `createOrderItemSchema` are structurally identical (FEATURE-007,
     // one Pricing Engine for both), so only the wrapping document differs.
@@ -1153,7 +1148,7 @@ function NewOrderForm({
         const input: CreateQuotationInput = {
           partnerId,
           branchId,
-          validUntil: new Date(validUntil).toISOString(),
+          validUntil: validUntil ? new Date(validUntil).toISOString() : undefined,
           discountPercent: discountNum,
           vatOn,
           customerNotes: customerNotes || undefined,
@@ -1460,9 +1455,8 @@ function NewOrderForm({
             </div>
             {documentType === 'QUOTATION' ? (
               <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">صالح حتى</span>
+                <span className="text-muted-foreground">صالح حتى (اختياري)</span>
                 <input
-                  required
                   type="date"
                   value={validUntil}
                   onChange={(e) => setValidUntil(e.target.value)}
@@ -1952,32 +1946,6 @@ function NewOrderForm({
             </p>
           )}
 
-          {/* نسبة الربح — تعديل يدوي اختياري (عايزة اقدر اعدلها وانا بطلب) */}
-          {hasPrintSection && (
-            <div className="border-border flex flex-wrap items-center gap-2 rounded-lg border p-2">
-              <Checkbox
-                checked={draft.profitPercentEnabled}
-                onCheckedChange={(v) => updateDraft({ profitPercentEnabled: v === true })}
-              />
-              <span className="text-sm">نسبة الربح</span>
-              {draft.profitPercentEnabled ? (
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step="0.1"
-                  value={draft.profitPercentOverride}
-                  onChange={(e) => updateDraft({ profitPercentOverride: e.target.value })}
-                  className="border-input bg-background w-24 rounded-md border px-2 py-1 text-end text-sm"
-                />
-              ) : (
-                <span className="text-muted-foreground text-xs">
-                  الافتراضي من الإعدادات: {pricingReference.pricingConstants.profitPercent}%
-                </span>
-              )}
-            </div>
-          )}
-
           {/* الخدمات الإضافية */}
           <div className="space-y-2">
             <p className="text-sm font-medium">الخدمات الإضافية</p>
@@ -2064,6 +2032,32 @@ function NewOrderForm({
             )}
             {draft.attachmentError && <p className="text-destructive text-xs">{draft.attachmentError}</p>}
           </div>
+
+          {/* نسبة الربح — تعديل يدوي اختياري، قبل الإجمالي مباشرة (عايزة اقدر اعدلها وانا بطلب / زرار نسبة الربح قبل الإجمالي) */}
+          {hasPrintSection && (
+            <div className="border-border flex flex-wrap items-center gap-2 rounded-lg border p-2">
+              <Checkbox
+                checked={draft.profitPercentEnabled}
+                onCheckedChange={(v) => updateDraft({ profitPercentEnabled: v === true })}
+              />
+              <span className="text-sm">نسبة الربح</span>
+              {draft.profitPercentEnabled ? (
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.1"
+                  value={draft.profitPercentOverride}
+                  onChange={(e) => updateDraft({ profitPercentOverride: e.target.value })}
+                  className="border-input bg-background w-24 rounded-md border px-2 py-1 text-end text-sm"
+                />
+              ) : (
+                <span className="text-muted-foreground text-xs">
+                  الافتراضي من الإعدادات: {pricingReference.pricingConstants.profitPercent}%
+                </span>
+              )}
+            </div>
+          )}
 
           <div className="flex items-center justify-between border-t pt-2">
             <p className="text-sm font-medium">

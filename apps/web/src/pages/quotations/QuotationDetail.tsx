@@ -326,7 +326,7 @@ function QuotationSummary({
   canEdit: boolean;
   onSaved: (quotation: Quotation) => void;
 }) {
-  const [validUntil, setValidUntil] = useState(quotation.validUntil.slice(0, 10));
+  const [validUntil, setValidUntil] = useState(quotation.validUntil?.slice(0, 10) ?? '');
   const [discountPercent, setDiscountPercent] = useState(quotation.discountPercent.toString());
   const [vatOn, setVatOn] = useState(quotation.vatOn);
   const [customerNotes, setCustomerNotes] = useState(quotation.customerNotes ?? '');
@@ -341,7 +341,7 @@ function QuotationSummary({
     setSubmitting(true);
     try {
       const input: UpdateQuotationInput = {
-        validUntil: validUntil ? new Date(validUntil).toISOString() : undefined,
+        validUntil: validUntil ? new Date(validUntil).toISOString() : null,
         discountPercent: Number(discountPercent),
         vatOn,
         customerNotes: customerNotes || null,
@@ -369,9 +369,8 @@ function QuotationSummary({
           </p>
         </div>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">صالح حتى</span>
+          <span className="text-muted-foreground">صالح حتى (اختياري)</span>
           <input
-            required
             type="date"
             disabled={!canEdit}
             value={validUntil}

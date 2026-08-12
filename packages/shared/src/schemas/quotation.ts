@@ -20,7 +20,7 @@ export const quotationSchema = z.object({
   partnerId: z.string().uuid(),
   staffId: z.string().uuid(),
   date: z.string(),
-  validUntil: z.string(),
+  validUntil: z.string().nullable(),
   subtotal: z.number(),
   discountPercent: z.number(),
   vatOn: z.boolean(),
@@ -63,7 +63,7 @@ export const quotationSchema = z.object({
 export const createQuotationSchema = z.object({
   partnerId: z.string().uuid(),
   branchId: z.string().uuid(),
-  validUntil: z.string(),
+  validUntil: z.string().optional(),
   discountPercent: z.number().min(0).max(100).optional(),
   vatOn: z.boolean().optional(),
   customerNotes: z.string().trim().min(1).max(2000).optional(),
@@ -73,7 +73,7 @@ export const createQuotationSchema = z.object({
 
 /** Items, when provided, replace the full set — not a per-item patch (see 02_PLAN.md's API Endpoints section). Same server-computed totals as `createQuotationSchema`. */
 export const updateQuotationSchema = z.object({
-  validUntil: z.string().optional(),
+  validUntil: z.string().nullable().optional(),
   discountPercent: z.number().min(0).max(100).optional(),
   vatOn: z.boolean().optional(),
   customerNotes: z.string().trim().min(1).max(2000).nullable().optional(),

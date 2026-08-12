@@ -12,6 +12,8 @@ import { DEFAULT_TEMPLATE_CONFIG } from './templateConfigFields';
 export interface DocumentSnapshotBusiness {
   nameAr: string | null;
   nameEn: string | null;
+  /** FEATURE-007 (2026-08-12) — short tagline under the business name (e.g. "للدعاية والإعلان"), rendered in a distinct, lighter style than the name itself. */
+  tagline: string | null;
   address: string | null;
   phone: string | null;
   email: string | null;
@@ -19,6 +21,8 @@ export interface DocumentSnapshotBusiness {
   taxNumber: string | null;
   commercialRegisterNumber: string | null;
   logoUrl: string | null;
+  /** FEATURE-007 (2026-08-12) — company stamp/seal image, printed above the closing line. */
+  stampUrl: string | null;
 }
 
 export interface DocumentSnapshot {
@@ -27,30 +31,42 @@ export interface DocumentSnapshot {
   config: DocumentTemplateConfig;
 }
 
+/** FEATURE-007 (2026-08-12, owner: "يظهرلي بيانات بيت الطباعة أو بيانات كليوباترا لما اختار [الفرع]") — the issuing Branch's own letterhead fields; each one that's set wins over the matching global business-identity field. `name` maps to the document's `nameAr` (a branch is one printed name, not separate ar/en variants). */
+export interface DocumentBranchIdentity {
+  name?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  logoUrl?: string | null;
+}
+
 /**
- * Pure — no I/O, no Date.now(), no randomness — so the same three inputs
- * always resolve to the same snapshot. `setting`/`template` may be null
- * (no business identity saved yet / no template selected yet); `overrides`
- * may be null (no one-time customization made for this document).
+ * Pure — no I/O, no Date.now(), no randomness — so the same inputs always
+ * resolve to the same snapshot. `setting`/`template` may be null (no
+ * business identity saved yet / no template selected yet); `overrides`
+ * may be null (no one-time customization made for this document);
+ * `branch` may be omitted/null (no per-branch identity to apply, or the
+ * document type doesn't carry branding at all — e.g. Invoice).
  */
 export function resolveDocumentSnapshot(
   setting: BusinessIdentity | null,
   template: DocumentTemplate | null,
   overrides: DocumentTemplateConfig | null,
-  /** FEATURE-007 (2026-08-12, owner: "لما اختار فرع بيت الطباعة يطلعلي فاتورة فيها لوجو بيت الطباعة") — the issuing Branch's own logo, when it has one, wins over the global business logo. */
-  branchLogoUrl?: string | null,
+  branch?: DocumentBranchIdentity | null,
 ): DocumentSnapshot {
   return {
     business: {
-      nameAr: setting?.businessNameAr ?? null,
+      nameAr: branch?.name ?? setting?.businessNameAr ?? null,
       nameEn: setting?.businessNameEn ?? null,
-      address: setting?.address ?? null,
-      phone: setting?.phone ?? null,
-      email: setting?.email ?? null,
+      tagline: setting?.businessTagline ?? null,
+      address: branch?.address ?? setting?.address ?? null,
+      phone: branch?.phone ?? setting?.phone ?? null,
+      email: branch?.email ?? setting?.email ?? null,
       website: setting?.website ?? null,
       taxNumber: setting?.taxNumber ?? null,
       commercialRegisterNumber: setting?.commercialRegisterNumber ?? null,
-      logoUrl: branchLogoUrl ?? setting?.logoUrl ?? null,
+      logoUrl: branch?.logoUrl ?? setting?.logoUrl ?? null,
+      stampUrl: setting?.stampUrl ?? null,
     },
     templateName: template?.name ?? null,
     config: {

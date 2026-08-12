@@ -112,6 +112,8 @@ function BranchForm({
   const [name, setName] = useState(branch?.name ?? '');
   const [code, setCode] = useState(branch?.code ?? '');
   const [address, setAddress] = useState(branch?.address ?? '');
+  const [phone, setPhone] = useState(branch?.phone ?? '');
+  const [email, setEmail] = useState(branch?.email ?? '');
   const [logoUrl, setLogoUrl] = useState(branch?.logoUrl ?? '');
   const [logoUploading, setLogoUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +147,13 @@ function BranchForm({
     setSubmitting(true);
     try {
       if (branch) {
-        await apiPut(`/api/branches/${branch.id}`, { name, address: address || null, logoUrl: logoUrl || null });
+        await apiPut(`/api/branches/${branch.id}`, {
+          name,
+          address: address || null,
+          phone: phone || null,
+          email: email || null,
+          logoUrl: logoUrl || null,
+        });
       } else {
         await apiPost('/api/branches', { name, code, address: address || undefined });
       }
@@ -190,6 +198,31 @@ function BranchForm({
           className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
         />
       </label>
+      {branch && (
+        <>
+          <label className="w-36 space-y-1 text-xs">
+            <span className="text-muted-foreground">هاتف الفرع (اختياري)</span>
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              dir="ltr"
+              placeholder="لو فاضي بياخد هاتف الشركة"
+              className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="flex-1 space-y-1 text-xs">
+            <span className="text-muted-foreground">بريد الفرع (اختياري)</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              dir="ltr"
+              placeholder="لو فاضي بياخد بريد الشركة"
+              className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+            />
+          </label>
+        </>
+      )}
       {branch && (
         <div className="w-full space-y-1 text-xs">
           <span className="text-muted-foreground">شعار الفرع (اختياري — لو فاضي بيتاخد شعار الشركة العام)</span>

@@ -37,6 +37,8 @@ export interface DocumentRendererProps {
   customerNotes?: string | null;
   /** FEATURE-007 (2026-08-12, owner: "الفاتورة ميكونش فيها الإسم ولا اللوجو فقط فاتورة — اما عرض السعر وأمر الشغل فيهم إسم المكان واللوجو") — Invoice omits the business name/logo/watermark entirely; Quotation and Work Order keep them. Defaults to `true` (Quotation/Work Order's own callers don't need to think about this). */
   showBranding?: boolean;
+  /** FEATURE-007 (2026-08-12, owner: "لازم يتسجل مين اللي عمل الفاتورة او عرض السعر") — the staff member's name, resolved by the caller from the document's own `staffId`. */
+  createdByName?: string | null;
 }
 
 function money(n: number) {
@@ -72,6 +74,7 @@ export function DocumentRenderer({
   paymentSummary,
   customerNotes,
   showBranding = true,
+  createdByName,
 }: DocumentRendererProps) {
   const { business, config } = snapshot;
   const showLogo = showBranding && Boolean(config.showLogo) && business.logoUrl;
@@ -99,6 +102,7 @@ export function DocumentRenderer({
             {/* عايز اللوجو يظهر شمال والإسم يظهر يمين (owner, 2026-08-12) — الاسم أول عنصر في DOM (يمين في RTL)، اللوجو تاني عنصر (شمال). */}
             <div className="text-end">
               <div className="text-primary text-2xl font-extrabold">{business.nameAr || '—'}</div>
+              {business.tagline && <div className="text-foreground/70 text-sm font-normal italic">{business.tagline}</div>}
               {business.nameEn && <div className="text-muted-foreground text-sm">{business.nameEn}</div>}
             </div>
             <div>{showLogo && <img src={business.logoUrl ?? undefined} alt="" className="h-16 object-contain" />}</div>
@@ -125,6 +129,7 @@ export function DocumentRenderer({
             <div>
               التاريخ: <span dir="ltr">{new Date(date).toLocaleDateString('en-GB')}</span>
             </div>
+            {createdByName && <div>بواسطة: {createdByName}</div>}
           </div>
         </div>
 
@@ -227,6 +232,7 @@ export function DocumentRenderer({
           </section>
         )}
 
+        {showBranding && business.stampUrl && <img src={business.stampUrl} alt="" className="mb-3 h-24 object-contain" />}
         <p className="mb-2 text-sm">وتفضلوا بقبول وافر الاحترام...</p>
 
         {Boolean(config.showSignatureArea) && (

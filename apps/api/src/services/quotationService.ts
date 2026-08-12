@@ -50,7 +50,7 @@ export function mapQuotationToDto(quotation: QuotationRecord, canSeeInternal: bo
     partnerId: quotation.partnerId,
     staffId: quotation.staffId,
     date: quotation.date.toISOString(),
-    validUntil: quotation.validUntil.toISOString(),
+    validUntil: quotation.validUntil ? quotation.validUntil.toISOString() : null,
     subtotal: quotation.subtotal.toNumber(),
     discountPercent: quotation.discountPercent.toNumber(),
     vatOn: quotation.vatOn,
@@ -182,7 +182,7 @@ export async function createQuotation(
     partnerId: string;
     branchId: string;
     staffId: string;
-    validUntil: string;
+    validUntil?: string;
     discountPercent?: number;
     vatOn?: boolean;
     customerNotes?: string;
@@ -221,7 +221,7 @@ export async function createQuotation(
         branchId: input.branchId,
         partnerId: input.partnerId,
         staffId: input.staffId,
-        validUntil: new Date(input.validUntil),
+        validUntil: input.validUntil ? new Date(input.validUntil) : null,
         subtotal,
         discountPercent,
         vatOn,

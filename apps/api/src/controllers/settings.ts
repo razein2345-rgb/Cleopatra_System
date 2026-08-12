@@ -24,6 +24,7 @@ export async function getBusinessIdentity(_req: Request, res: Response) {
     select: {
       businessNameAr: true,
       businessNameEn: true,
+      businessTagline: true,
       address: true,
       phone: true,
       email: true,
@@ -31,6 +32,7 @@ export async function getBusinessIdentity(_req: Request, res: Response) {
       taxNumber: true,
       commercialRegisterNumber: true,
       logoUrl: true,
+      stampUrl: true,
     },
   });
   if (!setting) {
