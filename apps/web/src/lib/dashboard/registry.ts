@@ -10,6 +10,7 @@ import { dailyProductionWidget } from './widgets/DailyProductionWidget';
 import { jobsByDepartmentWidget } from './widgets/JobsByDepartmentWidget';
 import { jobsByOperatorWidget } from './widgets/JobsByOperatorWidget';
 import { supplierDelaysWidget } from './widgets/SupplierDelaysWidget';
+import { readyForDeliveryWidget } from './widgets/ReadyForDeliveryWidget';
 
 /**
  * Every Dashboard card, in render order. Add a widget by writing a
@@ -31,6 +32,7 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   jobsByDepartmentWidget,
   jobsByOperatorWidget,
   supplierDelaysWidget,
+  readyForDeliveryWidget,
 ];
 
 /**

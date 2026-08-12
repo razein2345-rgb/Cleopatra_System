@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Menu, PanelRightClose, PanelRightOpen, Search } from 'lucide-react';
+import { Menu, Moon, PanelRightClose, PanelRightOpen, Search, Sun } from 'lucide-react';
 import type { BranchSummary } from '@cleopatra/shared';
 import { Button } from '@/components/ui/button';
 import { apiGet } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
+import { useTheme } from '@/state/ThemeContext';
 
 interface TopbarProps {
   sidebarCollapsed: boolean;
@@ -19,6 +20,7 @@ export function Topbar({
   onOpenCommandPalette,
 }: TopbarProps) {
   const { authContext, signOut } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const [branches, setBranches] = useState<BranchSummary[]>([]);
 
   useEffect(() => {
@@ -81,6 +83,14 @@ export function Topbar({
       </Button>
 
       <div className="ms-auto flex items-center gap-3 text-sm">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'التبديل إلى الوضع الفاتح' : 'التبديل إلى الوضع الداكن'}
+        >
+          {theme === 'dark' ? <Sun className="size-5" /> : <Moon className="size-5" />}
+        </Button>
         {branchName && <span className="text-muted-foreground hidden md:inline">{branchName}</span>}
         <span className="text-muted-foreground hidden truncate sm:inline">
           {authContext?.user.name}

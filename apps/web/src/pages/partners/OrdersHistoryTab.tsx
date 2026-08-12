@@ -43,8 +43,28 @@ export function OrdersHistoryTab({ partnerId }: { partnerId: string }) {
     predictedNext = new Date(new Date(lastOrder!.date).getTime() + avgGapDays * 86_400_000);
   }
 
+  // FEATURE-007 (2026-08-12, owner: "محتاج يكون في مكان عند العملاء واضح فيه حسابهم... دفعو كام وعليهم كام") — a running account total across every order, not just each order's own remainingBalance. Purely a client-side sum over the same `orders` this tab already fetches — no new endpoint.
+  const totalBilled = orders.reduce((sum, o) => sum + o.finalTotal, 0);
+  const totalPaid = orders.reduce((sum, o) => sum + o.paidTotal, 0);
+  const totalOutstanding = orders.reduce((sum, o) => sum + o.remainingBalance, 0);
+
   return (
     <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="border-border bg-card rounded-2xl border p-4">
+          <p className="text-muted-foreground text-xs">إجمالي المبيعات</p>
+          <p className="text-lg font-bold">{money(totalBilled)} ج.م</p>
+        </div>
+        <div className="border-border bg-card rounded-2xl border p-4">
+          <p className="text-muted-foreground text-xs">إجمالي المدفوع</p>
+          <p className="text-success text-lg font-bold">{money(totalPaid)} ج.م</p>
+        </div>
+        <div className="border-border bg-card rounded-2xl border p-4">
+          <p className="text-muted-foreground text-xs">الرصيد المستحق</p>
+          <p className={`text-lg font-bold ${totalOutstanding > 0 ? 'text-destructive' : ''}`}>{money(totalOutstanding)} ج.م</p>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="border-border bg-card rounded-2xl border p-4">
           <p className="text-muted-foreground text-xs">عدد الطلبات</p>
