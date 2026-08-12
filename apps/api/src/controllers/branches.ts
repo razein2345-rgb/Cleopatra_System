@@ -42,3 +42,28 @@ export async function updateBranch(req: Request<{ id: string }>, res: Response) 
   });
   res.json({ success: true, data: updated });
 }
+
+/**
+ * Soft delete, same discipline as every other catalog (Service/ReadyProduct/
+ * Quotation/...) — never a hard delete, since Branch is referenced by
+ * StaffProfile/Order/Quotation/etc. The default branch can never be
+ * deleted: it's the fallback every branch-scoped screen assumes exists.
+ */
+export async function deleteBranch(req: Request<{ id: string }>, res: Response) {
+  const existing = await prisma.branch.findUnique({ where: { id: req.params.id } });
+  if (!existing || existing.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Branch not found' } });
+    return;
+  }
+  if (existing.isDefault) {
+    res.status(400).json({ success: false, error: { message: 'لا يمكن حذف الفرع الافتراضي' } });
+    return;
+  }
+
+  const deleted = await prisma.branch.update({
+    where: { id: req.params.id },
+    data: { isDeleted: true, deletedAt: new Date(), deletedBy: req.auth!.staffId },
+    select: { id: true },
+  });
+  res.json({ success: true, data: deleted });
+}

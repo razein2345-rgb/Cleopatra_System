@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type {
   BusinessPartner,
   Order,
@@ -7,7 +8,7 @@ import type {
   QuotationStatus,
   UpdateQuotationInput,
 } from '@cleopatra/shared';
-import { apiGet, apiPost, apiPut } from '@/lib/api';
+import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/state/AuthContext';
 import {
@@ -79,6 +80,9 @@ function QuotationLifecycle({
 }) {
   const { can } = useAuth();
   const canConvert = can('quotations.convert');
+  const canDelete = can('quotations.delete');
+  const navigate = useNavigate();
+  const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState<QuotationStatus>(quotation.status);
   const [approvalState, setApprovalState] = useState<QuotationApprovalState>(
     quotation.approvalState,
@@ -153,6 +157,19 @@ function QuotationLifecycle({
       setError(err instanceof Error ? err.message : 'تعذر تغيير حالة الاعتماد');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const removeQuotation = async () => {
+    if (!confirm(`حذف ${quotation.quotationNumber}؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    setError(null);
+    setDeleting(true);
+    try {
+      await apiDelete(`/api/quotations/${quotation.id}`);
+      navigate('/quotations');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حذف عرض السعر');
+      setDeleting(false);
     }
   };
 
@@ -262,6 +279,12 @@ function QuotationLifecycle({
       {canConvert && quotation.status === 'ACCEPTED' && !quotation.convertedOrderId && (
         <Button type="button" disabled={converting} onClick={() => void convertToOrder()}>
           {converting ? 'جارٍ التحويل…' : 'تحويل إلى فاتورة'}
+        </Button>
+      )}
+
+      {canDelete && !quotation.convertedOrderId && (
+        <Button type="button" variant="destructive" size="sm" disabled={deleting} onClick={() => void removeQuotation()}>
+          {deleting ? 'جارٍ الحذف…' : 'حذف عرض السعر'}
         </Button>
       )}
 

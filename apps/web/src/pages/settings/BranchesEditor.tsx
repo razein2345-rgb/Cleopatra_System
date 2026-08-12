@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { BranchSummary } from '@cleopatra/shared';
-import { apiGet, apiPost, apiPut } from '@/lib/api';
+import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/state/AuthContext';
 
-/** FEATURE-007 — branch management (owner, 2026-08-12: "عايز مكان في الإعدادات إني اضيف إسم الفروع"). No delete — branches are referenced by staff/orders/etc. across the system, so only add/rename is offered, matching how sensitive/wide-reach records are handled elsewhere. */
+/** FEATURE-007 — branch management (owner, 2026-08-12: "عايز مكان في الإعدادات إني اضيف إسم الفروع"; delete added 2026-08-12 after owner feedback). Soft delete, same as every other catalog — the default branch can never be deleted (enforced server-side too). */
 export function BranchesEditor() {
   const { can } = useAuth();
   const canManage = can('settings.edit');
@@ -22,6 +22,17 @@ export function BranchesEditor() {
   };
 
   useEffect(load, []);
+
+  const remove = async (branch: BranchSummary) => {
+    if (!confirm(`حذف "${branch.name}"؟`)) return;
+    setError(null);
+    try {
+      await apiDelete(`/api/branches/${branch.id}`);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حذف الفرع');
+    }
+  };
 
   return (
     <div>
@@ -67,9 +78,16 @@ export function BranchesEditor() {
                   {b.address && <span className="text-muted-foreground"> — {b.address}</span>}
                 </span>
                 {canManage && (
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(b)}>
-                    تعديل
-                  </Button>
+                  <div className="flex gap-1">
+                    <Button variant="ghost" size="sm" onClick={() => setEditing(b)}>
+                      تعديل
+                    </Button>
+                    {!b.isDefault && (
+                      <Button variant="ghost" size="sm" onClick={() => void remove(b)}>
+                        حذف
+                      </Button>
+                    )}
+                  </div>
                 )}
               </li>
             ),

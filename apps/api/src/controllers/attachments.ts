@@ -4,18 +4,22 @@ import { prisma } from '../lib/prisma.js';
 import { getPublicAttachmentUrl, uploadAttachmentFile } from '../services/attachmentService.js';
 
 /**
- * FEATURE-007 — reference-image upload for the order/quotation item form
- * (video's "صورة المنتج" dropzone). Gated on either `orders.create` or
- * `quotations.create` (matching the frontend's own OR-permission gate on
- * `/orders/new` in App.tsx) rather than a single `requirePermission` key,
- * since this single endpoint serves both creation flows.
+ * FEATURE-007 — one shared upload endpoint for every image the system
+ * accepts: the order/quotation item form's reference-image dropzone
+ * (video's "صورة المنتج") AND the business logo (Settings → الهوية
+ * التجارية). Gated on any one of `orders.create`/`quotations.create`/
+ * `settings.edit` rather than a single `requirePermission` key, since
+ * different callers reach this for different reasons.
  */
 export async function createAttachment(req: Request, res: Response) {
   if (!req.auth) {
     res.status(401).json({ success: false, error: { message: 'Missing bearer token' } });
     return;
   }
-  if (!hasPermission(req.auth.permissions, 'orders.create') && !hasPermission(req.auth.permissions, 'quotations.create')) {
+  const allowed = ['orders.create', 'quotations.create', 'settings.edit'].some((key) =>
+    hasPermission(req.auth!.permissions, key),
+  );
+  if (!allowed) {
     res.status(403).json({ success: false, error: { message: 'Missing required permission' } });
     return;
   }

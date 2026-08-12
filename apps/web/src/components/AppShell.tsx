@@ -70,12 +70,29 @@ function useDelayedJobsBadge(canView: boolean): number | undefined {
   return delayed;
 }
 
+/** FEATURE-007 — the top bar's logo (owner, 2026-08-12: "عايز احط اللوجو في السيستم فوق"), fetched once via the requireAuth-only `/settings/branding` endpoint so it shows for every role, not just orders.view holders. */
+function useBranding(): { logoUrl: string | null; businessName: string | null } {
+  const [branding, setBranding] = useState<{ logoUrl: string | null; businessName: string | null }>({
+    logoUrl: null,
+    businessName: null,
+  });
+
+  useEffect(() => {
+    apiGet<{ businessNameAr: string | null; logoUrl: string | null }>('/api/settings/branding')
+      .then((data) => setBranding({ logoUrl: data.logoUrl, businessName: data.businessNameAr }))
+      .catch(() => setBranding({ logoUrl: null, businessName: null }));
+  }, []);
+
+  return branding;
+}
+
 export function AppShell() {
   const [desktopCollapsed, setDesktopCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const { can } = useAuth();
   const delayedCount = useDelayedJobsBadge(can('work-orders.view'));
+  const branding = useBranding();
 
   const navItems = useMemo<NavEntry[]>(
     () =>
@@ -91,10 +108,16 @@ export function AppShell() {
         className="border-border bg-card hidden shrink-0 border-e transition-[width] duration-200 lg:block"
         style={{ width: desktopCollapsed ? '4.5rem' : '16rem' }}
       >
-        <Sidebar entries={navItems} collapsed={desktopCollapsed} />
+        <Sidebar entries={navItems} collapsed={desktopCollapsed} logoUrl={branding.logoUrl} businessName={branding.businessName} />
       </aside>
 
-      <MobileNavDrawer entries={navItems} open={mobileNavOpen} onOpenChange={setMobileNavOpen} />
+      <MobileNavDrawer
+        entries={navItems}
+        open={mobileNavOpen}
+        onOpenChange={setMobileNavOpen}
+        logoUrl={branding.logoUrl}
+        businessName={branding.businessName}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar

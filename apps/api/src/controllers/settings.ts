@@ -42,6 +42,20 @@ export async function getBusinessIdentity(_req: Request, res: Response) {
   res.json({ success: true, data: setting });
 }
 
+/**
+ * FEATURE-007 — the top bar's logo (owner, 2026-08-12: "عايز احط اللوجو
+ * في السيستم فوق"), shown to every logged-in staff member regardless of
+ * role/permissions — same "low-sensitivity reference data" reasoning
+ * `listBranches` already uses, not the letterhead endpoint's deliberately
+ * narrower `orders.view` gate.
+ */
+export async function getBranding(_req: Request, res: Response) {
+  const setting = await prisma.setting.findFirst({
+    select: { businessNameAr: true, logoUrl: true },
+  });
+  res.json({ success: true, data: setting ?? { businessNameAr: null, logoUrl: null } });
+}
+
 export async function updateSettings(req: Request, res: Response) {
   const input = updateSettingSchema.parse(req.body);
   const existing = await prisma.setting.findFirst();
