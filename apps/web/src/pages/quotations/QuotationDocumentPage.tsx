@@ -75,6 +75,7 @@ export function QuotationDocumentPage() {
         snapshot={snapshot}
         logoSizeCm={3.5}
         contactIconTheme={branch && !branch.isDefault ? 'blue-pink' : 'red'}
+        showDate={business.showQuotationDate}
         documentTypeLabel="عرض سعر"
         documentNumber={quotation.quotationNumber}
         date={quotation.date}

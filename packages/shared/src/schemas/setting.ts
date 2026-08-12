@@ -55,6 +55,10 @@ export const settingSchema = z.object({
   // الفاتورة ولا لا") — whether the stamp prints on the Invoice
   // specifically (Quotation/Work Order always show it when uploaded).
   showStampOnInvoice: z.boolean(),
+  // FEATURE-007 (2026-08-12, owner: "عايز اوبشن في عرض السعر إني اشيل
+  // التاريخ خالص او يكون موجود") — whether the quotation's own issue
+  // date prints at all.
+  showQuotationDate: z.boolean(),
 });
 
 export const updateSettingSchema = settingSchema.omit({ id: true }).partial();
@@ -82,6 +86,7 @@ export const businessIdentitySchema = settingSchema.pick({
   landlinePhone: true,
   facebookUrl: true,
   showStampOnInvoice: true,
+  showQuotationDate: true,
 });
 
 export type Setting = z.infer<typeof settingSchema>;

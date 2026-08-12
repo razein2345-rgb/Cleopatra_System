@@ -124,6 +124,7 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
   const [logoUrl, setLogoUrl] = useState(setting.logoUrl ?? '');
   const [stampUrl, setStampUrl] = useState(setting.stampUrl ?? '');
   const [showStampOnInvoice, setShowStampOnInvoice] = useState(setting.showStampOnInvoice);
+  const [showQuotationDate, setShowQuotationDate] = useState(setting.showQuotationDate);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -139,6 +140,7 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
               setLogoUrl(setting.logoUrl ?? '');
               setStampUrl(setting.stampUrl ?? '');
               setShowStampOnInvoice(setting.showStampOnInvoice);
+              setShowQuotationDate(setting.showQuotationDate);
               setEditing(true);
             }}
           >
@@ -164,6 +166,9 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
         <p className="text-muted-foreground text-sm">
           إظهار الختم في الفاتورة: <span className="font-medium">{setting.showStampOnInvoice ? 'نعم' : 'لا'}</span>
         </p>
+        <p className="text-muted-foreground text-sm">
+          إظهار تاريخ الإصدار في عرض السعر: <span className="font-medium">{setting.showQuotationDate ? 'نعم' : 'لا'}</span>
+        </p>
         <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
           {TEXT_FIELDS.map((f) => (
             <div key={f.key} className="border-border flex flex-col gap-1 border-b border-dashed py-2 text-sm">
@@ -187,6 +192,7 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
         logoUrl: logoUrl.trim() === '' ? null : logoUrl.trim(),
         stampUrl: stampUrl.trim() === '' ? null : stampUrl.trim(),
         showStampOnInvoice,
+        showQuotationDate,
       } satisfies UpdateSettingInput;
       await apiPut('/api/settings', payload);
       setEditing(false);
@@ -216,6 +222,10 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
       <label className="flex items-center gap-2 text-sm">
         <Checkbox checked={showStampOnInvoice} onCheckedChange={(v) => setShowStampOnInvoice(v === true)} />
         <span>إظهار الختم في الفاتورة (عرض السعر وأمر الشغل يظهر فيهم دايمًا لو مرفوع)</span>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={showQuotationDate} onCheckedChange={(v) => setShowQuotationDate(v === true)} />
+        <span>إظهار تاريخ الإصدار في عرض السعر</span>
       </label>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

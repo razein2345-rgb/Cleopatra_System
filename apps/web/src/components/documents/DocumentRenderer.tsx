@@ -78,6 +78,8 @@ export interface DocumentRendererProps {
   hideCustomerSignature?: boolean;
   /** FEATURE-007 (2026-08-12, owner: "الختم المفروض اكون مخير إنه يظهر في الفاتورة ولا لا") — whether the stamp prints at all, an owner choice (`Setting.showStampOnInvoice`) the caller resolves for Invoice specifically. Defaults to `true` (Quotation/Work Order always show it when uploaded — unaffected by this toggle). */
   showStamp?: boolean;
+  /** FEATURE-007 (2026-08-12, owner: "عايز اوبشن في عرض السعر إني اشيل التاريخ خالص او يكون موجود") — whether the document's own issue date prints. Defaults to `true`. */
+  showDate?: boolean;
 }
 
 function money(n: number) {
@@ -118,6 +120,7 @@ export function DocumentRenderer({
   contactIconTheme = 'red',
   hideCustomerSignature = false,
   showStamp = true,
+  showDate = true,
 }: DocumentRendererProps) {
   const { business, config } = snapshot;
   const showLogo = showBranding && Boolean(config.showLogo) && business.logoUrl;
@@ -181,9 +184,11 @@ export function DocumentRenderer({
             <div>
               رقم: <span dir="ltr">{documentNumber}</span>
             </div>
-            <div>
-              التاريخ: <span dir="ltr">{new Date(date).toLocaleDateString('en-GB')}</span>
-            </div>
+            {showDate && (
+              <div>
+                التاريخ: <span dir="ltr">{new Date(date).toLocaleDateString('en-GB')}</span>
+              </div>
+            )}
             {createdByName && <div>بواسطة: {createdByName}</div>}
           </div>
         </div>

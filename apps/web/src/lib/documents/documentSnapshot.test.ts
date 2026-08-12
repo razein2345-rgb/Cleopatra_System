@@ -41,6 +41,7 @@ const baseSetting: Setting = {
   landlinePhone: null,
   facebookUrl: null,
   showStampOnInvoice: false,
+  showQuotationDate: true,
 };
 
 const baseTemplate: DocumentTemplate = {

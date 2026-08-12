@@ -372,6 +372,8 @@ model Setting {
   facebookUrl              String?
   /// FEATURE-007 (2026-08-12, owner: "الختم المفروض اكون مخير إنه يظهر في الفاتورة ولا لا زي اللوجو والإسم") — the Invoice always omits logo/name/watermark (a deliberate, non-configurable code decision — a plain invoice, not promotional), but the stamp is a real owner choice. Off by default, matching the invoice's existing "plain" default.
   showStampOnInvoice       Boolean @default(false)
+  /// FEATURE-007 (2026-08-12, owner: "عايز اوبشن في عرض السعر إني اشيل التاريخ خالص او يكون موجود اللي هو تاريخ إصدار عرض السعر نفسه") — whether the quotation's own issue date prints at all. On by default (unchanged existing behavior).
+  showQuotationDate        Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

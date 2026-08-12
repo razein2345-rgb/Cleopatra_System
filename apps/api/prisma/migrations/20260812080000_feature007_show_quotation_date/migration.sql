@@ -1,0 +1,1 @@
+ALTER TABLE "Setting" ADD COLUMN "showQuotationDate" BOOLEAN NOT NULL DEFAULT true;
