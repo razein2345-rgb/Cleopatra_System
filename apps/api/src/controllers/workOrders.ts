@@ -62,7 +62,7 @@ export async function createWorkOrder(req: Request, res: Response) {
   let created;
   try {
     created = await prisma.$transaction(async (tx) => {
-      const workOrderNumber = await nextWorkOrderNumber(tx, order.branchId);
+      const workOrderNumber = await nextWorkOrderNumber(tx);
       const workOrder = await tx.workOrder.create({
         data: { workOrderNumber, orderId: order.id, branchId: order.branchId },
       });

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { BusinessIdentity, BusinessPartner, Order } from '@cleopatra/shared';
-import { apiGet } from '@/lib/api';
+import { apiDelete, apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
+import { useAuth } from '@/state/AuthContext';
 
 /**
  * FEATURE-006 M9 / FEATURE-007 — the first page that actually mounts
@@ -13,13 +14,22 @@ import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
  * picker/override editor yet (M9's fuller scope) — this is the minimum
  * for "اطبع الفاتورة" to actually work: real order data, real business
  * identity, the default template config.
+ *
+ * FEATURE-007 (2026-08-12) — "تعديل"/"حذف" (owner: "أقدر افتح... واعدل
+ * فيها او احذفهم"). Edit routes to the unified creation screen in edit
+ * mode (`/orders/new?editOrder=:id`, full item replacement); delete calls
+ * the guarded `deleteOrder` service (blocked server-side if the invoice
+ * has payments or a Work Order — see its own doc comment).
  */
 export function OrderDocumentPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { can } = useAuth();
   const [order, setOrder] = useState<Order | null>(null);
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -41,6 +51,19 @@ export function OrderDocumentPage() {
   if (error) return <div className="text-destructive">{error}</div>;
   if (!order || !partner || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
 
+  const removeOrder = async () => {
+    if (!confirm(`حذف الفاتورة ${order.invoiceNumber}؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    setError(null);
+    setDeleting(true);
+    try {
+      await apiDelete(`/api/orders/${order.id}`);
+      navigate('/quotations');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حذف الفاتورة');
+      setDeleting(false);
+    }
+  };
+
   const items: DocumentRendererItem[] = order.items.map((item) => {
     const breakdown = item.breakdown as { quantity?: number; notes?: string | null } | null;
     return {
@@ -57,20 +80,35 @@ export function OrderDocumentPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between print:hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <div>
           <h1 className="text-xl font-bold">فاتورة {order.invoiceNumber}</h1>
           <Link to="/quotations" className="text-muted-foreground text-sm hover:underline">
             العودة إلى المستندات
           </Link>
         </div>
-        <Button type="button" onClick={() => window.print()}>
-          طباعة الفاتورة
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {can('orders.edit') && (
+            <Button type="button" variant="secondary" onClick={() => navigate(`/orders/new?editOrder=${order.id}`)}>
+              تعديل الفاتورة
+            </Button>
+          )}
+          {can('orders.delete') && (
+            <Button type="button" variant="destructive" disabled={deleting} onClick={() => void removeOrder()}>
+              {deleting ? 'جارٍ الحذف…' : 'حذف الفاتورة'}
+            </Button>
+          )}
+          <Button type="button" onClick={() => window.print()}>
+            طباعة الفاتورة
+          </Button>
+        </div>
       </div>
+
+      {error && <p className="text-destructive text-sm print:hidden">{error}</p>}
 
       <DocumentRenderer
         snapshot={snapshot}
+        showBranding={false}
         documentTypeLabel="فاتورة"
         documentNumber={order.invoiceNumber}
         date={order.date}

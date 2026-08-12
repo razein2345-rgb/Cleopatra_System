@@ -1,7 +1,7 @@
 import type { Prisma } from '../generated/prisma/client.js';
 import type { CreateOrderItemInput, CreatePaymentInput, Order, OrderItem, Payment, ProductionTrack } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
-import { deductStockForOrderItem } from './inventoryService.js';
+import { deductStockForOrderItem, restockForOrderItem } from './inventoryService.js';
 import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
 
@@ -90,20 +90,29 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
 }
 
 /**
- * Atomically reserves the next invoice number for a branch/year — a
- * direct copy of `nextQuotationNumber`'s shape
- * (`quotationService.ts`), reusing the same `DocumentSequence` model
- * with `documentType: 'INVOICE'` (reserved since Phase 1; unused until
- * FEATURE-003 M2).
+ * Atomically reserves the next invoice number for a year — a direct copy
+ * of `nextQuotationNumber`'s shape (`quotationService.ts`), reusing the
+ * same `DocumentSequence` model with `documentType: 'INVOICE'` (reserved
+ * since Phase 1; unused until FEATURE-003 M2).
+ *
+ * FEATURE-007 (2026-08-12, bug fix) — `Order.invoiceNumber` is *globally*
+ * unique, not unique-per-branch, but `DocumentSequence` was keyed by the
+ * caller's own `branchId`, so two different branches independently
+ * counting from 1 would generate the identical number and collide the
+ * first time a second real branch ever issued an invoice — invisible
+ * until today because the system only ever had one branch. Fixed by
+ * always reserving against the *default* branch's sequence row
+ * regardless of which branch is actually creating the document — a
+ * single shared global counter per year, matching the real DB
+ * constraint, with no schema migration and no change to the number
+ * *format* for branches that already have invoices.
  */
-export async function nextInvoiceNumber(
-  tx: Prisma.TransactionClient,
-  branchId: string,
-): Promise<string> {
+export async function nextInvoiceNumber(tx: Prisma.TransactionClient): Promise<string> {
+  const defaultBranch = await tx.branch.findFirstOrThrow({ where: { isDefault: true }, select: { id: true } });
   const year = new Date().getFullYear();
   const sequence = await tx.documentSequence.upsert({
-    where: { branchId_documentType_year: { branchId, documentType: 'INVOICE', year } },
-    create: { branchId, documentType: 'INVOICE', year, prefix: 'CLP-INV', lastNumber: 1 },
+    where: { branchId_documentType_year: { branchId: defaultBranch.id, documentType: 'INVOICE', year } },
+    create: { branchId: defaultBranch.id, documentType: 'INVOICE', year, prefix: 'CLP-INV', lastNumber: 1 },
     update: { lastNumber: { increment: 1 } },
   });
   return `${sequence.prefix}-${year}-${String(sequence.lastNumber).padStart(6, '0')}`;
@@ -269,10 +278,12 @@ export async function createOrder(
   const afterDiscount = subtotal * (1 - discountPercent / 100);
   const vatOn = input.vatOn ?? false;
   const vatAmount = vatOn ? afterDiscount * (ctx.vatRate / 100) : 0;
-  const finalTotal = afterDiscount + vatAmount;
+  // Owner, 2026-08-12: "عايزة يقرب رقم الفاتورة دايماً لأقرب رقم صحيح أعلى" —
+  // only the final charged amount rounds up; subtotal/vatAmount stay precise.
+  const finalTotal = Math.ceil(afterDiscount + vatAmount);
 
   return prisma.$transaction(async (tx) => {
-    const invoiceNumber = await nextInvoiceNumber(tx, input.branchId);
+    const invoiceNumber = await nextInvoiceNumber(tx);
     const created = await tx.order.create({
       data: {
         invoiceNumber,
@@ -378,6 +389,180 @@ export class OrderNotFoundError extends Error {
     super('Order not found');
     this.name = 'OrderNotFoundError';
   }
+}
+
+export class OrderHasPaymentsError extends Error {
+  constructor() {
+    super('لا يمكن حذف فاتورة عليها دفعات مسجلة — احذف الدفعات أولاً من الخزينة');
+    this.name = 'OrderHasPaymentsError';
+  }
+}
+
+export class OrderHasWorkOrderError extends Error {
+  constructor() {
+    super('لا يمكن حذف فاتورة لها أمر شغل قائم — احذف أو ألغِ أمر الشغل أولاً');
+    this.name = 'OrderHasWorkOrderError';
+  }
+}
+
+/**
+ * FEATURE-007 — full item replacement (owner, 2026-08-12: "استبدال كامل
+ * للأصناف"). Mirrors `createOrder`'s pricing/attachment logic exactly,
+ * plus the extra step every edit needs: reverse the old items' stock
+ * consumption before deleting them, then deduct fresh for the new set —
+ * never leaves a stale `StockLevel` behind from the items being replaced.
+ * Existing `Payment` rows are untouched; `paidTotal`/`remainingBalance`
+ * simply recompute at read time against the new `finalTotal`.
+ */
+export async function updateOrder(
+  orderId: string,
+  input: {
+    discountPercent?: number;
+    vatOn?: boolean;
+    paymentTerms?: string | null;
+    deliveryDate?: string | null;
+    customerNotes?: string | null;
+    internalNotes?: string | null;
+    productionTrack?: ProductionTrack | null;
+    items: CreateOrderItemInput[];
+  },
+  itemNames: Map<string, string>,
+): Promise<{ id: string; invoiceNumber: string; branchId: string; partnerId: string }> {
+  const existing = await prisma.order.findUnique({ where: { id: orderId }, include: { items: true } });
+  if (!existing || existing.isDeleted) {
+    throw new OrderNotFoundError();
+  }
+
+  const ctx = await buildPricingContext(input.items);
+  const priced = input.items.map((item) => computeItemPricing(item, ctx));
+
+  const attachmentIds = [...new Set(input.items.map((i) => i.attachmentId).filter((id): id is string => Boolean(id)))];
+  const attachmentUrlById = new Map(
+    attachmentIds.length
+      ? (await prisma.attachment.findMany({ where: { id: { in: attachmentIds } }, select: { id: true, storagePath: true } }))
+          .filter((a) => a.storagePath)
+          .map((a) => [a.id, getPublicAttachmentUrl(a.storagePath!)] as const)
+      : [],
+  );
+
+  const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
+  const discountPercent = input.discountPercent ?? existing.discountPercent.toNumber();
+  const afterDiscount = subtotal * (1 - discountPercent / 100);
+  const vatOn = input.vatOn ?? existing.vatOn;
+  const vatAmount = vatOn ? afterDiscount * (ctx.vatRate / 100) : 0;
+  // Owner, 2026-08-12: "عايزة يقرب رقم الفاتورة دايماً لأقرب رقم صحيح أعلى" —
+  // only the final charged amount rounds up; subtotal/vatAmount stay precise.
+  const finalTotal = Math.ceil(afterDiscount + vatAmount);
+
+  await prisma.$transaction(async (tx) => {
+    // Reverse the old items' stock consumption before removing them —
+    // "يرجع للمخزن تلقائيًا" (owner, 2026-08-12).
+    for (const oldItem of existing.items) {
+      if (oldItem.inventoryItemId && oldItem.sheetsConsumed) {
+        await restockForOrderItem(tx, oldItem.inventoryItemId, existing.branchId, oldItem.sheetsConsumed.toNumber());
+      }
+    }
+    await tx.orderItem.deleteMany({ where: { orderId } });
+
+    await tx.order.update({
+      where: { id: orderId },
+      data: {
+        subtotal,
+        discountPercent,
+        vatOn,
+        vatAmount,
+        finalTotal,
+        paymentTerms: input.paymentTerms !== undefined ? input.paymentTerms : existing.paymentTerms,
+        deliveryDate:
+          input.deliveryDate !== undefined
+            ? input.deliveryDate
+              ? new Date(input.deliveryDate)
+              : null
+            : existing.deliveryDate,
+        customerNotes: input.customerNotes !== undefined ? input.customerNotes : existing.customerNotes,
+        internalNotes: input.internalNotes !== undefined ? input.internalNotes : existing.internalNotes,
+        productionTrack: input.productionTrack !== undefined ? input.productionTrack : existing.productionTrack,
+        items: {
+          create: input.items.map((item, index) => {
+            const result = priced[index]!;
+            return buildOrderItemCreate({
+              itemType: item.itemType,
+              notes: item.notes,
+              description: item.description,
+              readyProductId: item.readyProductId,
+              readyProductName: item.readyProductId ? (itemNames.get(item.readyProductId) ?? null) : null,
+              serviceId: item.serviceId,
+              serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
+              itemTotal: result.total,
+              breakdownOverride: {
+                ...(result.breakdown as Record<string, unknown>),
+                notes: item.notes ?? null,
+                referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
+              },
+              sizeFamilyKey: result.sizeFamilyKey,
+              realSizeLabel: result.realSizeLabel,
+              inventoryItemId: result.inventoryItemId,
+              sheetsConsumed: result.sheetsNeeded,
+            });
+          }),
+        },
+      },
+    });
+
+    if (attachmentIds.length) {
+      await tx.attachment.updateMany({ where: { id: { in: attachmentIds } }, data: { orderId } });
+    }
+
+    for (const result of priced) {
+      if (result.inventoryItemId && result.sheetsNeeded) {
+        await deductStockForOrderItem(tx, result.inventoryItemId, existing.branchId, result.sheetsNeeded);
+      }
+    }
+  });
+
+  return { id: orderId, invoiceNumber: existing.invoiceNumber, branchId: existing.branchId, partnerId: existing.partnerId };
+}
+
+/**
+ * Soft delete (same discipline as Quotation/Attachment/...), guarded by
+ * two owner decisions (2026-08-12): blocked entirely if any `Payment`
+ * exists ("ممنوع لو فيه دفعات" — the staff must reverse those from
+ * Treasury first), and — a related, unasked-but-same-category guard —
+ * blocked if a `WorkOrder` already exists for it, since a soft-deleted
+ * Order would 404 out from under an in-progress production job. Restocks
+ * every item's consumed sheets, same as `updateOrder`.
+ */
+export async function deleteOrder(
+  orderId: string,
+  deletedBy: string,
+): Promise<{ branchId: string; partnerId: string }> {
+  const existing = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: { items: true, payments: true, workOrder: true },
+  });
+  if (!existing || existing.isDeleted) {
+    throw new OrderNotFoundError();
+  }
+  if (existing.payments.length > 0) {
+    throw new OrderHasPaymentsError();
+  }
+  if (existing.workOrder) {
+    throw new OrderHasWorkOrderError();
+  }
+
+  await prisma.$transaction(async (tx) => {
+    for (const item of existing.items) {
+      if (item.inventoryItemId && item.sheetsConsumed) {
+        await restockForOrderItem(tx, item.inventoryItemId, existing.branchId, item.sheetsConsumed.toNumber());
+      }
+    }
+    await tx.order.update({
+      where: { id: orderId },
+      data: { isDeleted: true, deletedAt: new Date(), deletedBy },
+    });
+  });
+
+  return { branchId: existing.branchId, partnerId: existing.partnerId };
 }
 
 /**

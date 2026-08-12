@@ -35,6 +35,8 @@ export interface DocumentRendererProps {
   totals?: DocumentRendererTotals | null;
   paymentSummary?: DocumentRendererPaymentSummary | null;
   customerNotes?: string | null;
+  /** FEATURE-007 (2026-08-12, owner: "الفاتورة ميكونش فيها الإسم ولا اللوجو فقط فاتورة — اما عرض السعر وأمر الشغل فيهم إسم المكان واللوجو") — Invoice omits the business name/logo/watermark entirely; Quotation and Work Order keep them. Defaults to `true` (Quotation/Work Order's own callers don't need to think about this). */
+  showBranding?: boolean;
 }
 
 function money(n: number) {
@@ -69,9 +71,10 @@ export function DocumentRenderer({
   totals,
   paymentSummary,
   customerNotes,
+  showBranding = true,
 }: DocumentRendererProps) {
   const { business, config } = snapshot;
-  const showLogo = Boolean(config.showLogo) && business.logoUrl;
+  const showLogo = showBranding && Boolean(config.showLogo) && business.logoUrl;
   const hasPricing = items.some((i) => typeof i.lineTotal === 'number');
   const hasContactFooter =
     (Boolean(config.showBusinessAddress) && business.address) ||
@@ -91,13 +94,15 @@ export function DocumentRenderer({
       )}
 
       <div className="relative">
-        <header className="mb-6 flex items-start justify-between">
-          <div>{showLogo && <img src={business.logoUrl ?? undefined} alt="" className="h-16 object-contain" />}</div>
-          <div className="text-end">
-            <div className="text-primary text-2xl font-extrabold">{business.nameAr || '—'}</div>
-            {business.nameEn && <div className="text-muted-foreground text-sm">{business.nameEn}</div>}
-          </div>
-        </header>
+        {showBranding && (
+          <header className="mb-6 flex items-start justify-between">
+            <div>{showLogo && <img src={business.logoUrl ?? undefined} alt="" className="h-16 object-contain" />}</div>
+            <div className="text-end">
+              <div className="text-primary text-2xl font-extrabold">{business.nameAr || '—'}</div>
+              {business.nameEn && <div className="text-muted-foreground text-sm">{business.nameEn}</div>}
+            </div>
+          </header>
+        )}
 
         {typeof config.headerNote === 'string' && config.headerNote && (
           <div className="text-muted-foreground mb-4 text-xs">{config.headerNote}</div>

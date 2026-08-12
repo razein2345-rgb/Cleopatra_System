@@ -170,7 +170,7 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
       const afterDiscount = subtotal * (1 - discountPercent / 100);
       const vatOn = input.vatOn ?? existing.vatOn;
       const vatAmount = vatOn ? afterDiscount * (ctx.vatRate / 100) : 0;
-      recomputedTotals = { subtotal, vatAmount, finalTotal: afterDiscount + vatAmount };
+      recomputedTotals = { subtotal, vatAmount, finalTotal: Math.ceil(afterDiscount + vatAmount) };
     } catch (err) {
       if (handleQuotationItemError(err, res)) return;
       throw err;
@@ -363,7 +363,7 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
   }
 
   const { order, quotation } = await prisma.$transaction(async (tx) => {
-    const invoiceNumber = await nextInvoiceNumber(tx, existing.branchId);
+    const invoiceNumber = await nextInvoiceNumber(tx);
     const createdOrder = await tx.order.create({
       data: {
         invoiceNumber,
@@ -459,7 +459,7 @@ export async function createQuotationVersion(req: Request<{ id: string }>, res: 
   }
 
   const created = await prisma.$transaction(async (tx) => {
-    const quotationNumber = await nextQuotationNumber(tx, existing.branchId);
+    const quotationNumber = await nextQuotationNumber(tx);
     return tx.quotation.create({
       data: {
         quotationNumber,

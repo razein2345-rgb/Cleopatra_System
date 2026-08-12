@@ -1,14 +1,18 @@
 import type { Request, Response } from 'express';
-import { createOrderSchema, createPaymentSchema, hasPermission } from '@cleopatra/shared';
+import { createOrderSchema, createPaymentSchema, hasPermission, updateOrderSchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
   createOrder,
+  deleteOrder,
   mapOrderToDto,
+  OrderHasPaymentsError,
+  OrderHasWorkOrderError,
   OrderNotFoundError,
   ORDER_INCLUDE,
   PricingInputError,
   recordPayment,
   resolveItemCatalogNames,
+  updateOrder,
 } from '../services/orderService.js';
 import { QuotationItemValidationError, validateQuotationItemRefs } from '../services/quotationService.js';
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
@@ -37,11 +41,6 @@ export async function listOrders(req: Request, res: Response) {
   res.json({ success: true, data: orders.map((o) => mapOrderToDto(o, canSeeInternal)) });
 }
 
-/**
- * Minimal read-only surface for FEATURE-003 M2 — just enough to show an
- * Order created by Quotation conversion. No edit/delete; those belong to
- * a future, dedicated Order module (00_REQUIREMENTS.md §14).
- */
 export async function getOrder(req: Request<{ id: string }>, res: Response) {
   const order = await prisma.order.findUnique({
     where: { id: req.params.id },
@@ -108,6 +107,92 @@ export async function createOrderHandler(req: Request, res: Response) {
     include: ORDER_INCLUDE,
   });
   res.status(201).json({ success: true, data: mapOrderToDto(order, true) });
+}
+
+/**
+ * FEATURE-007 — full item-replacement edit (owner, 2026-08-12). Same
+ * item-ref validation as create; `updateOrder` itself handles restocking
+ * the old items and deducting the new ones inside one transaction.
+ */
+export async function updateOrderHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const input = updateOrderSchema.parse(req.body);
+
+  try {
+    await validateQuotationItemRefs(input.items);
+  } catch (err) {
+    if (err instanceof QuotationItemValidationError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_ITEM' } });
+      return;
+    }
+    throw err;
+  }
+
+  const itemNames = await resolveItemCatalogNames(input.items);
+
+  let updated;
+  try {
+    updated = await updateOrder(req.params.id, input, itemNames);
+  } catch (err) {
+    if (err instanceof OrderNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof PricingInputError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_PRICING_INPUT' } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'Order',
+    entityId: updated.id,
+    action: 'UPDATE',
+    performedById: auth.staffId,
+    branchId: updated.branchId,
+    partnerId: updated.partnerId,
+    newValue: { invoiceNumber: updated.invoiceNumber, itemCount: input.items.length },
+  });
+
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: updated.id }, include: ORDER_INCLUDE });
+  res.json({ success: true, data: mapOrderToDto(order, true) });
+}
+
+/**
+ * FEATURE-007 — soft delete, blocked if the Order has any Payment or
+ * WorkOrder (owner, 2026-08-12: "ممنوع لو فيه دفعات" — `deleteOrder`
+ * itself enforces both guards and restocks consumed sheets).
+ */
+export async function deleteOrderHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+
+  let result;
+  try {
+    result = await deleteOrder(req.params.id, auth.staffId);
+  } catch (err) {
+    if (err instanceof OrderNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof OrderHasPaymentsError || err instanceof OrderHasWorkOrderError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'ORDER_HAS_DEPENDENTS' } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'Order',
+    entityId: req.params.id,
+    action: 'DELETE',
+    performedById: auth.staffId,
+    branchId: result.branchId,
+    partnerId: result.partnerId,
+    newValue: null,
+  });
+
+  res.json({ success: true, data: { id: req.params.id } });
 }
 
 /**

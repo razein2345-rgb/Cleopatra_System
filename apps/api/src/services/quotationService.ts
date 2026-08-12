@@ -102,21 +102,24 @@ export function assertLegalStatusTransition(from: QuotationStatus, to: Quotation
 }
 
 /**
- * Atomically reserves the next quotation number for a branch/year,
- * reusing the existing `DocumentSequence` model (Phase 1) exactly as its
- * own doc comment intends: "incremented atomically in the same
- * transaction that creates the document." Upserts the sequence row if a
- * branch/year combination was never seeded, rather than assuming one
- * always exists.
+ * Atomically reserves the next quotation number for a year, reusing the
+ * existing `DocumentSequence` model (Phase 1) exactly as its own doc
+ * comment intends: "incremented atomically in the same transaction that
+ * creates the document."
+ *
+ * FEATURE-007 (2026-08-12, bug fix) — `Quotation.quotationNumber` is
+ * *globally* unique, not unique-per-branch; always reserving against the
+ * default branch's sequence row (regardless of which branch is actually
+ * creating the quotation) keeps this a single shared global counter per
+ * year, matching that constraint — see `nextInvoiceNumber`'s doc comment
+ * in `orderService.ts` for the full incident this fixes.
  */
-export async function nextQuotationNumber(
-  tx: Prisma.TransactionClient,
-  branchId: string,
-): Promise<string> {
+export async function nextQuotationNumber(tx: Prisma.TransactionClient): Promise<string> {
+  const defaultBranch = await tx.branch.findFirstOrThrow({ where: { isDefault: true }, select: { id: true } });
   const year = new Date().getFullYear();
   const sequence = await tx.documentSequence.upsert({
-    where: { branchId_documentType_year: { branchId, documentType: 'QUOTATION', year } },
-    create: { branchId, documentType: 'QUOTATION', year, prefix: 'CLP-QUO', lastNumber: 1 },
+    where: { branchId_documentType_year: { branchId: defaultBranch.id, documentType: 'QUOTATION', year } },
+    create: { branchId: defaultBranch.id, documentType: 'QUOTATION', year, prefix: 'CLP-QUO', lastNumber: 1 },
     update: { lastNumber: { increment: 1 } },
   });
   return `${sequence.prefix}-${year}-${String(sequence.lastNumber).padStart(6, '0')}`;
@@ -207,10 +210,11 @@ export async function createQuotation(
   const afterDiscount = subtotal * (1 - discountPercent / 100);
   const vatOn = input.vatOn ?? false;
   const vatAmount = vatOn ? afterDiscount * (ctx.vatRate / 100) : 0;
-  const finalTotal = afterDiscount + vatAmount;
+  // Owner, 2026-08-12: round the final charged amount up — see orderService.ts's matching comment.
+  const finalTotal = Math.ceil(afterDiscount + vatAmount);
 
   return prisma.$transaction(async (tx) => {
-    const quotationNumber = await nextQuotationNumber(tx, input.branchId);
+    const quotationNumber = await nextQuotationNumber(tx);
     const created = await tx.quotation.create({
       data: {
         quotationNumber,

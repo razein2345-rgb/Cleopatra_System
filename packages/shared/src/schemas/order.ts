@@ -138,9 +138,31 @@ export const createOrderSchema = z.object({
   payments: z.array(createPaymentSchema).optional(),
 });
 
+/**
+ * FEATURE-007 — full item replacement (owner, 2026-08-12: "استبدال كامل
+ * للأصناف" — recompute pricing, restock the old items, deduct the new
+ * ones). `items` is required (not optional like `updateQuotationSchema`)
+ * because a partial edit with no items would leave `subtotal`/totals
+ * stale — this project's edit flow always resubmits the full cart, never
+ * a field-by-field patch. Existing `payments` are never touched here —
+ * `paidTotal`/`remainingBalance` are always computed at read time against
+ * whatever `finalTotal` results.
+ */
+export const updateOrderSchema = z.object({
+  discountPercent: z.number().min(0).max(100).optional(),
+  vatOn: z.boolean().optional(),
+  paymentTerms: z.string().trim().min(1).max(200).nullable().optional(),
+  deliveryDate: z.string().nullable().optional(),
+  customerNotes: z.string().trim().min(1).max(2000).nullable().optional(),
+  internalNotes: z.string().trim().min(1).max(2000).nullable().optional(),
+  productionTrack: productionTrackSchema.nullable().optional(),
+  items: z.array(createOrderItemSchema).min(1),
+});
+
 export type OrderStatus = z.infer<typeof orderStatusSchema>;
 export type ProductionTrack = z.infer<typeof productionTrackSchema>;
 export type OrderItem = z.infer<typeof orderItemSchema>;
 export type Order = z.infer<typeof orderSchema>;
 export type CreateOrderItemInput = z.infer<typeof createOrderItemSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
+export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;

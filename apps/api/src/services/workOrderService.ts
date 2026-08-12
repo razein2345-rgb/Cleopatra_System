@@ -27,16 +27,23 @@ export function mapWorkOrderToDto(record: WorkOrderRecord, canSeeInternal: boole
 }
 
 /**
- * Atomically reserves the next work order number for a branch/year — the
- * same `nextQuotationNumber`/`nextInvoiceNumber` shape, fourth use of this
+ * Atomically reserves the next work order number for a year — the same
+ * `nextQuotationNumber`/`nextInvoiceNumber` shape, fourth use of this
  * mechanism. `DocumentType.WORK_ORDER`/prefix `CLP-WO` reserved since
  * Phase 1, unused until now.
+ *
+ * FEATURE-007 (2026-08-12, bug fix) — `WorkOrder.workOrderNumber` is
+ * *globally* unique, not unique-per-branch; always reserving against the
+ * default branch's sequence row keeps this a single shared global counter
+ * per year — see `nextInvoiceNumber`'s doc comment in `orderService.ts`
+ * for the full incident this fixes.
  */
-export async function nextWorkOrderNumber(tx: Prisma.TransactionClient, branchId: string): Promise<string> {
+export async function nextWorkOrderNumber(tx: Prisma.TransactionClient): Promise<string> {
+  const defaultBranch = await tx.branch.findFirstOrThrow({ where: { isDefault: true }, select: { id: true } });
   const year = new Date().getFullYear();
   const sequence = await tx.documentSequence.upsert({
-    where: { branchId_documentType_year: { branchId, documentType: 'WORK_ORDER', year } },
-    create: { branchId, documentType: 'WORK_ORDER', year, prefix: 'CLP-WO', lastNumber: 1 },
+    where: { branchId_documentType_year: { branchId: defaultBranch.id, documentType: 'WORK_ORDER', year } },
+    create: { branchId: defaultBranch.id, documentType: 'WORK_ORDER', year, prefix: 'CLP-WO', lastNumber: 1 },
     update: { lastNumber: { increment: 1 } },
   });
   return `${sequence.prefix}-${year}-${String(sequence.lastNumber).padStart(6, '0')}`;

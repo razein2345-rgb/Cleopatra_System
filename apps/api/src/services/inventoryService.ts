@@ -182,3 +182,26 @@ export async function deductStockForOrderItem(
     update: { quantityOnHand: { decrement: sheetsConsumed } },
   });
 }
+
+/**
+ * FEATURE-007 — the inverse of `deductStockForOrderItem`, used when
+ * editing an Order's items (the old item's consumption is reversed before
+ * the new items deduct fresh — owner, 2026-08-12: "يرجع للمخزن تلقائيًا")
+ * or deleting an Order outright. Same transaction-scoped, atomic-with-its-
+ * caller discipline as the deduct half.
+ */
+export async function restockForOrderItem(
+  tx: Prisma.TransactionClient,
+  inventoryItemId: string,
+  branchId: string,
+  sheetsConsumed: number,
+): Promise<void> {
+  await tx.stockMovement.create({
+    data: { inventoryItemId, branchId, type: 'IN', quantity: sheetsConsumed, reference: 'رد استهلاك — تعديل/حذف أوردر' },
+  });
+  await tx.stockLevel.upsert({
+    where: { inventoryItemId_branchId: { inventoryItemId, branchId } },
+    create: { inventoryItemId, branchId, quantityOnHand: sheetsConsumed },
+    update: { quantityOnHand: { increment: sheetsConsumed } },
+  });
+}

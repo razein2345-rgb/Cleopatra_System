@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   Attachment,
   BoardMaterial,
@@ -18,6 +18,7 @@ import type {
   ReadyProduct,
   Service,
   SizeFamily,
+  UpdateOrderInput,
   WorkflowTemplate,
   WorkOrder,
 } from '@cleopatra/shared';
@@ -29,7 +30,7 @@ import {
   calculateNotebookCost,
   calculateProductOrServiceCost,
 } from '@cleopatra/shared';
-import { apiGet, apiPost, apiPostFormData } from '@/lib/api';
+import { apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -137,6 +138,9 @@ interface DraftItem {
   heightCm: string;
   hasDesign: boolean;
   hasSellophane: boolean;
+  // نسبة الربح — تعديل يدوي اختياري بدل النسبة الافتراضية من الإعدادات (LOOSE_PAPER/NOTEBOOK/ENVELOPE/FOLDER فقط — BOARDS/PRODUCT/SERVICE لا هامش ربح فيهم أصلًا).
+  profitPercentEnabled: boolean;
+  profitPercentOverride: string;
   // الخدمات الإضافية — every kind
   baggingEnabled: boolean;
   baggingAmount: string;
@@ -188,6 +192,8 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     heightCm: '',
     hasDesign: false,
     hasSellophane: false,
+    profitPercentEnabled: false,
+    profitPercentOverride: '0',
     baggingEnabled: false,
     baggingAmount: '0',
     singleAdhesiveEnabled: false,
@@ -234,6 +240,7 @@ function sumExtraCosts(pricing: {
 /** Narrows a `DraftItem` into a real `OrderItemPricingInput` — returns null while required fields for that kind aren't filled in yet (not an error, just "not priceable yet"). */
 function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
   const extra = extraServiceFieldsOf(d);
+  const margin = d.profitPercentEnabled ? { profitPercentOverride: toNum(d.profitPercentOverride) } : {};
   switch (d.kind) {
     case 'LOOSE_PAPER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -248,6 +255,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         quantity: toNum(d.quantity),
         sides: d.sides === '2' ? 2 : 1,
         ...extra,
+        ...margin,
       };
     case 'NOTEBOOK':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.notebookQuantity || !d.colorCount) return null;
@@ -264,6 +272,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         copies: d.contentType === 'ORIGINAL_PLUS_COPIES' ? toNum(d.copies) : undefined,
         bindingPricePerNotebook: toNum(d.bindingPricePerNotebook),
         ...extra,
+        ...margin,
       };
     case 'ENVELOPE':
       if (!d.quantity || !d.colorCount) return null;
@@ -274,6 +283,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         isNewDesign: d.isNewDesign,
         readyEnvelopePricePerPiece: toNum(d.readyEnvelopePricePerPiece),
         ...extra,
+        ...margin,
       };
     case 'FOLDER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -292,6 +302,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         forma: toOptionalNum(d.forma),
         taksir: toOptionalNum(d.taksir),
         ...extra,
+        ...margin,
       };
     case 'BOARDS':
       if (!d.widthCm || !d.heightCm || !d.quantity) return null;
@@ -369,6 +380,7 @@ function previewItemTotal(
           families,
           settings: ctx.pricingConstants,
           extraCosts,
+          profitPercentOverride: pricing.profitPercentOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -389,6 +401,7 @@ function previewItemTotal(
           families,
           settings: ctx.pricingConstants,
           extraCosts,
+          profitPercentOverride: pricing.profitPercentOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -400,6 +413,7 @@ function previewItemTotal(
           readyEnvelopePricePerPiece: pricing.readyEnvelopePricePerPiece,
           settings: ctx.pricingConstants,
           extraCosts,
+          profitPercentOverride: pricing.profitPercentOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -422,6 +436,7 @@ function previewItemTotal(
           families,
           settings: ctx.pricingConstants,
           extraCosts,
+          profitPercentOverride: pricing.profitPercentOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -475,6 +490,198 @@ function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Se
 
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
+/** Loosely-typed shape of everything `computeItemPricing` might have merged into a frozen `breakdown` — used only when reconstructing an existing item for editing (see `reconstructPricingInput` below). */
+interface StoredBreakdown {
+  kind?: 'PRODUCT' | 'SERVICE';
+  quantity?: number;
+  colorCount?: number;
+  sides?: 1 | 2;
+  isNewDesign?: boolean;
+  numberingStartNumber?: number | null;
+  contentType?: 'ORIGINAL_ONLY' | 'ORIGINAL_PLUS_COPIES';
+  copies?: number | null;
+  bindingCost?: number;
+  sellophaneEnabled?: boolean;
+  material?: BoardMaterial;
+  widthCm?: number;
+  heightCm?: number;
+  hasDesign?: boolean | null;
+  hasSellophane?: boolean | null;
+  readyEnvelopePricePerPiece?: number;
+  extraCosts?: number;
+  notes?: string | null;
+  referenceImageUrl?: string | null;
+}
+
+/**
+ * FEATURE-007 — editing (owner, 2026-08-12: "استبدال كامل للأصناف").
+ * Neither `OrderItem` nor `QuotationItem` stores the original
+ * `OrderItemPricingInput` — only its frozen `breakdown` result — and for
+ * LOOSE_PAPER/NOTEBOOK/ENVELOPE/FOLDER/BOARDS that frozen result doesn't
+ * even carry the pricing `kind` literal itself (only PRODUCT/SERVICE's
+ * breakdown does). Both are inferred here from which fields are actually
+ * present — each kind's breakdown shape is mutually exclusive by
+ * construction (`pricingEngineService.ts`'s per-kind merge), so this is
+ * reliable, not a guess. A few edge-case fields were never frozen at all
+ * (manual `*Override`s, FOLDER's riza/jarab/forma/taksir, NOTEBOOK's exact
+ * `bindingPricePerNotebook` rate — approximated from `bindingCost`) and
+ * are lost on edit; acceptable given the chosen semantics recompute
+ * against current settings anyway, not preserve a frozen calculation
+ * verbatim. The four extra-service amounts collapse into one
+ * `sampleAmount` bucket — their sum survives, which original checkbox
+ * they were under doesn't.
+ */
+function inferStoredKind(sizeFamilyKey: string | null, breakdown: StoredBreakdown): PricingKind | null {
+  if (breakdown.kind === 'PRODUCT' || breakdown.kind === 'SERVICE') return breakdown.kind;
+  if ('material' in breakdown) return 'BOARDS';
+  if ('readyEnvelopePricePerPiece' in breakdown) return 'ENVELOPE';
+  if ('contentType' in breakdown) return 'NOTEBOOK';
+  if ('sellophaneEnabled' in breakdown) return 'FOLDER';
+  if (sizeFamilyKey) return 'LOOSE_PAPER';
+  return null;
+}
+
+function reconstructPricingInput(
+  kind: PricingKind,
+  b: StoredBreakdown,
+  sizeFamilyKey: string | null,
+  realSizeLabel: string | null,
+  inventoryItemId: string | null,
+): OrderItemPricingInput | null {
+  const extra = b.extraCosts ? { sampleAmount: b.extraCosts } : {};
+  switch (kind) {
+    case 'LOOSE_PAPER':
+      if (!sizeFamilyKey || !realSizeLabel || !inventoryItemId) return null;
+      return {
+        kind: 'LOOSE_PAPER',
+        sizeFamilyKey,
+        realSizeLabel,
+        inventoryItemId,
+        colorCount: b.colorCount ?? 1,
+        isNewDesign: b.isNewDesign ?? false,
+        numberingStartNumber: b.numberingStartNumber ?? undefined,
+        quantity: b.quantity ?? 1,
+        sides: b.sides === 2 ? 2 : 1,
+        ...extra,
+      };
+    case 'NOTEBOOK':
+      if (!sizeFamilyKey || !realSizeLabel || !inventoryItemId) return null;
+      return {
+        kind: 'NOTEBOOK',
+        sizeFamilyKey,
+        realSizeLabel,
+        inventoryItemId,
+        colorCount: b.colorCount ?? 1,
+        isNewDesign: b.isNewDesign ?? false,
+        numberingStartNumber: b.numberingStartNumber ?? undefined,
+        notebookQuantity: b.quantity ?? 1,
+        contentType: b.contentType ?? 'ORIGINAL_ONLY',
+        copies: b.copies ?? undefined,
+        bindingPricePerNotebook: b.quantity ? (b.bindingCost ?? 0) / b.quantity : 0,
+        ...extra,
+      };
+    case 'ENVELOPE':
+      return {
+        kind: 'ENVELOPE',
+        quantity: b.quantity ?? 1,
+        colorCount: b.colorCount ?? 1,
+        isNewDesign: b.isNewDesign ?? false,
+        readyEnvelopePricePerPiece: b.readyEnvelopePricePerPiece ?? 0,
+        ...extra,
+      };
+    case 'FOLDER':
+      if (!sizeFamilyKey || !realSizeLabel || !inventoryItemId) return null;
+      return {
+        kind: 'FOLDER',
+        sizeFamilyKey,
+        realSizeLabel,
+        inventoryItemId,
+        quantity: b.quantity ?? 1,
+        colorCount: b.colorCount ?? 1,
+        sides: b.sides === 2 ? 2 : 1,
+        isNewDesign: b.isNewDesign ?? false,
+        sellophaneEnabled: b.sellophaneEnabled ?? false,
+        ...extra,
+      };
+    case 'BOARDS':
+      return {
+        kind: 'BOARDS',
+        material: b.material ?? 'BANNER',
+        widthCm: b.widthCm ?? 1,
+        heightCm: b.heightCm ?? 1,
+        quantity: b.quantity ?? 1,
+        hasDesign: b.hasDesign ?? undefined,
+        hasSellophane: b.hasSellophane ?? undefined,
+        ...extra,
+      };
+    case 'PRODUCT':
+    case 'SERVICE':
+      return { kind, quantity: b.quantity ?? 1, ...extra };
+  }
+}
+
+/** Order items have no `readyProductId`/`serviceId` column at all (only Quotation items do) — a PRODUCT/SERVICE item's catalog reference is matched back by its frozen `modelName` (the catalog name at freeze time). Returns `undefined` if no live catalog row has that exact name any more (renamed/deleted since) — the caller then flags that item instead of silently mispricing it. */
+function matchCatalogIdByName(
+  kind: 'PRODUCT' | 'SERVICE',
+  modelName: string | null,
+  readyProducts: ReadyProduct[],
+  services: Service[],
+): string | undefined {
+  if (!modelName) return undefined;
+  return kind === 'PRODUCT' ? readyProducts.find((p) => p.name === modelName)?.id : services.find((s) => s.name === modelName)?.id;
+}
+
+interface ReconstructedLine {
+  line: CartLine | null;
+  /** Set when a PRODUCT/SERVICE item's catalog reference couldn't be matched by name any more — the item was dropped and the caller should tell the user why. */
+  warning: string | null;
+}
+
+/** Shared by both edit-Order and edit-Quotation modes — the two item shapes carry the same fields relevant here. */
+function reconstructCartLine(
+  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null },
+  readyProducts: ReadyProduct[],
+  services: Service[],
+): ReconstructedLine {
+  const b = (item.breakdown as StoredBreakdown | null) ?? {};
+  const inventoryItemId = item.inventoryItemId ?? null;
+  const kind = inferStoredKind(item.sizeFamilyKey, b);
+  if (!kind) {
+    return { line: null, warning: `تعذر التعرف على نوع البند "${item.modelName ?? item.kind ?? ''}" — احذفه وأضفه من جديد` };
+  }
+
+  let readyProductId = item.readyProductId ?? undefined;
+  let serviceId = item.serviceId ?? undefined;
+  if (kind === 'PRODUCT' && !readyProductId) readyProductId = matchCatalogIdByName('PRODUCT', item.modelName, readyProducts, services);
+  if (kind === 'SERVICE' && !serviceId) serviceId = matchCatalogIdByName('SERVICE', item.modelName, readyProducts, services);
+  if ((kind === 'PRODUCT' && !readyProductId) || (kind === 'SERVICE' && !serviceId)) {
+    return {
+      line: null,
+      warning: `الصنف "${item.modelName ?? ''}" لم يعد موجودًا في الكتالوج — احذف البند وأضف بديلاً له`,
+    };
+  }
+
+  const pricing = reconstructPricingInput(kind, b, item.sizeFamilyKey, item.realSizeLabel, inventoryItemId);
+  if (!pricing) {
+    return { line: null, warning: `تعذر إعادة بناء بيانات البند "${item.modelName ?? ''}" — احذفه وأضفه من جديد` };
+  }
+
+  return {
+    line: {
+      key: item.id,
+      itemType: item.modelName || item.kind || KIND_LABELS[kind],
+      summary: `${item.modelName || KIND_LABELS[kind]} — الكمية ${b.quantity ?? '—'}`,
+      notes: b.notes ?? undefined,
+      readyProductId,
+      serviceId,
+      attachmentUrl: b.referenceImageUrl ?? undefined,
+      pricing,
+      total: item.itemTotal ?? 0,
+    },
+    warning: null,
+  };
+}
+
 /**
  * FEATURE-006 M2 / FEATURE-007 PE-E — Direct Order/Invoice creation, wired
  * to the real pricing engine. Each item is priced client-side for an
@@ -496,12 +703,15 @@ type CreatedResult = { type: 'INVOICE'; order: Order } | { type: 'QUOTATION'; qu
 
 export function NewOrderPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const editOrderId = searchParams.get('editOrder');
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [readyProducts, setReadyProducts] = useState<ReadyProduct[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [pricingReference, setPricingReference] = useState<PricingReference | null>(null);
+  const [editOrder, setEditOrder] = useState<Order | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [created, setCreated] = useState<CreatedResult | null>(null);
@@ -514,21 +724,24 @@ export function NewOrderPage() {
       apiGet<Service[]>('/api/services').catch(() => []),
       apiGet<InventoryItem[]>('/api/inventory-items').catch(() => []),
       apiGet<PricingReference>('/api/pricing-reference'),
+      editOrderId ? apiGet<Order>(`/api/orders/${editOrderId}`) : Promise.resolve(null),
     ])
-      .then(([p, b, rp, s, inv, pricing]) => {
+      .then(([p, b, rp, s, inv, pricing, order]) => {
         setPartners(p);
         setBranches(b);
         setReadyProducts(rp);
         setServices(s);
         setInventoryItems(inv);
         setPricingReference(pricing);
+        setEditOrder(order);
       })
       .catch((err: unknown) => setLoadError(err instanceof Error ? err.message : 'تعذر تحميل البيانات'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [editOrderId]);
 
   if (loadError) return <div className="text-destructive text-sm">{loadError}</div>;
   if (loading || !pricingReference) return <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>;
+  if (editOrderId && !editOrder) return <div className="text-destructive text-sm">الفاتورة غير موجودة.</div>;
 
   if (created?.type === 'INVOICE') {
     const { order } = created;
@@ -587,6 +800,7 @@ export function NewOrderPage() {
       inventoryItems={inventoryItems}
       pricingReference={pricingReference}
       onCreated={setCreated}
+      editOrder={editOrder}
     />
   );
 }
@@ -737,6 +951,7 @@ function NewOrderForm({
   inventoryItems,
   pricingReference,
   onCreated,
+  editOrder,
 }: {
   partners: BusinessPartner[];
   branches: BranchSummary[];
@@ -745,30 +960,44 @@ function NewOrderForm({
   inventoryItems: InventoryItem[];
   pricingReference: PricingReference;
   onCreated: (result: CreatedResult) => void;
+  /** FEATURE-007 — full item-replacement edit (owner, 2026-08-12: "استبدال كامل للأصناف"). Present only when reached via `/orders/new?editOrder=<id>`. */
+  editOrder?: Order | null;
 }) {
   const { can } = useAuth();
   const canInvoice = can('orders.create');
   const canQuotation = can('quotations.create');
-  const [documentType, setDocumentType] = useState<DocumentType>(canInvoice ? 'INVOICE' : 'QUOTATION');
+  const isEditing = Boolean(editOrder);
+  const [documentType, setDocumentType] = useState<DocumentType>(isEditing ? 'INVOICE' : canInvoice ? 'INVOICE' : 'QUOTATION');
   // نسخة محلية قابلة للتحديث — عشان لما تتضاف عميل جديد من نفس الشاشة يظهر فورًا بدون إعادة تحميل الصفحة.
   const [localPartners, setLocalPartners] = useState<BusinessPartner[]>(partners);
   const [showAddPartner, setShowAddPartner] = useState(false);
-  const [partnerId, setPartnerId] = useState(partners[0]?.id ?? '');
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
-  const [productionTrack, setProductionTrack] = useState<ProductionTrack | ''>('');
-  const [deliveryDate, setDeliveryDate] = useState('');
+  const [partnerId, setPartnerId] = useState(editOrder?.partnerId ?? partners[0]?.id ?? '');
+  const [branchId, setBranchId] = useState(editOrder?.branchId ?? branches[0]?.id ?? '');
+  const [productionTrack, setProductionTrack] = useState<ProductionTrack | ''>(editOrder?.productionTrack ?? '');
+  const [deliveryDate, setDeliveryDate] = useState(editOrder?.deliveryDate?.slice(0, 10) ?? '');
   const [validUntil, setValidUntil] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 14);
     return d.toISOString().slice(0, 10);
   });
-  const [discountPercent, setDiscountPercent] = useState('0');
-  const [vatOn, setVatOn] = useState(false);
-  const [customerNotes, setCustomerNotes] = useState('');
-  const [internalNotes, setInternalNotes] = useState('');
+  const [discountPercent, setDiscountPercent] = useState(String(editOrder?.discountPercent ?? 0));
+  const [vatOn, setVatOn] = useState(editOrder?.vatOn ?? false);
+  const [customerNotes, setCustomerNotes] = useState(editOrder?.customerNotes ?? '');
+  const [internalNotes, setInternalNotes] = useState(editOrder?.internalNotes ?? '');
 
-  // بنود الفاتورة — السلة الفعلية (بعد "إضافة للفاتورة" بس)
-  const [cart, setCart] = useState<CartLine[]>([]);
+  // بنود الفاتورة — السلة الفعلية (بعد "إضافة للفاتورة" بس)، أو معاد بناؤها من فاتورة موجودة عند التعديل.
+  const [cart, setCart] = useState<CartLine[]>(() => {
+    if (!editOrder) return [];
+    return editOrder.items
+      .map((item) => reconstructCartLine(item, readyProducts, services).line)
+      .filter((line): line is CartLine => line !== null);
+  });
+  const [reconstructWarnings] = useState<string[]>(() => {
+    if (!editOrder) return [];
+    return editOrder.items
+      .map((item) => reconstructCartLine(item, readyProducts, services).warning)
+      .filter((w): w is string => w !== null);
+  });
   // النموذج على اليمين — بند واحد بيتصمم في المرة (نمط الفيديو)
   const [activeTab, setActiveTab] = useState<'PAPER_SERVICES' | 'NCR'>('PAPER_SERVICES');
   const [draft, setDraft] = useState<DraftItem>(() => emptyDraftItem());
@@ -804,7 +1033,8 @@ function NewOrderForm({
   const discountNum = toNum(discountPercent);
   const afterDiscount = subtotal * (1 - discountNum / 100);
   const vatAmount = vatOn ? afterDiscount * (pricingReference.vatRate / 100) : 0;
-  const finalTotal = afterDiscount + vatAmount;
+  // تقريب المبلغ النهائي لأقرب رقم صحيح أعلى (نفس منطق السيرفر بالظبط).
+  const finalTotal = Math.ceil(afterDiscount + vatAmount);
   const paidTotal = payments.reduce((sum, p) => sum + (toOptionalNum(p.amount) ?? 0), 0);
   const remainingBalance = finalTotal - paidTotal;
 
@@ -936,6 +1166,18 @@ function NewOrderForm({
         } else {
           onCreated({ type: 'QUOTATION', quotation });
         }
+      } else if (isEditing && editOrder) {
+        const input: UpdateOrderInput = {
+          discountPercent: discountNum,
+          vatOn,
+          deliveryDate: deliveryDate ? new Date(deliveryDate).toISOString() : null,
+          customerNotes: customerNotes || null,
+          internalNotes: internalNotes || null,
+          productionTrack: productionTrack || null,
+          items: outputItems,
+        };
+        const order = await apiPut<Order>(`/api/orders/${editOrder.id}`, input);
+        navigate(`/orders/${order.id}`);
       } else {
         const paymentInputs: CreatePaymentInput[] = payments
           .filter((p) => toOptionalNum(p.amount) && toNum(p.amount) > 0)
@@ -1051,7 +1293,7 @@ function NewOrderForm({
           <span className="text-success text-xs">جنيه مصري</span>
         </div>
 
-        {documentType === 'INVOICE' && (
+        {documentType === 'INVOICE' && !isEditing && (
           <div className="space-y-2 border-t pt-2">
             <p className="text-sm font-medium">التحصيل</p>
             {payments.map((p) => (
@@ -1097,24 +1339,51 @@ function NewOrderForm({
           </div>
         )}
 
+        {isEditing && editOrder && (
+          <div className="space-y-1 border-t pt-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">المدفوع سابقًا:</span>
+              <span className="text-success">{money(editOrder.paidTotal)} ج.م</span>
+            </div>
+            <p className="text-muted-foreground text-xs">الدفعات لا تتغير من هنا — لتسجيل دفعة جديدة استخدم صفحة الفاتورة.</p>
+          </div>
+        )}
+
         {error && <p className="text-destructive text-sm">{error}</p>}
 
         <div className="space-y-2 border-t pt-2">
-          <Button type="button" className="w-full" disabled={submitting !== null} onClick={() => void submit('SAVE_AND_PRINT')}>
-            {submitting === 'SAVE_AND_PRINT' ? 'جارٍ الحفظ…' : '🖶 حفظ وطباعة'}
-          </Button>
-          <Button type="button" variant="outline" className="w-full" disabled={submitting !== null} onClick={() => void submit('SAVE_ONLY')}>
-            {submitting === 'SAVE_ONLY' ? 'جارٍ الحفظ…' : 'حفظ فقط'}
-          </Button>
+          {isEditing ? (
+            <Button type="button" className="w-full" disabled={submitting !== null} onClick={() => void submit('SAVE_ONLY')}>
+              {submitting ? 'جارٍ الحفظ…' : 'حفظ التعديلات'}
+            </Button>
+          ) : (
+            <>
+              <Button type="button" className="w-full" disabled={submitting !== null} onClick={() => void submit('SAVE_AND_PRINT')}>
+                {submitting === 'SAVE_AND_PRINT' ? 'جارٍ الحفظ…' : '🖶 حفظ وطباعة'}
+              </Button>
+              <Button type="button" variant="outline" className="w-full" disabled={submitting !== null} onClick={() => void submit('SAVE_ONLY')}>
+                {submitting === 'SAVE_ONLY' ? 'جارٍ الحفظ…' : 'حفظ فقط'}
+              </Button>
+            </>
+          )}
         </div>
       </aside>
 
-      {/* عمود شمال — نموذج إضافة بند + بيانات المستند */}
       {/* عمود يمين — نموذج إضافة بند + بيانات المستند */}
       <div className="order-1 space-y-4">
-        <h1 className="text-2xl font-bold">الطلبات والمستندات</h1>
+        <h1 className="text-2xl font-bold">{isEditing ? `تعديل الفاتورة ${editOrder?.invoiceNumber ?? ''}` : 'الطلبات والمستندات'}</h1>
 
-        {canInvoice && canQuotation && (
+        {reconstructWarnings.length > 0 && (
+          <div className="border-warning bg-warning/10 space-y-1 rounded-xl border p-3 text-sm">
+            {reconstructWarnings.map((w, i) => (
+              <p key={i} className="text-warning-foreground">
+                ⚠ {w}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {!isEditing && canInvoice && canQuotation && (
           <div className="border-border bg-muted/30 inline-flex rounded-lg border p-1 text-sm">
             <button
               type="button"
@@ -1142,9 +1411,10 @@ function NewOrderForm({
               <div className="flex items-center gap-1">
                 <select
                   required
+                  disabled={isEditing}
                   value={partnerId}
                   onChange={(e) => setPartnerId(e.target.value)}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
                 >
                   <option value="">— اختر —</option>
                   {localPartners.map((p) => (
@@ -1164,9 +1434,10 @@ function NewOrderForm({
               <span className="text-muted-foreground">الفرع</span>
               <select
                 required
+                disabled={isEditing}
                 value={branchId}
                 onChange={(e) => setBranchId(e.target.value)}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
               >
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
@@ -1183,7 +1454,9 @@ function NewOrderForm({
             </div>
             <div className="space-y-1 text-sm">
               <span className="text-muted-foreground">{documentType === 'QUOTATION' ? 'رقم عرض السعر' : 'رقم الفاتورة'}</span>
-              <p className="border-input bg-muted/30 text-muted-foreground rounded-md border px-3 py-2">يُحدَّد تلقائيًا بعد الحفظ</p>
+              <p className="border-input bg-muted/30 text-muted-foreground rounded-md border px-3 py-2">
+                {editOrder?.invoiceNumber ?? 'يُحدَّد تلقائيًا بعد الحفظ'}
+              </p>
             </div>
             {documentType === 'QUOTATION' ? (
               <label className="space-y-1 text-sm">
@@ -1677,6 +1950,32 @@ function NewOrderForm({
               الزنكات: {draft.colorCount} × {pricingReference.pricingConstants.zincPrice} = {money(result.zincCost ?? 0)} ج.م — التراجات:{' '}
               {result.printRuns ?? 0} × {pricingReference.pricingConstants.printRunPrice} = {money(result.printCost ?? 0)} ج.م
             </p>
+          )}
+
+          {/* نسبة الربح — تعديل يدوي اختياري (عايزة اقدر اعدلها وانا بطلب) */}
+          {hasPrintSection && (
+            <div className="border-border flex flex-wrap items-center gap-2 rounded-lg border p-2">
+              <Checkbox
+                checked={draft.profitPercentEnabled}
+                onCheckedChange={(v) => updateDraft({ profitPercentEnabled: v === true })}
+              />
+              <span className="text-sm">نسبة الربح</span>
+              {draft.profitPercentEnabled ? (
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.1"
+                  value={draft.profitPercentOverride}
+                  onChange={(e) => updateDraft({ profitPercentOverride: e.target.value })}
+                  className="border-input bg-background w-24 rounded-md border px-2 py-1 text-end text-sm"
+                />
+              ) : (
+                <span className="text-muted-foreground text-xs">
+                  الافتراضي من الإعدادات: {pricingReference.pricingConstants.profitPercent}%
+                </span>
+              )}
+            </div>
           )}
 
           {/* الخدمات الإضافية */}
