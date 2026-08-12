@@ -38,6 +38,8 @@ const baseSetting: Setting = {
   taxNumber: '12345',
   commercialRegisterNumber: '67890',
   stampUrl: null,
+  landlinePhone: null,
+  facebookUrl: null,
 };
 
 const baseTemplate: DocumentTemplate = {
@@ -76,6 +78,8 @@ describe('resolveDocumentSnapshot', () => {
       commercialRegisterNumber: '67890',
       logoUrl: 'https://example.com/logo.png',
       stampUrl: null,
+      landlinePhone: null,
+      facebookUrl: null,
     });
     expect(snapshot.templateName).toBeNull();
     // untouched keys fall through to the default config

@@ -1,5 +1,36 @@
-import { Mail, MapPin, Phone } from 'lucide-react';
+import type { ComponentType } from 'react';
+import { Mail, MapPin, Phone, PhoneCall } from 'lucide-react';
 import type { DocumentSnapshot } from '@/lib/documents/documentSnapshot';
+
+/** Small "f" glyph — lucide-react ships no brand icons, so this is a minimal hand-drawn stand-in, not a reproduction of Meta's logo asset. */
+function FacebookGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} fill="currentColor" aria-hidden>
+      <path d="M15 3h-2.5C10 3 8.5 4.7 8.5 7.2V10H6v3h2.5v8h3v-8h2.6l.4-3h-3V7.5c0-.9.4-1.5 1.6-1.5H15V3z" />
+    </svg>
+  );
+}
+
+/**
+ * FEATURE-007 (2026-08-12, owner: "ويكون الأيقونات زي كده الاحمر
+ * لكليوباترا والأزرق والبينك لبيت الطباعة") — circular colored contact
+ * badges, themed per issuing branch rather than a single fixed color.
+ */
+const CONTACT_ICON_COLORS: Record<'red' | 'blue-pink', { phone: string; landline: string; facebook: string }> = {
+  red: { phone: '#dc2626', landline: '#dc2626', facebook: '#dc2626' },
+  'blue-pink': { phone: '#2563eb', landline: '#2563eb', facebook: '#ec4899' },
+};
+
+function ContactBadge({ icon: Icon, color }: { icon: ComponentType<{ className?: string }>; color: string }) {
+  return (
+    <span
+      className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-white"
+      style={{ backgroundColor: color }}
+    >
+      <Icon className="size-3" />
+    </span>
+  );
+}
 
 export interface DocumentRendererItem {
   itemType: string;
@@ -39,6 +70,10 @@ export interface DocumentRendererProps {
   showBranding?: boolean;
   /** FEATURE-007 (2026-08-12, owner: "لازم يتسجل مين اللي عمل الفاتورة او عرض السعر") — the staff member's name, resolved by the caller from the document's own `staffId`. */
   createdByName?: string | null;
+  /** FEATURE-007 (2026-08-12, owner: "عايز اكبر اللوجو في الجمب يكون مقاسة 3.5*3.5 سم في عرض السعر") — physical print size override for the header logo, in centimeters. Undefined keeps the previous fixed Tailwind size (Work Order's own default). */
+  logoSizeCm?: number;
+  /** FEATURE-007 (2026-08-12, owner: "الاحمر لكليوباترا والأزرق والبينك لبيت الطباعة") — contact-badge color theme, chosen by the caller from the issuing branch (e.g. `branch?.isDefault === false ? 'blue-pink' : 'red'`). Defaults to 'red' (Cleopatra, the default branch). */
+  contactIconTheme?: 'red' | 'blue-pink';
 }
 
 function money(n: number) {
@@ -75,14 +110,19 @@ export function DocumentRenderer({
   customerNotes,
   showBranding = true,
   createdByName,
+  logoSizeCm,
+  contactIconTheme = 'red',
 }: DocumentRendererProps) {
   const { business, config } = snapshot;
   const showLogo = showBranding && Boolean(config.showLogo) && business.logoUrl;
   const hasPricing = items.some((i) => typeof i.lineTotal === 'number');
+  const badgeColors = CONTACT_ICON_COLORS[contactIconTheme];
   const hasContactFooter =
     (Boolean(config.showBusinessAddress) && business.address) ||
     business.email ||
     business.phone ||
+    business.landlinePhone ||
+    business.facebookUrl ||
     business.website;
 
   return (
@@ -105,7 +145,16 @@ export function DocumentRenderer({
               {business.tagline && <div className="text-foreground/70 text-sm font-normal italic">{business.tagline}</div>}
               {business.nameEn && <div className="text-muted-foreground text-sm">{business.nameEn}</div>}
             </div>
-            <div>{showLogo && <img src={business.logoUrl ?? undefined} alt="" className="h-16 object-contain" />}</div>
+            <div>
+              {showLogo && (
+                <img
+                  src={business.logoUrl ?? undefined}
+                  alt=""
+                  className={logoSizeCm ? 'object-contain' : 'h-16 object-contain'}
+                  style={logoSizeCm ? { width: `${logoSizeCm}cm`, height: `${logoSizeCm}cm` } : undefined}
+                />
+              )}
+            </div>
           </header>
         )}
 
@@ -263,8 +312,20 @@ export function DocumentRenderer({
             <div className="flex flex-wrap items-center gap-3">
               {Boolean(config.showBusinessPhone) && business.phone && (
                 <span className="flex items-center gap-1">
-                  <Phone className="size-3.5" />
+                  <ContactBadge icon={Phone} color={badgeColors.phone} />
                   <span dir="ltr">{business.phone}</span>
+                </span>
+              )}
+              {business.landlinePhone && (
+                <span className="flex items-center gap-1">
+                  <ContactBadge icon={PhoneCall} color={badgeColors.landline} />
+                  <span dir="ltr">{business.landlinePhone}</span>
+                </span>
+              )}
+              {business.facebookUrl && (
+                <span className="flex items-center gap-1">
+                  <ContactBadge icon={FacebookGlyph} color={badgeColors.facebook} />
+                  <span dir="ltr">{business.facebookUrl}</span>
                 </span>
               )}
               {Boolean(config.showTaxNumber) && business.taxNumber && (

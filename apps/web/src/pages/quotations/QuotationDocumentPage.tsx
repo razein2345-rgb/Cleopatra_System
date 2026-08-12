@@ -78,6 +78,8 @@ export function QuotationDocumentPage() {
       <DocumentRenderer
         snapshot={snapshot}
         createdByName={createdByName}
+        logoSizeCm={3.5}
+        contactIconTheme={branch && !branch.isDefault ? 'blue-pink' : 'red'}
         documentTypeLabel="عرض سعر"
         documentNumber={quotation.quotationNumber}
         date={quotation.date}

@@ -114,6 +114,8 @@ function BranchForm({
   const [address, setAddress] = useState(branch?.address ?? '');
   const [phone, setPhone] = useState(branch?.phone ?? '');
   const [email, setEmail] = useState(branch?.email ?? '');
+  const [landlinePhone, setLandlinePhone] = useState(branch?.landlinePhone ?? '');
+  const [facebookUrl, setFacebookUrl] = useState(branch?.facebookUrl ?? '');
   const [logoUrl, setLogoUrl] = useState(branch?.logoUrl ?? '');
   const [logoUploading, setLogoUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -152,6 +154,8 @@ function BranchForm({
           address: address || null,
           phone: phone || null,
           email: email || null,
+          landlinePhone: landlinePhone || null,
+          facebookUrl: facebookUrl || null,
           logoUrl: logoUrl || null,
         });
       } else {
@@ -218,6 +222,26 @@ function BranchForm({
               onChange={(e) => setEmail(e.target.value)}
               dir="ltr"
               placeholder="لو فاضي بياخد بريد الشركة"
+              className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="w-36 space-y-1 text-xs">
+            <span className="text-muted-foreground">الرقم الأرضي (اختياري)</span>
+            <input
+              value={landlinePhone}
+              onChange={(e) => setLandlinePhone(e.target.value)}
+              dir="ltr"
+              placeholder="لو فاضي بياخد رقم الشركة"
+              className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="flex-1 space-y-1 text-xs">
+            <span className="text-muted-foreground">صفحة الفيسبوك (اختياري)</span>
+            <input
+              value={facebookUrl}
+              onChange={(e) => setFacebookUrl(e.target.value)}
+              dir="ltr"
+              placeholder="لو فاضي بياخد صفحة الشركة"
               className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
             />
           </label>

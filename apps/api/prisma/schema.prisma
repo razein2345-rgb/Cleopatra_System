@@ -265,6 +265,9 @@ model Branch {
   logoUrl   String?
   phone     String?
   email     String?
+  /// FEATURE-007 (2026-08-12, owner: "عايز اضيف كمان الرقم الأرضي وصفحة الفيسبوك تحت في البيانات بتاعت عرض السعر") — landline (as opposed to `phone`, the mobile/WhatsApp-style number) and Facebook page link, both falling back to the matching global `Setting` field like the rest of this identity block.
+  landlinePhone String?
+  facebookUrl   String?
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -362,6 +365,9 @@ model Setting {
   commercialRegisterNumber String?
   /// FEATURE-007 (2026-08-12, owner: "عايز اضيف صورة الختم فوق وتفضلو بقبول وافر الإحترام") — company stamp/seal image, printed above the closing line on Quotation/Work Order documents.
   stampUrl                 String?
+  /// FEATURE-007 (2026-08-12, owner: "عايز اضيف كمان الرقم الأرضي وصفحة الفيسبوك تحت في البيانات بتاعت عرض السعر") — landline (as opposed to `phone`, the mobile/WhatsApp-style number) and Facebook page link, shown in the document footer.
+  landlinePhone            String?
+  facebookUrl              String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

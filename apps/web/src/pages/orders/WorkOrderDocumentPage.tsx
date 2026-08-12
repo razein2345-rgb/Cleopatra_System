@@ -169,6 +169,7 @@ export function WorkOrderDocumentPage() {
         </div>
         <DocumentRenderer
           snapshot={snapshot}
+          contactIconTheme={branch && !branch.isDefault ? 'blue-pink' : 'red'}
           documentTypeLabel="أمر شغل"
           documentNumber={workOrder.workOrderNumber}
           date={workOrder.createdAt}

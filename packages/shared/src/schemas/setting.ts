@@ -46,6 +46,11 @@ export const settingSchema = z.object({
   website: z.string().nullable(),
   taxNumber: z.string().nullable(),
   commercialRegisterNumber: z.string().nullable(),
+  // FEATURE-007 (2026-08-12) — landline (separate from `phone`, the
+  // mobile/WhatsApp-style number) and Facebook page link, shown in the
+  // document footer.
+  landlinePhone: z.string().nullable(),
+  facebookUrl: z.string().nullable(),
 });
 
 export const updateSettingSchema = settingSchema.omit({ id: true }).partial();
@@ -70,6 +75,8 @@ export const businessIdentitySchema = settingSchema.pick({
   commercialRegisterNumber: true,
   logoUrl: true,
   stampUrl: true,
+  landlinePhone: true,
+  facebookUrl: true,
 });
 
 export type Setting = z.infer<typeof settingSchema>;

@@ -10,6 +10,8 @@ export const branchSummarySchema = z.object({
   logoUrl: z.string().nullable(),
   phone: z.string().nullable(),
   email: z.string().nullable(),
+  landlinePhone: z.string().nullable(),
+  facebookUrl: z.string().nullable(),
 });
 
 /** FEATURE-007 — branch management in Settings (owner, 2026-08-12: "عايز مكان في الإعدادات إني اضيف إسم الفروع"). `code` stays a plain unique short string, not auto-derived — matches how every other Settings catalog (Service/ReadyProduct/SheetType) takes its identifying fields directly from the form. */
@@ -25,6 +27,8 @@ export const updateBranchSchema = z.object({
   logoUrl: z.string().nullable().optional(),
   phone: z.string().trim().min(1).max(50).nullable().optional(),
   email: z.string().trim().email().nullable().optional(),
+  landlinePhone: z.string().trim().min(1).max(50).nullable().optional(),
+  facebookUrl: z.string().trim().min(1).max(300).nullable().optional(),
 });
 
 export type BranchSummary = z.infer<typeof branchSummarySchema>;

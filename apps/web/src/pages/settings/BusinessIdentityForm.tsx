@@ -10,8 +10,10 @@ const TEXT_FIELDS: Array<{ key: keyof UpdateSettingInput; label: string }> = [
   { key: 'businessTagline', label: 'وصف/شعار دعائي (يظهر تحت الاسم بخط مختلف)' },
   { key: 'address', label: 'العنوان' },
   { key: 'phone', label: 'الهاتف' },
+  { key: 'landlinePhone', label: 'الرقم الأرضي' },
   { key: 'email', label: 'البريد الإلكتروني' },
   { key: 'website', label: 'الموقع الإلكتروني' },
+  { key: 'facebookUrl', label: 'صفحة الفيسبوك' },
   { key: 'taxNumber', label: 'الرقم الضريبي' },
   { key: 'commercialRegisterNumber', label: 'رقم السجل التجاري' },
 ];

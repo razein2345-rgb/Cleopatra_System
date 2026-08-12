@@ -11,6 +11,8 @@ const BRANCH_SELECT = {
   logoUrl: true,
   phone: true,
   email: true,
+  landlinePhone: true,
+  facebookUrl: true,
 };
 
 /**

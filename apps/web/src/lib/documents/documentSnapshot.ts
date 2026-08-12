@@ -23,6 +23,9 @@ export interface DocumentSnapshotBusiness {
   logoUrl: string | null;
   /** FEATURE-007 (2026-08-12) — company stamp/seal image, printed above the closing line. */
   stampUrl: string | null;
+  /** FEATURE-007 (2026-08-12) — landline (separate from `phone`) and Facebook page link, shown in the document footer. */
+  landlinePhone: string | null;
+  facebookUrl: string | null;
 }
 
 export interface DocumentSnapshot {
@@ -38,6 +41,8 @@ export interface DocumentBranchIdentity {
   phone?: string | null;
   email?: string | null;
   logoUrl?: string | null;
+  landlinePhone?: string | null;
+  facebookUrl?: string | null;
 }
 
 /**
@@ -67,6 +72,8 @@ export function resolveDocumentSnapshot(
       commercialRegisterNumber: setting?.commercialRegisterNumber ?? null,
       logoUrl: branch?.logoUrl ?? setting?.logoUrl ?? null,
       stampUrl: setting?.stampUrl ?? null,
+      landlinePhone: branch?.landlinePhone ?? setting?.landlinePhone ?? null,
+      facebookUrl: branch?.facebookUrl ?? setting?.facebookUrl ?? null,
     },
     templateName: template?.name ?? null,
     config: {

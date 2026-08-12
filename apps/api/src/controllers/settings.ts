@@ -33,6 +33,8 @@ export async function getBusinessIdentity(_req: Request, res: Response) {
       commercialRegisterNumber: true,
       logoUrl: true,
       stampUrl: true,
+      landlinePhone: true,
+      facebookUrl: true,
     },
   });
   if (!setting) {
