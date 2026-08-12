@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type {
+  Attachment,
   BoardMaterial,
   BranchSummary,
   BusinessPartner,
   CreateOrderInput,
+  CreatePaymentInput,
   CreateQuotationInput,
   InventoryItem,
   Order,
   OrderItemPricingInput,
+  PaymentMethod,
   PricingReference,
   ProductionTrack,
   Quotation,
@@ -26,8 +29,9 @@ import {
   calculateNotebookCost,
   calculateProductOrServiceCost,
 } from '@cleopatra/shared';
-import { apiGet, apiPost } from '@/lib/api';
+import { apiGet, apiPost, apiPostFormData } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/state/AuthContext';
 
 type PricingKind = OrderItemPricingInput['kind'];
@@ -43,7 +47,8 @@ const KIND_LABELS: Record<PricingKind, string> = {
   PRODUCT: 'منتج جاهز',
   SERVICE: 'خدمة',
 };
-const KIND_OPTIONS = Object.keys(KIND_LABELS) as PricingKind[];
+/** Everything except NOTEBOOK — the video's "مطبوعات ورقية وخدمات" tab (owner, 2026-08-12: keep all 7 real pricing kinds intact, just regroup visually to match the reference video's two-tab layout instead of collapsing them into the video's own simpler generic model). */
+const PAPER_AND_SERVICES_KINDS: PricingKind[] = ['LOOSE_PAPER', 'ENVELOPE', 'FOLDER', 'BOARDS', 'PRODUCT', 'SERVICE'];
 
 /** FEATURE-007 WF-B — matches `WorkflowTemplate.code` for the 4 tracks seeded by WF-A; the customer's chosen track routes the eventual Work Order, never inferred from item kind (owner, 2026-08-12). */
 const PRODUCTION_TRACK_LABELS: Record<ProductionTrack, string> = {
@@ -62,6 +67,31 @@ const BOARD_MATERIAL_LABELS: Record<BoardMaterial, string> = {
   SEASRO: 'سيسرو',
 };
 const BOARD_MATERIAL_OPTIONS = Object.keys(BOARD_MATERIAL_LABELS) as BoardMaterial[];
+
+const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  CASH: 'كاش',
+  BANK_ACCOUNT: 'حساب بنكي',
+  VODAFONE_CASH: 'فودافون كاش',
+  INSTAPAY: 'انستاباي',
+};
+const PAYMENT_METHOD_OPTIONS = Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[];
+
+/**
+ * The video's "الخدمات الإضافية" checkbox grid — maps 1:1 onto the four
+ * manual amount fields every pricing kind's schema already accepts
+ * (`extraServiceFields` in orderItemPricing.ts) and every `calculate*Cost`
+ * function already sums into `extraCosts` (pricingEngineService.ts's
+ * `sumExtraCosts`, mirrored client-side below). No fixed catalog price
+ * exists for any of these — a checkbox just reveals the amount field
+ * instead of it always being visible, closer to the video's look than a
+ * bare number input always on screen.
+ */
+const EXTRA_SERVICE_DEFS = [
+  { enabledKey: 'baggingEnabled', amountKey: 'baggingAmount', label: 'تغليف / تكييس' },
+  { enabledKey: 'singleAdhesiveEnabled', amountKey: 'singleAdhesiveAmount', label: 'لصق بنطة واحدة' },
+  { enabledKey: 'doubleAdhesiveEnabled', amountKey: 'doubleAdhesiveAmount', label: 'لصق بنطتين' },
+  { enabledKey: 'sampleEnabled', amountKey: 'sampleAmount', label: 'عينة / نموذج' },
+] as const;
 
 /**
  * One flat draft shape covering every pricing kind's fields — simpler to
@@ -106,14 +136,29 @@ interface DraftItem {
   heightCm: string;
   hasDesign: boolean;
   hasSellophane: boolean;
+  // الخدمات الإضافية — every kind
+  baggingEnabled: boolean;
+  baggingAmount: string;
+  singleAdhesiveEnabled: boolean;
+  singleAdhesiveAmount: string;
+  doubleAdhesiveEnabled: boolean;
+  doubleAdhesiveAmount: string;
+  sampleEnabled: boolean;
+  sampleAmount: string;
+  // صورة المنتج (اختياري)
+  attachmentId: string;
+  attachmentUrl: string;
+  attachmentFileName: string;
+  attachmentUploading: boolean;
+  attachmentError: string | null;
 }
 
 let draftKeySeq = 0;
-function emptyDraftItem(): DraftItem {
+function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
   draftKeySeq += 1;
   return {
     key: `item-${draftKeySeq}`,
-    kind: 'LOOSE_PAPER',
+    kind,
     itemType: '',
     notes: '',
     description: '',
@@ -142,14 +187,52 @@ function emptyDraftItem(): DraftItem {
     heightCm: '',
     hasDesign: false,
     hasSellophane: false,
+    baggingEnabled: false,
+    baggingAmount: '0',
+    singleAdhesiveEnabled: false,
+    singleAdhesiveAmount: '0',
+    doubleAdhesiveEnabled: false,
+    doubleAdhesiveAmount: '0',
+    sampleEnabled: false,
+    sampleAmount: '0',
+    attachmentId: '',
+    attachmentUrl: '',
+    attachmentFileName: '',
+    attachmentUploading: false,
+    attachmentError: null,
   };
 }
 
 const toNum = (v: string): number => (v.trim() === '' ? 0 : Number(v));
 const toOptionalNum = (v: string): number | undefined => (v.trim() === '' ? undefined : Number(v));
 
+function extraServiceFieldsOf(d: DraftItem) {
+  return {
+    baggingAmount: d.baggingEnabled ? toNum(d.baggingAmount) : undefined,
+    singleAdhesiveAmount: d.singleAdhesiveEnabled ? toNum(d.singleAdhesiveAmount) : undefined,
+    doubleAdhesiveAmount: d.doubleAdhesiveEnabled ? toNum(d.doubleAdhesiveAmount) : undefined,
+    sampleAmount: d.sampleEnabled ? toNum(d.sampleAmount) : undefined,
+  };
+}
+
+/** Client mirror of `pricingEngineService.ts`'s `sumExtraCosts` — same four fields, same summing, used only for the live preview. */
+function sumExtraCosts(pricing: {
+  baggingAmount?: number;
+  singleAdhesiveAmount?: number;
+  doubleAdhesiveAmount?: number;
+  sampleAmount?: number;
+}): number {
+  return (
+    (pricing.baggingAmount ?? 0) +
+    (pricing.singleAdhesiveAmount ?? 0) +
+    (pricing.doubleAdhesiveAmount ?? 0) +
+    (pricing.sampleAmount ?? 0)
+  );
+}
+
 /** Narrows a `DraftItem` into a real `OrderItemPricingInput` — returns null while required fields for that kind aren't filled in yet (not an error, just "not priceable yet"). */
 function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
+  const extra = extraServiceFieldsOf(d);
   switch (d.kind) {
     case 'LOOSE_PAPER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -163,6 +246,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         numberingStartNumber: toOptionalNum(d.numberingStartNumber),
         quantity: toNum(d.quantity),
         sides: d.sides === '2' ? 2 : 1,
+        ...extra,
       };
     case 'NOTEBOOK':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.notebookQuantity || !d.colorCount) return null;
@@ -178,6 +262,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         contentType: d.contentType,
         copies: d.contentType === 'ORIGINAL_PLUS_COPIES' ? toNum(d.copies) : undefined,
         bindingPricePerNotebook: toNum(d.bindingPricePerNotebook),
+        ...extra,
       };
     case 'ENVELOPE':
       if (!d.quantity || !d.colorCount) return null;
@@ -187,6 +272,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         colorCount: toNum(d.colorCount),
         isNewDesign: d.isNewDesign,
         readyEnvelopePricePerPiece: toNum(d.readyEnvelopePricePerPiece),
+        ...extra,
       };
     case 'FOLDER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -204,6 +290,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         jarab: toOptionalNum(d.jarab),
         forma: toOptionalNum(d.forma),
         taksir: toOptionalNum(d.taksir),
+        ...extra,
       };
     case 'BOARDS':
       if (!d.widthCm || !d.heightCm || !d.quantity) return null;
@@ -215,11 +302,12 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         quantity: toNum(d.quantity),
         hasDesign: d.material === 'BANNER' ? d.hasDesign : undefined,
         hasSellophane: d.material === 'VINYL_NORMAL' || d.material === 'VINYL_PRINT_CUT' ? d.hasSellophane : undefined,
+        ...extra,
       };
     case 'PRODUCT':
     case 'SERVICE':
       if (!d.quantity) return null;
-      return { kind: d.kind, quantity: toNum(d.quantity) };
+      return { kind: d.kind, quantity: toNum(d.quantity), ...extra };
   }
 }
 
@@ -231,10 +319,31 @@ interface PricingCtx {
   catalogPriceById: Map<string, number>;
 }
 
+/** Every field any `calculate*Cost` result might carry — display-only (formula strings), never used to compute an actual total. */
+interface PricingPreviewResult {
+  sheetsNeeded?: number;
+  paperCost?: number;
+  zincCost?: number;
+  printRuns?: number;
+  printCost?: number;
+  numberingRuns?: number;
+  numberingCost?: number;
+  designCost?: number;
+  selloCost?: number;
+  extraCosts?: number;
+  subtotal?: number;
+  total?: number;
+  unitPrice?: number;
+}
+
 /** Client-side mirror of `orderService.ts`'s `computeItemPricing` dispatch — same pure functions, used only for the live preview; the server always recomputes authoritatively on submit. */
-function previewItemTotal(d: DraftItem, ctx: PricingCtx): { total: number; error: string | null } {
+function previewItemTotal(
+  d: DraftItem,
+  ctx: PricingCtx,
+): { total: number; error: string | null; result: PricingPreviewResult | null } {
   const pricing = buildPricingInput(d);
-  if (!pricing) return { total: 0, error: null };
+  if (!pricing) return { total: 0, error: null, result: null };
+  const extraCosts = sumExtraCosts(pricing);
 
   const families = ctx.families.map((f) => ({
     key: f.key,
@@ -246,7 +355,7 @@ function previewItemTotal(d: DraftItem, ctx: PricingCtx): { total: number; error
     switch (pricing.kind) {
       case 'LOOSE_PAPER': {
         const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
-        if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق' };
+        if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق', result: null };
         const r = calculateLoosePaperCost({
           familyKey: pricing.sizeFamilyKey,
           realLabel: pricing.realSizeLabel,
@@ -258,12 +367,13 @@ function previewItemTotal(d: DraftItem, ctx: PricingCtx): { total: number; error
           sheetPrice,
           families,
           settings: ctx.pricingConstants,
+          extraCosts,
         });
-        return { total: r.total, error: null };
+        return { total: r.total, error: null, result: r };
       }
       case 'NOTEBOOK': {
         const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
-        if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق' };
+        if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق', result: null };
         const r = calculateNotebookCost({
           familyKey: pricing.sizeFamilyKey,
           realLabel: pricing.realSizeLabel,
@@ -277,8 +387,9 @@ function previewItemTotal(d: DraftItem, ctx: PricingCtx): { total: number; error
           sheetPrice,
           families,
           settings: ctx.pricingConstants,
+          extraCosts,
         });
-        return { total: r.total, error: null };
+        return { total: r.total, error: null, result: r };
       }
       case 'ENVELOPE': {
         const r = calculateEnvelopeCost({
@@ -287,12 +398,13 @@ function previewItemTotal(d: DraftItem, ctx: PricingCtx): { total: number; error
           isNewDesign: pricing.isNewDesign,
           readyEnvelopePricePerPiece: pricing.readyEnvelopePricePerPiece,
           settings: ctx.pricingConstants,
+          extraCosts,
         });
-        return { total: r.total, error: null };
+        return { total: r.total, error: null, result: r };
       }
       case 'FOLDER': {
         const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
-        if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق' };
+        if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق', result: null };
         const r = calculateFolderCost({
           familyKey: pricing.sizeFamilyKey,
           realLabel: pricing.realSizeLabel,
@@ -308,8 +420,9 @@ function previewItemTotal(d: DraftItem, ctx: PricingCtx): { total: number; error
           taksir: pricing.taksir,
           families,
           settings: ctx.pricingConstants,
+          extraCosts,
         });
-        return { total: r.total, error: null };
+        return { total: r.total, error: null, result: r };
       }
       case 'BOARDS': {
         const r = calculateBoardsCost({
@@ -320,22 +433,46 @@ function previewItemTotal(d: DraftItem, ctx: PricingCtx): { total: number; error
           hasDesign: pricing.hasDesign,
           hasSellophane: pricing.hasSellophane,
           settings: ctx.boardsConstants,
+          extraCosts,
         });
-        return { total: r.total, error: null };
+        return { total: r.total, error: null, result: r };
       }
       case 'PRODUCT':
       case 'SERVICE': {
         const catalogId = d.readyProductId || d.serviceId;
-        if (!catalogId) return { total: 0, error: null };
+        if (!catalogId) return { total: 0, error: null, result: null };
         const unitPrice = ctx.catalogPriceById.get(catalogId);
-        if (unitPrice === undefined) return { total: 0, error: 'لا يوجد سعر لهذا الصنف' };
-        return { total: calculateProductOrServiceCost(unitPrice, pricing.quantity), error: null };
+        if (unitPrice === undefined) return { total: 0, error: 'لا يوجد سعر لهذا الصنف', result: null };
+        const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
+        return { total, error: null, result: { unitPrice, extraCosts, total } };
       }
     }
   } catch (err) {
-    return { total: 0, error: err instanceof Error ? err.message : 'تعذر حساب السعر' };
+    return { total: 0, error: err instanceof Error ? err.message : 'تعذر حساب السعر', result: null };
   }
 }
+
+/** Short human line shown on the cart row — not the frozen breakdown, just enough for the staff member to recognize which item is which. */
+function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Service[]): string {
+  switch (d.kind) {
+    case 'LOOSE_PAPER':
+      return `${d.itemType || KIND_LABELS.LOOSE_PAPER} — ${d.realSizeLabel} — الكمية ${d.quantity} — ${d.colorCount} لون`;
+    case 'NOTEBOOK':
+      return `${d.itemType || KIND_LABELS.NOTEBOOK} — ${d.realSizeLabel} — ${d.notebookQuantity} دفتر`;
+    case 'ENVELOPE':
+      return `${d.itemType || KIND_LABELS.ENVELOPE} — ${d.quantity} قطعة`;
+    case 'FOLDER':
+      return `${d.itemType || KIND_LABELS.FOLDER} — ${d.realSizeLabel} — ${d.quantity} قطعة`;
+    case 'BOARDS':
+      return `${d.itemType || BOARD_MATERIAL_LABELS[d.material]} — ${d.widthCm}×${d.heightCm} سم — ${d.quantity} قطعة`;
+    case 'PRODUCT':
+      return `${readyProducts.find((p) => p.id === d.readyProductId)?.name ?? d.itemType} × ${d.quantity}`;
+    case 'SERVICE':
+      return `${services.find((s) => s.id === d.serviceId)?.name ?? d.itemType} × ${d.quantity}`;
+  }
+}
+
+const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
 /**
  * FEATURE-006 M2 / FEATURE-007 PE-E — Direct Order/Invoice creation, wired
@@ -345,6 +482,14 @@ function previewItemTotal(d: DraftItem, ctx: PricingCtx): { total: number; error
  * (`packages/shared/src/pricing/*`) the server runs authoritatively on
  * submit — never a client-computed total sent as-is (see
  * `orderItemPricing.ts`'s own doc comment).
+ *
+ * FEATURE-007 (2026-08-12) — the screen's layout/flow now matches the
+ * owner's reference video frame-for-frame (cart of added items on the
+ * side, one-item-at-a-time composer, live formula strings, "الخدمات
+ * الإضافية" checkboxes, a "التحصيل" payment section, reference-image
+ * upload, and the video's exact save/print button set) while keeping every
+ * one of Cleopatra's 7 real pricing kinds intact — see 02_PLAN.md's
+ * "مطابقة شاشة الطلبات والمستندات" section for the full design decision.
  */
 type CreatedResult = { type: 'INVOICE'; order: Order } | { type: 'QUOTATION'; quotation: Quotation };
 
@@ -390,9 +535,7 @@ export function NewOrderPage() {
       <div className="border-border bg-card mx-auto max-w-lg space-y-3 rounded-2xl border p-6 text-center">
         <p className="text-success text-lg font-bold">تم إنشاء الفاتورة بنجاح</p>
         <p className="text-2xl font-bold">{order.invoiceNumber}</p>
-        <p className="text-muted-foreground text-sm">
-          الإجمالي: {order.finalTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م
-        </p>
+        <p className="text-muted-foreground text-sm">الإجمالي: {money(order.finalTotal)} ج.م</p>
         <div className="flex flex-wrap justify-center gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={() => navigate('/quotations')}>
             العودة إلى المستندات
@@ -415,15 +558,16 @@ export function NewOrderPage() {
       <div className="border-border bg-card mx-auto max-w-lg space-y-3 rounded-2xl border p-6 text-center">
         <p className="text-success text-lg font-bold">تم إنشاء عرض السعر بنجاح</p>
         <p className="text-2xl font-bold">{quotation.quotationNumber}</p>
-        <p className="text-muted-foreground text-sm">
-          الإجمالي: {quotation.finalTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م
-        </p>
+        <p className="text-muted-foreground text-sm">الإجمالي: {money(quotation.finalTotal)} ج.م</p>
         <div className="flex flex-wrap justify-center gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={() => navigate('/quotations')}>
             العودة إلى المستندات
           </Button>
           <Button type="button" onClick={() => navigate(`/quotations/${quotation.id}`)}>
             عرض التفاصيل
+          </Button>
+          <Button type="button" variant="secondary" onClick={() => navigate(`/quotations/${quotation.id}/print`)}>
+            طباعة عرض السعر
           </Button>
           <Button type="button" variant="secondary" onClick={() => setCreated(null)}>
             مستند جديد آخر
@@ -452,8 +596,10 @@ export function NewOrderPage() {
  * the unified screen's save-as targets itself, just a follow-on action
  * once the Invoice exists, mirroring the existing "طباعة الفاتورة" button
  * right next to it. Requires at least one published WorkflowTemplate
- * (FEATURE-007 WF-A, still pending) — until one exists this honestly
- * shows that instead of pretending the action is available.
+ * (FEATURE-007 WF-A) — until one exists this honestly shows that instead
+ * of pretending the action is available. Button styling matches the
+ * reference video's "طباعة كل أوامر الشغل" footer button now that a
+ * WorkflowTemplate always exists (WF-A shipped 2026-08-12).
  */
 function GenerateWorkOrderPanel({
   orderId,
@@ -517,8 +663,8 @@ function GenerateWorkOrderPanel({
       <div className="border-border bg-muted/30 space-y-2 rounded-xl border p-3 text-sm">
         <p className="font-medium">تم إنشاء أمر الشغل</p>
         <p className="text-muted-foreground">{created.workOrderNumber}</p>
-        <Button type="button" size="sm" variant="secondary" onClick={() => navigate(`/work-orders/${created.id}`)}>
-          طباعة أمر الشغل
+        <Button type="button" size="sm" onClick={() => navigate(`/work-orders/${created.id}`)}>
+          طباعة كل أوامر الشغل 🖶
         </Button>
       </div>
     );
@@ -556,6 +702,32 @@ function GenerateWorkOrderPanel({
   );
 }
 
+/** One already-added line in the "بنود الفاتورة" cart — frozen at add-time, same shape the server will re-price on submit. */
+interface CartLine {
+  key: string;
+  itemType: string;
+  summary: string;
+  notes?: string;
+  readyProductId?: string;
+  serviceId?: string;
+  attachmentId?: string;
+  attachmentUrl?: string;
+  pricing: OrderItemPricingInput;
+  total: number;
+}
+
+interface PaymentRow {
+  key: string;
+  method: PaymentMethod;
+  amount: string;
+}
+
+let paymentKeySeq = 0;
+const emptyPaymentRow = (): PaymentRow => {
+  paymentKeySeq += 1;
+  return { key: `pay-${paymentKeySeq}`, method: 'CASH', amount: '' };
+};
+
 function NewOrderForm({
   partners,
   branches,
@@ -590,9 +762,20 @@ function NewOrderForm({
   const [vatOn, setVatOn] = useState(false);
   const [customerNotes, setCustomerNotes] = useState('');
   const [internalNotes, setInternalNotes] = useState('');
-  const [items, setItems] = useState<DraftItem[]>([emptyDraftItem()]);
+
+  // بنود الفاتورة — السلة الفعلية (بعد "إضافة للفاتورة" بس)
+  const [cart, setCart] = useState<CartLine[]>([]);
+  // النموذج على اليمين — بند واحد بيتصمم في المرة (نمط الفيديو)
+  const [activeTab, setActiveTab] = useState<'PAPER_SERVICES' | 'NCR'>('PAPER_SERVICES');
+  const [draft, setDraft] = useState<DraftItem>(() => emptyDraftItem());
+  const [itemError, setItemError] = useState<string | null>(null);
+
+  // التحصيل — دفعات عند الإنشاء (فاتورة فقط)
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
+
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, setSubmitting] = useState<'SAVE_ONLY' | 'SAVE_AND_PRINT' | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const paperInventoryItems = useMemo(() => inventoryItems.filter((i) => i.sheetPrice !== null), [inventoryItems]);
 
@@ -612,38 +795,100 @@ function NewOrderForm({
     [pricingReference, inventoryItems, readyProducts, services],
   );
 
-  const previews = useMemo(() => items.map((d) => previewItemTotal(d, ctx)), [items, ctx]);
-  const subtotal = previews.reduce((sum, p) => sum + p.total, 0);
+  const draftPreview = useMemo(() => previewItemTotal(draft, ctx), [draft, ctx]);
+  const subtotal = cart.reduce((sum, line) => sum + line.total, 0);
   const discountNum = toNum(discountPercent);
   const afterDiscount = subtotal * (1 - discountNum / 100);
   const vatAmount = vatOn ? afterDiscount * (pricingReference.vatRate / 100) : 0;
   const finalTotal = afterDiscount + vatAmount;
+  const paidTotal = payments.reduce((sum, p) => sum + (toOptionalNum(p.amount) ?? 0), 0);
+  const remainingBalance = finalTotal - paidTotal;
 
-  const updateItem = (index: number, patch: Partial<DraftItem>) => {
-    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
-  };
+  const updateDraft = (patch: Partial<DraftItem>) => setDraft((prev) => ({ ...prev, ...patch }));
 
-  const removeItem = (index: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== index));
+  const switchTab = (tab: 'PAPER_SERVICES' | 'NCR') => {
+    setActiveTab(tab);
+    if (tab === 'NCR' && draft.kind !== 'NOTEBOOK') {
+      setDraft(emptyDraftItem('NOTEBOOK'));
+    } else if (tab === 'PAPER_SERVICES' && draft.kind === 'NOTEBOOK') {
+      setDraft(emptyDraftItem('LOOSE_PAPER'));
+    }
   };
 
   const familyEntries = (familyKey: string): SizeFamily['entries'] =>
     pricingReference.sizeFamilies.find((f) => f.key === familyKey)?.entries ?? [];
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const uploadAttachment = async (file: File) => {
+    if (file.size > 5 * 1024 * 1024) {
+      updateDraft({ attachmentError: 'حجم الصورة أكبر من 5MB' });
+      return;
+    }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      updateDraft({ attachmentError: 'نوع الملف غير مدعوم — JPG أو PNG أو WEBP فقط' });
+      return;
+    }
+    updateDraft({ attachmentUploading: true, attachmentError: null });
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('category', 'ORDER_ITEM_REFERENCE');
+      const attachment = await apiPostFormData<Attachment>('/api/attachments', fd);
+      updateDraft({
+        attachmentId: attachment.id,
+        attachmentUrl: attachment.url,
+        attachmentFileName: attachment.fileName,
+        attachmentUploading: false,
+      });
+    } catch (err) {
+      updateDraft({
+        attachmentUploading: false,
+        attachmentError: err instanceof Error ? err.message : 'تعذر رفع الصورة',
+      });
+    }
+  };
+
+  const addToCart = () => {
+    const pricing = buildPricingInput(draft);
+    if (!pricing) {
+      setItemError('أكمل بيانات البند المطلوبة أولاً');
+      return;
+    }
+    const preview = previewItemTotal(draft, ctx);
+    if (preview.error) {
+      setItemError(preview.error);
+      return;
+    }
+    setItemError(null);
+    const label = draft.itemType || KIND_LABELS[draft.kind];
+    const line: CartLine = {
+      key: draft.key,
+      itemType: label,
+      summary: describeDraft(draft, readyProducts, services),
+      notes: draft.notes || undefined,
+      readyProductId: draft.kind === 'PRODUCT' ? draft.readyProductId || undefined : undefined,
+      serviceId: draft.kind === 'SERVICE' ? draft.serviceId || undefined : undefined,
+      attachmentId: draft.attachmentId || undefined,
+      attachmentUrl: draft.attachmentUrl || undefined,
+      pricing,
+      total: preview.total,
+    };
+    setCart((prev) => [...prev, line]);
+    setDraft(emptyDraftItem(activeTab === 'NCR' ? 'NOTEBOOK' : 'LOOSE_PAPER'));
+  };
+
+  const removeFromCart = (key: string) => setCart((prev) => prev.filter((line) => line.key !== key));
+
+  const addPaymentRow = () => setPayments((prev) => [...prev, emptyPaymentRow()]);
+  const updatePaymentRow = (key: string, patch: Partial<PaymentRow>) =>
+    setPayments((prev) => prev.map((p) => (p.key === key ? { ...p, ...patch } : p)));
+  const removePaymentRow = (key: string) => setPayments((prev) => prev.filter((p) => p.key !== key));
+
+  const submit = async (intent: 'SAVE_ONLY' | 'SAVE_AND_PRINT') => {
     if (submitting) return;
     setError(null);
 
-    const pricingInputs = items.map((d) => buildPricingInput(d));
-    const missingIndex = pricingInputs.findIndex((p) => p === null);
-    if (missingIndex !== -1) {
-      setError(`البند رقم ${missingIndex + 1} غير مكتمل — أكمل بيانات التسعير الخاصة به`);
-      return;
-    }
-    const errorIndex = previews.findIndex((p) => p.error);
-    if (errorIndex !== -1) {
-      setError(`البند رقم ${errorIndex + 1}: ${previews[errorIndex]!.error}`);
+    if (cart.length === 0) {
+      setError('أضف بندًا واحدًا على الأقل للفاتورة قبل الحفظ');
       return;
     }
     if (documentType === 'QUOTATION' && !validUntil) {
@@ -654,24 +899,21 @@ function NewOrderForm({
     // Same item shape either way — `createQuotationItemSchema` and
     // `createOrderItemSchema` are structurally identical (FEATURE-007,
     // one Pricing Engine for both), so only the wrapping document differs.
-    const outputItems = items.map((item, index) => {
-      const label = item.itemType || KIND_LABELS[item.kind];
-      const hasCatalogRef = item.kind === 'PRODUCT' || item.kind === 'SERVICE';
-      return {
-        itemType: label,
-        notes: item.notes || undefined,
-        // `validateQuotationItemRefs` requires a description on any item
-        // with no readyProductId/serviceId — reuse the same label the
-        // user already typed (or the kind's default) rather than adding
-        // a second, redundant free-text field to the form.
-        description: hasCatalogRef ? undefined : label,
-        readyProductId: item.kind === 'PRODUCT' ? item.readyProductId || undefined : undefined,
-        serviceId: item.kind === 'SERVICE' ? item.serviceId || undefined : undefined,
-        pricing: pricingInputs[index]!,
-      };
-    });
+    const outputItems = cart.map((line) => ({
+      itemType: line.itemType,
+      notes: line.notes,
+      // `validateQuotationItemRefs` requires a description on any item
+      // with no readyProductId/serviceId — reuse the same label the
+      // user already typed (or the kind's default) rather than adding
+      // a second, redundant free-text field to the form.
+      description: line.readyProductId || line.serviceId ? undefined : line.itemType,
+      readyProductId: line.readyProductId,
+      serviceId: line.serviceId,
+      attachmentId: line.attachmentId,
+      pricing: line.pricing,
+    }));
 
-    setSubmitting(true);
+    setSubmitting(intent);
     try {
       if (documentType === 'QUOTATION') {
         const input: CreateQuotationInput = {
@@ -685,8 +927,15 @@ function NewOrderForm({
           items: outputItems,
         };
         const quotation = await apiPost<Quotation>('/api/quotations', input);
-        onCreated({ type: 'QUOTATION', quotation });
+        if (intent === 'SAVE_AND_PRINT') {
+          navigate(`/quotations/${quotation.id}/print`);
+        } else {
+          onCreated({ type: 'QUOTATION', quotation });
+        }
       } else {
+        const paymentInputs: CreatePaymentInput[] = payments
+          .filter((p) => toOptionalNum(p.amount) && toNum(p.amount) > 0)
+          .map((p) => ({ method: p.method, amount: toNum(p.amount) }));
         const input: CreateOrderInput = {
           partnerId,
           branchId,
@@ -697,9 +946,14 @@ function NewOrderForm({
           internalNotes: internalNotes || undefined,
           productionTrack: productionTrack || undefined,
           items: outputItems,
+          payments: paymentInputs.length ? paymentInputs : undefined,
         };
         const order = await apiPost<Order>('/api/orders', input);
-        onCreated({ type: 'INVOICE', order });
+        if (intent === 'SAVE_AND_PRINT') {
+          navigate(`/orders/${order.id}`);
+        } else {
+          onCreated({ type: 'INVOICE', order });
+        }
       }
     } catch (err) {
       setError(
@@ -710,19 +964,150 @@ function NewOrderForm({
             : 'تعذر إنشاء الفاتورة',
       );
     } finally {
-      setSubmitting(false);
+      setSubmitting(null);
     }
   };
 
+  const navigate = useNavigate();
+  const entries = familyEntries(draft.sizeFamilyKey);
+  const selectedEntry = entries.find((e) => e.label === draft.realSizeLabel);
+  const result = draftPreview.result;
+  const isSheetKind = draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK' || draft.kind === 'FOLDER';
+  const hasPrintSection = draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK' || draft.kind === 'ENVELOPE' || draft.kind === 'FOLDER';
+
   return (
-    <form onSubmit={submit} className="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
-      <div className="space-y-4">
+    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
+      {/* عمود يمين — السلة (بنود الفاتورة/العرض) */}
+      <aside className="border-border bg-card sticky top-4 order-2 h-fit space-y-3 rounded-2xl border p-4 lg:order-1">
+        <p className="flex items-center gap-1 text-sm font-bold">🛒 {documentType === 'QUOTATION' ? 'بنود عرض السعر' : 'بنود الفاتورة'}</p>
+
+        {cart.length === 0 ? (
+          <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-center text-sm">
+            السلة فارغة. ابدأ بإضافة بنود.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {cart.map((line) => (
+              <div key={line.key} className="border-border flex items-start justify-between gap-2 rounded-lg border p-2 text-sm">
+                <div className="min-w-0">
+                  <p className="font-medium">{money(line.total)} ج.م</p>
+                  <p className="text-muted-foreground truncate text-xs">{line.summary}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeFromCart(line.key)}
+                  className="text-destructive shrink-0 text-xs"
+                  aria-label="حذف البند"
+                >
+                  🗑
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <label className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">تطبيق ضريبة القيمة المضافة ({pricingReference.vatRate}%)</span>
+          <input type="checkbox" checked={vatOn} onChange={(e) => setVatOn(e.target.checked)} />
+        </label>
+        <label className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">نسبة الخصم %</span>
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step="0.1"
+            value={discountPercent}
+            onChange={(e) => setDiscountPercent(e.target.value)}
+            className="border-input bg-background w-20 rounded-md border px-2 py-1 text-end text-sm"
+          />
+        </label>
+
+        <div className="space-y-1 border-t pt-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">الإجمالي قبل الخصم</span>
+            <span>{money(subtotal)} ج.م</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">الخصم ({discountNum}%)</span>
+            <span>-{money(subtotal - afterDiscount)} ج.م</span>
+          </div>
+          {vatOn && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">ضريبة القيمة المضافة</span>
+              <span>{money(vatAmount)} ج.م</span>
+            </div>
+          )}
+        </div>
+
+        {/* الصندوق الأخضر الكبير — الإجمالي النهائي، محسوب لحظيًا بلا إعادة تحميل، زي الفيديو بالظبط */}
+        <div className="bg-success/15 flex flex-col items-center gap-1 rounded-xl p-4 text-center">
+          <span className="text-success text-xs font-medium">إجمالي الحساب</span>
+          <span className="text-success text-3xl font-bold tabular-nums">{money(finalTotal)}</span>
+          <span className="text-success text-xs">جنيه مصري</span>
+        </div>
+
+        {documentType === 'INVOICE' && (
+          <div className="space-y-2 border-t pt-2">
+            <p className="text-sm font-medium">التحصيل</p>
+            {payments.map((p) => (
+              <div key={p.key} className="flex items-center gap-1">
+                <select
+                  value={p.method}
+                  onChange={(e) => updatePaymentRow(p.key, { method: e.target.value as PaymentMethod })}
+                  className="border-input bg-background rounded-md border px-2 py-1.5 text-xs"
+                >
+                  {PAYMENT_METHOD_OPTIONS.map((m) => (
+                    <option key={m} value={m}>
+                      {PAYMENT_METHOD_LABELS[m]}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  placeholder="المبلغ"
+                  value={p.amount}
+                  onChange={(e) => updatePaymentRow(p.key, { amount: e.target.value })}
+                  className="border-input bg-background w-full min-w-0 rounded-md border px-2 py-1.5 text-end text-xs"
+                />
+                <button type="button" onClick={() => removePaymentRow(p.key)} className="text-destructive text-xs" aria-label="حذف الدفعة">
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button type="button" onClick={addPaymentRow} className="text-primary text-xs">
+              + دفعة أخرى
+            </button>
+            <div className="space-y-1 pt-1 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">المدفوع:</span>
+                <span className="text-success">{money(paidTotal)} ج.م</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">الباقي (أجل):</span>
+                <span className="text-destructive">{money(Math.max(remainingBalance, 0))} ج.م</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {error && <p className="text-destructive text-sm">{error}</p>}
+
+        <div className="space-y-2 border-t pt-2">
+          <Button type="button" className="w-full" disabled={submitting !== null} onClick={() => void submit('SAVE_AND_PRINT')}>
+            {submitting === 'SAVE_AND_PRINT' ? 'جارٍ الحفظ…' : '🖶 حفظ وطباعة'}
+          </Button>
+          <Button type="button" variant="outline" className="w-full" disabled={submitting !== null} onClick={() => void submit('SAVE_ONLY')}>
+            {submitting === 'SAVE_ONLY' ? 'جارٍ الحفظ…' : 'حفظ فقط'}
+          </Button>
+        </div>
+      </aside>
+
+      {/* عمود شمال — نموذج إضافة بند + بيانات المستند */}
+      <div className="order-1 space-y-4 lg:order-2">
         <h1 className="text-2xl font-bold">الطلبات والمستندات</h1>
-        <p className="text-muted-foreground text-sm">
-          {documentType === 'QUOTATION'
-            ? 'إنشاء عرض سعر جديد للعميل — يمكن تحويله لاحقًا إلى فاتورة عند الموافقة. التسعير يُحسب تلقائيًا لحظيًا.'
-            : 'للعميل الذي يطلب الشغل مباشرة — يتم إنشاء الفاتورة فورًا دون المرور بعرض سعر. التسعير يُحسب تلقائيًا لحظيًا.'}
-        </p>
 
         {canInvoice && canQuotation && (
           <div className="border-border bg-muted/30 inline-flex rounded-lg border p-1 text-sm">
@@ -743,10 +1128,10 @@ function NewOrderForm({
           </div>
         )}
 
-        <div className="border-border bg-card space-y-4 rounded-2xl border p-4">
-          {error && <div className="text-destructive text-sm">{error}</div>}
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {/* بيانات الفاتورة/العرض والعميل */}
+        <div className="border-primary/30 bg-card space-y-3 rounded-2xl border-2 p-4">
+          <p className="flex items-center gap-1 text-sm font-bold">👤 بيانات {documentType === 'QUOTATION' ? 'عرض السعر' : 'الفاتورة'} والعميل</p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">العميل</span>
               <select
@@ -778,6 +1163,16 @@ function NewOrderForm({
                 ))}
               </select>
             </label>
+            <div className="space-y-1 text-sm">
+              <span className="text-muted-foreground">تاريخ العملية</span>
+              <p className="border-input bg-muted/30 rounded-md border px-3 py-2" dir="ltr">
+                {new Date().toLocaleDateString('en-GB')}
+              </p>
+            </div>
+            <div className="space-y-1 text-sm">
+              <span className="text-muted-foreground">{documentType === 'QUOTATION' ? 'رقم عرض السعر' : 'رقم الفاتورة'}</span>
+              <p className="border-input bg-muted/30 text-muted-foreground rounded-md border px-3 py-2">يُحدَّد تلقائيًا بعد الحفظ</p>
+            </div>
             {documentType === 'QUOTATION' ? (
               <label className="space-y-1 text-sm">
                 <span className="text-muted-foreground">صالح حتى</span>
@@ -817,532 +1212,580 @@ function NewOrderForm({
                 </label>
               </>
             )}
-            <label className="space-y-1 text-sm">
-              <span className="text-muted-foreground">نسبة الخصم %</span>
+          </div>
+        </div>
+
+        {/* التابين — مطبوعات ورقية وخدمات / دفاتر مكررة NCR */}
+        <div className="border-border bg-muted/30 inline-flex rounded-lg border p-1 text-sm">
+          <button
+            type="button"
+            onClick={() => switchTab('PAPER_SERVICES')}
+            className={`rounded-md px-4 py-1.5 font-medium ${activeTab === 'PAPER_SERVICES' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}
+          >
+            🖶 مطبوعات ورقية وخدمات
+          </button>
+          <button
+            type="button"
+            onClick={() => switchTab('NCR')}
+            className={`rounded-md px-4 py-1.5 font-medium ${activeTab === 'NCR' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}
+          >
+            📑 دفاتر مكررة (NCR)
+          </button>
+        </div>
+
+        <div className="border-border bg-card space-y-4 rounded-2xl border p-4">
+          {itemError && <div className="text-destructive text-sm">{itemError}</div>}
+
+          {activeTab === 'PAPER_SERVICES' && (
+            <label className="block max-w-xs space-y-1 text-sm">
+              <span className="text-muted-foreground">نوع البند</span>
+              <select
+                value={draft.kind}
+                onChange={(e) => setDraft(emptyDraftItem(e.target.value as PricingKind))}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              >
+                {PAPER_AND_SERVICES_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {KIND_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">اسم البند / العملية</span>
+            <input
+              value={draft.itemType}
+              onChange={(e) => updateDraft({ itemType: e.target.value })}
+              placeholder="مثال: فلايرز، كروت شخصية..."
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+
+          {isSheetKind && (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">مجموعة المقاس</span>
+                <select
+                  value={draft.sizeFamilyKey}
+                  onChange={(e) => updateDraft({ sizeFamilyKey: e.target.value, realSizeLabel: '' })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— اختر الورق أولًا —</option>
+                  {pricingReference.sizeFamilies.map((f) => (
+                    <option key={f.key} value={f.key}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">المقاس</span>
+                <select
+                  value={draft.realSizeLabel}
+                  onChange={(e) => updateDraft({ realSizeLabel: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— المقاس —</option>
+                  {entries.map((en) => (
+                    <option key={en.label} value={en.label}>
+                      {en.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">نوع الورق (يُسحب من المخزن)</span>
+                <select
+                  value={draft.inventoryItemId}
+                  onChange={(e) => updateDraft({ inventoryItemId: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— بدون ورق —</option>
+                  {paperInventoryItems.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+
+          {draft.kind === 'LOOSE_PAPER' && (
+            <label className="block max-w-xs space-y-1 text-sm">
+              <span className="text-muted-foreground">الكمية المطلوبة</span>
               <input
                 type="number"
-                min={0}
-                max={100}
-                step="0.1"
-                value={discountPercent}
-                onChange={(e) => setDiscountPercent(e.target.value)}
+                min={1}
+                value={draft.quantity}
+                onChange={(e) => updateDraft({ quantity: e.target.value })}
                 className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
               />
             </label>
-            <label className="flex items-center gap-2 self-end text-sm">
-              <input type="checkbox" checked={vatOn} onChange={(e) => setVatOn(e.target.checked)} />
-              تطبيق ضريبة القيمة المضافة ({pricingReference.vatRate}%)
-            </label>
-          </div>
+          )}
 
-          <label className="block space-y-1 text-sm">
-            <span className="text-muted-foreground">ملاحظات العميل</span>
-            <textarea
-              value={customerNotes}
-              onChange={(e) => setCustomerNotes(e.target.value)}
-              rows={2}
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-            />
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span className="text-muted-foreground">ملاحظات داخلية (لا تظهر للعميل)</span>
-            <textarea
-              value={internalNotes}
-              onChange={(e) => setInternalNotes(e.target.value)}
-              rows={2}
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-            />
-          </label>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium">البنود</p>
-              <Button type="button" variant="secondary" size="sm" onClick={() => setItems((prev) => [...prev, emptyDraftItem()])}>
-                + إضافة بند
-              </Button>
-            </div>
-
-            {items.map((item, index) => {
-              const preview = previews[index]!;
-              const entries = familyEntries(item.sizeFamilyKey);
-              const isSheetKind = item.kind === 'LOOSE_PAPER' || item.kind === 'NOTEBOOK' || item.kind === 'FOLDER';
-              return (
-                <div key={item.key} className="border-border space-y-3 rounded-xl border p-3">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                    <label className="space-y-1 text-sm sm:col-span-2">
-                      <span className="text-muted-foreground">النوع</span>
-                      <select
-                        value={item.kind}
-                        onChange={(e) => updateItem(index, { kind: e.target.value as PricingKind })}
-                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                      >
-                        {KIND_OPTIONS.map((k) => (
-                          <option key={k} value={k}>
-                            {KIND_LABELS[k]}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="space-y-1 text-sm sm:col-span-2">
-                      <span className="text-muted-foreground">وصف البند (يظهر على الفاتورة)</span>
-                      <input
-                        value={item.itemType}
-                        onChange={(e) => updateItem(index, { itemType: e.target.value })}
-                        placeholder={KIND_LABELS[item.kind]}
-                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                      />
-                    </label>
-                  </div>
-
-                  {isSheetKind && (
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">مجموعة المقاس</span>
-                        <select
-                          value={item.sizeFamilyKey}
-                          onChange={(e) => updateItem(index, { sizeFamilyKey: e.target.value, realSizeLabel: '' })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        >
-                          <option value="">— اختر —</option>
-                          {pricingReference.sizeFamilies.map((f) => (
-                            <option key={f.key} value={f.key}>
-                              {f.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">المقاس الفعلي</span>
-                        <select
-                          value={item.realSizeLabel}
-                          onChange={(e) => updateItem(index, { realSizeLabel: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        >
-                          <option value="">— اختر —</option>
-                          {entries.map((en) => (
-                            <option key={en.label} value={en.label}>
-                              {en.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-1 text-sm sm:col-span-2">
-                        <span className="text-muted-foreground">صنف الورق (للخصم من المخزون)</span>
-                        <select
-                          value={item.inventoryItemId}
-                          onChange={(e) => updateItem(index, { inventoryItemId: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        >
-                          <option value="">— اختر —</option>
-                          {paperInventoryItems.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                  )}
-
-                  {isSheetKind && (
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">عدد الألوان</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.colorCount}
-                          onChange={(e) => updateItem(index, { colorCount: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      {(item.kind === 'LOOSE_PAPER' || item.kind === 'FOLDER') && (
-                        <label className="space-y-1 text-sm">
-                          <span className="text-muted-foreground">عدد الوجوه</span>
-                          <select
-                            value={item.sides}
-                            onChange={(e) => updateItem(index, { sides: e.target.value as '1' | '2' })}
-                            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                          >
-                            <option value="1">وجه واحد</option>
-                            <option value="2">وجهين</option>
-                          </select>
-                        </label>
-                      )}
-                      <label className="flex items-center gap-2 self-end text-sm">
-                        <input type="checkbox" checked={item.isNewDesign} onChange={(e) => updateItem(index, { isNewDesign: e.target.checked })} />
-                        تصميم جديد
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">بداية الترقيم (اختياري)</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.numberingStartNumber}
-                          onChange={(e) => updateItem(index, { numberingStartNumber: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  {item.kind === 'LOOSE_PAPER' && (
-                    <label className="block max-w-xs space-y-1 text-sm">
-                      <span className="text-muted-foreground">الكمية</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={item.quantity}
-                        onChange={(e) => updateItem(index, { quantity: e.target.value })}
-                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                      />
-                    </label>
-                  )}
-
-                  {item.kind === 'NOTEBOOK' && (
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">عدد الدفاتر</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.notebookQuantity}
-                          onChange={(e) => updateItem(index, { notebookQuantity: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">المحتوى</span>
-                        <select
-                          value={item.contentType}
-                          onChange={(e) => updateItem(index, { contentType: e.target.value as DraftItem['contentType'] })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        >
-                          <option value="ORIGINAL_ONLY">أصل فقط</option>
-                          <option value="ORIGINAL_PLUS_COPIES">أصل + كربون</option>
-                        </select>
-                      </label>
-                      {item.contentType === 'ORIGINAL_PLUS_COPIES' && (
-                        <label className="space-y-1 text-sm">
-                          <span className="text-muted-foreground">عدد نسخ الكربون</span>
-                          <input
-                            type="number"
-                            min={1}
-                            value={item.copies}
-                            onChange={(e) => updateItem(index, { copies: e.target.value })}
-                            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                          />
-                        </label>
-                      )}
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">سعر التجليد للدفتر</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={item.bindingPricePerNotebook}
-                          onChange={(e) => updateItem(index, { bindingPricePerNotebook: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  {item.kind === 'ENVELOPE' && (
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">الكمية</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.quantity}
-                          onChange={(e) => updateItem(index, { quantity: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">عدد الألوان</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.colorCount}
-                          onChange={(e) => updateItem(index, { colorCount: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">سعر الظرف الجاهز/قطعة</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={item.readyEnvelopePricePerPiece}
-                          onChange={(e) => updateItem(index, { readyEnvelopePricePerPiece: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="flex items-center gap-2 self-end text-sm">
-                        <input type="checkbox" checked={item.isNewDesign} onChange={(e) => updateItem(index, { isNewDesign: e.target.checked })} />
-                        تصميم جديد
-                      </label>
-                    </div>
-                  )}
-
-                  {item.kind === 'FOLDER' && (
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">الكمية</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.quantity}
-                          onChange={(e) => updateItem(index, { quantity: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="flex items-center gap-2 self-end text-sm">
-                        <input
-                          type="checkbox"
-                          checked={item.sellophaneEnabled}
-                          onChange={(e) => updateItem(index, { sellophaneEnabled: e.target.checked })}
-                        />
-                        سلوفان
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">ريزا</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={item.riza}
-                          onChange={(e) => updateItem(index, { riza: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">جراب داخلي</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={item.jarab}
-                          onChange={(e) => updateItem(index, { jarab: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">فورمة</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={item.forma}
-                          onChange={(e) => updateItem(index, { forma: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">تكسير وتلزيق</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={item.taksir}
-                          onChange={(e) => updateItem(index, { taksir: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  {item.kind === 'BOARDS' && (
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">الخامة</span>
-                        <select
-                          value={item.material}
-                          onChange={(e) => updateItem(index, { material: e.target.value as BoardMaterial })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        >
-                          {BOARD_MATERIAL_OPTIONS.map((m) => (
-                            <option key={m} value={m}>
-                              {BOARD_MATERIAL_LABELS[m]}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">العرض (سم)</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.widthCm}
-                          onChange={(e) => updateItem(index, { widthCm: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">الارتفاع (سم)</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.heightCm}
-                          onChange={(e) => updateItem(index, { heightCm: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">الكمية</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.quantity}
-                          onChange={(e) => updateItem(index, { quantity: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                      {item.material === 'BANNER' && (
-                        <label className="flex items-center gap-2 self-end text-sm">
-                          <input type="checkbox" checked={item.hasDesign} onChange={(e) => updateItem(index, { hasDesign: e.target.checked })} />
-                          تصميم
-                        </label>
-                      )}
-                      {(item.material === 'VINYL_NORMAL' || item.material === 'VINYL_PRINT_CUT') && (
-                        <label className="flex items-center gap-2 self-end text-sm">
-                          <input
-                            type="checkbox"
-                            checked={item.hasSellophane}
-                            onChange={(e) => updateItem(index, { hasSellophane: e.target.checked })}
-                          />
-                          سلوفان
-                        </label>
-                      )}
-                    </div>
-                  )}
-
-                  {item.kind === 'PRODUCT' && (
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <label className="space-y-1 text-sm sm:col-span-2">
-                        <span className="text-muted-foreground">المنتج</span>
-                        <select
-                          value={item.readyProductId}
-                          onChange={(e) => updateItem(index, { readyProductId: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        >
-                          <option value="">— اختر —</option>
-                          {readyProducts.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">الكمية</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.quantity}
-                          onChange={(e) => updateItem(index, { quantity: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  {item.kind === 'SERVICE' && (
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      <label className="space-y-1 text-sm sm:col-span-2">
-                        <span className="text-muted-foreground">الخدمة</span>
-                        <select
-                          value={item.serviceId}
-                          onChange={(e) => updateItem(index, { serviceId: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        >
-                          <option value="">— اختر —</option>
-                          {services.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="space-y-1 text-sm">
-                        <span className="text-muted-foreground">الكمية</span>
-                        <input
-                          type="number"
-                          min={1}
-                          value={item.quantity}
-                          onChange={(e) => updateItem(index, { quantity: e.target.value })}
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        />
-                      </label>
-                    </div>
-                  )}
-
-                  <label className="block space-y-1 text-sm">
-                    <span className="text-muted-foreground">ملاحظات على البند</span>
-                    <input
-                      value={item.notes}
-                      onChange={(e) => updateItem(index, { notes: e.target.value })}
-                      className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                    />
-                  </label>
-
-                  <div className="flex items-center justify-between border-t pt-2">
-                    <p className="text-sm font-medium">
-                      سعر البند:{' '}
-                      <span className={preview.error ? 'text-destructive' : 'text-foreground'}>
-                        {preview.error ?? `${preview.total.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م`}
-                      </span>
-                    </p>
-                    {items.length > 1 && (
-                      <Button type="button" variant="ghost" size="sm" onClick={() => removeItem(index)}>
-                        حذف البند ✕
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <Button type="submit" disabled={submitting}>
-            {submitting ? 'جارٍ الحفظ…' : documentType === 'QUOTATION' ? 'حفظ كعرض سعر' : 'إنشاء الفاتورة'}
-          </Button>
-        </div>
-      </div>
-
-      <aside className="border-border bg-card sticky top-4 h-fit space-y-3 rounded-2xl border p-4">
-        <p className="text-sm font-bold">{documentType === 'QUOTATION' ? 'ملخص عرض السعر' : 'ملخص الفاتورة'}</p>
-        <div className="space-y-1">
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">الإجمالي قبل الخصم</span>
-            <span>{subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">الخصم ({discountNum}%)</span>
-            <span>-{(subtotal - afterDiscount).toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م</span>
-          </div>
-          {vatOn && (
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">ضريبة القيمة المضافة ({pricingReference.vatRate}%)</span>
-              <span>{vatAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م</span>
+          {isSheetKind && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">عدد الألوان</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.colorCount}
+                  onChange={(e) => updateDraft({ colorCount: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              {(draft.kind === 'LOOSE_PAPER' || draft.kind === 'FOLDER') && (
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">عدد الوجوه</span>
+                  <select
+                    value={draft.sides}
+                    onChange={(e) => updateDraft({ sides: e.target.value as '1' | '2' })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  >
+                    <option value="1">وجه واحد</option>
+                    <option value="2">وجهين</option>
+                  </select>
+                </label>
+              )}
+              <label className="flex items-center gap-2 self-end text-sm">
+                <input type="checkbox" checked={draft.isNewDesign} onChange={(e) => updateDraft({ isNewDesign: e.target.checked })} />
+                تصميم جديد
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">بداية الترقيم (اختياري)</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.numberingStartNumber}
+                  onChange={(e) => updateDraft({ numberingStartNumber: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
             </div>
           )}
+
+          {/* صيغة تكلفة الورق الحية — نفس أرقام الفيديو، مبنية من نفس breakdown اللي المحرك بيرجّعه أصلًا */}
+          {isSheetKind && result && typeof result.sheetsNeeded === 'number' && (
+            <p className="bg-muted/40 rounded-md p-2 text-xs" dir="rtl">
+              الكمية ({draft.kind === 'NOTEBOOK' ? draft.notebookQuantity : draft.quantity})
+              {selectedEntry ? ` ÷ القطع في الفرخ (${selectedEntry.piecesPerSheet})` : ''} + الهالك (
+              {pricingReference.pricingConstants.wasteSheetsDefault}) = {result.sheetsNeeded} فرخ ×{' '}
+              {(ctx.sheetPriceByInventoryItemId.get(draft.inventoryItemId) ?? 0).toFixed(2)} = {money(result.paperCost ?? 0)} ج.م
+            </p>
+          )}
+
+          {draft.kind === 'NOTEBOOK' && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">عدد الدفاتر</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.notebookQuantity}
+                  onChange={(e) => updateDraft({ notebookQuantity: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">المحتوى</span>
+                <select
+                  value={draft.contentType}
+                  onChange={(e) => updateDraft({ contentType: e.target.value as DraftItem['contentType'] })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="ORIGINAL_ONLY">أصل فقط</option>
+                  <option value="ORIGINAL_PLUS_COPIES">أصل + كربون</option>
+                </select>
+              </label>
+              {draft.contentType === 'ORIGINAL_PLUS_COPIES' && (
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">عدد نسخ الكربون</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={draft.copies}
+                    onChange={(e) => updateDraft({ copies: e.target.value })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                </label>
+              )}
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">سعر التجليد للدفتر</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.bindingPricePerNotebook}
+                  onChange={(e) => updateDraft({ bindingPricePerNotebook: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+          )}
+
+          {draft.kind === 'ENVELOPE' && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">الكمية</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.quantity}
+                  onChange={(e) => updateDraft({ quantity: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">عدد الألوان</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.colorCount}
+                  onChange={(e) => updateDraft({ colorCount: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">سعر الظرف الجاهز/قطعة</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.readyEnvelopePricePerPiece}
+                  onChange={(e) => updateDraft({ readyEnvelopePricePerPiece: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="flex items-center gap-2 self-end text-sm">
+                <input type="checkbox" checked={draft.isNewDesign} onChange={(e) => updateDraft({ isNewDesign: e.target.checked })} />
+                تصميم جديد
+              </label>
+            </div>
+          )}
+
+          {draft.kind === 'FOLDER' && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">الكمية</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.quantity}
+                  onChange={(e) => updateDraft({ quantity: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="flex items-center gap-2 self-end text-sm">
+                <input
+                  type="checkbox"
+                  checked={draft.sellophaneEnabled}
+                  onChange={(e) => updateDraft({ sellophaneEnabled: e.target.checked })}
+                />
+                سلوفان
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">ريزا</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.riza}
+                  onChange={(e) => updateDraft({ riza: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">جراب داخلي</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.jarab}
+                  onChange={(e) => updateDraft({ jarab: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">فورمة</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.forma}
+                  onChange={(e) => updateDraft({ forma: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">تكسير وتلزيق</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.taksir}
+                  onChange={(e) => updateDraft({ taksir: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+          )}
+
+          {draft.kind === 'BOARDS' && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">الخامة</span>
+                <select
+                  value={draft.material}
+                  onChange={(e) => updateDraft({ material: e.target.value as BoardMaterial })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  {BOARD_MATERIAL_OPTIONS.map((m) => (
+                    <option key={m} value={m}>
+                      {BOARD_MATERIAL_LABELS[m]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">العرض (سم)</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.widthCm}
+                  onChange={(e) => updateDraft({ widthCm: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">الارتفاع (سم)</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.heightCm}
+                  onChange={(e) => updateDraft({ heightCm: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">الكمية</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.quantity}
+                  onChange={(e) => updateDraft({ quantity: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              {draft.material === 'BANNER' && (
+                <label className="flex items-center gap-2 self-end text-sm">
+                  <input type="checkbox" checked={draft.hasDesign} onChange={(e) => updateDraft({ hasDesign: e.target.checked })} />
+                  تصميم
+                </label>
+              )}
+              {(draft.material === 'VINYL_NORMAL' || draft.material === 'VINYL_PRINT_CUT') && (
+                <label className="flex items-center gap-2 self-end text-sm">
+                  <input
+                    type="checkbox"
+                    checked={draft.hasSellophane}
+                    onChange={(e) => updateDraft({ hasSellophane: e.target.checked })}
+                  />
+                  سلوفان
+                </label>
+              )}
+            </div>
+          )}
+
+          {draft.kind === 'PRODUCT' && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">المنتج</span>
+                <select
+                  value={draft.readyProductId}
+                  onChange={(e) => updateDraft({ readyProductId: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— اختر —</option>
+                  {readyProducts.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">الكمية</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.quantity}
+                  onChange={(e) => updateDraft({ quantity: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+          )}
+
+          {draft.kind === 'SERVICE' && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">الخدمة</span>
+                <select
+                  value={draft.serviceId}
+                  onChange={(e) => updateDraft({ serviceId: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— اختر —</option>
+                  {services.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">الكمية</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.quantity}
+                  onChange={(e) => updateDraft({ quantity: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+          )}
+
+          {/* صيغة تكلفة الطباعة الحية */}
+          {hasPrintSection && result && (typeof result.zincCost === 'number' || typeof result.printCost === 'number') && (
+            <p className="bg-muted/40 rounded-md p-2 text-xs" dir="rtl">
+              الزنكات: {draft.colorCount} × {pricingReference.pricingConstants.zincPrice} = {money(result.zincCost ?? 0)} ج.م — التراجات:{' '}
+              {result.printRuns ?? 0} × {pricingReference.pricingConstants.printRunPrice} = {money(result.printCost ?? 0)} ج.م
+            </p>
+          )}
+
+          {/* الخدمات الإضافية */}
+          <div className="space-y-2">
+            <p className="text-sm font-medium">الخدمات الإضافية</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {EXTRA_SERVICE_DEFS.map((def) => {
+                const enabled = draft[def.enabledKey];
+                return (
+                  <div key={def.enabledKey} className="border-border flex flex-col gap-1 rounded-lg border p-2">
+                    <label className="flex items-center gap-2 text-sm">
+                      <Checkbox checked={enabled} onCheckedChange={(v) => updateDraft({ [def.enabledKey]: v === true } as Partial<DraftItem>)} />
+                      {def.label}
+                    </label>
+                    {enabled && (
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="المبلغ"
+                        value={draft[def.amountKey]}
+                        onChange={(e) => updateDraft({ [def.amountKey]: e.target.value } as Partial<DraftItem>)}
+                        className="border-input bg-background w-full rounded-md border px-2 py-1 text-end text-xs"
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">ملاحظات أمر الشغل (تظهر في الطباعة)</span>
+            <textarea
+              value={draft.notes}
+              onChange={(e) => updateDraft({ notes: e.target.value })}
+              rows={2}
+              placeholder="اكتب ملاحظات للعامل... مثال: الطباعة وجهين، لون أحمر بالتون، قص بعد الطباعة..."
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+
+          {/* صورة المنتج — رفع اختياري لمرجعية التصميم */}
+          <div className="space-y-1">
+            <p className="text-muted-foreground text-sm">صورة المنتج (اختياري — لمرجعية التصميم)</p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void uploadAttachment(file);
+                e.target.value = '';
+              }}
+            />
+            {draft.attachmentUrl ? (
+              <div className="border-border flex items-center gap-3 rounded-xl border border-dashed p-3">
+                <img src={draft.attachmentUrl} alt="" className="size-16 rounded-md object-cover" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm">{draft.attachmentFileName}</p>
+                  <button
+                    type="button"
+                    onClick={() => updateDraft({ attachmentId: '', attachmentUrl: '', attachmentFileName: '' })}
+                    className="text-destructive text-xs"
+                  >
+                    إزالة الصورة
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) void uploadAttachment(file);
+                }}
+                onClick={() => fileInputRef.current?.click()}
+                className="border-border hover:bg-muted/30 flex cursor-pointer flex-col items-center gap-1 rounded-xl border border-dashed p-6 text-center"
+              >
+                <span>📤</span>
+                <span className="text-sm">{draft.attachmentUploading ? 'جارٍ الرفع…' : 'اضغط لاختيار صورة أو اسحبها هنا'}</span>
+                <span className="text-muted-foreground text-xs">5MB بحد أقصى — JPG, PNG, WEBP</span>
+              </div>
+            )}
+            {draft.attachmentError && <p className="text-destructive text-xs">{draft.attachmentError}</p>}
+          </div>
+
+          <div className="flex items-center justify-between border-t pt-2">
+            <p className="text-sm font-medium">
+              سعر البند:{' '}
+              <span className={draftPreview.error ? 'text-destructive' : 'text-foreground'}>
+                {draftPreview.error ?? `${money(draftPreview.total)} ج.م`}
+              </span>
+            </p>
+            <Button type="button" onClick={addToCart}>
+              🛒 إضافة للفاتورة
+            </Button>
+          </div>
         </div>
 
-        {/* The video's "live green box" — the final total, large and
-            instantly recalculated on every keystroke, no separate confirm
-            step. Cleopatra's own `--success` token, not the video's exact color. */}
-        <div className="bg-success/15 flex flex-col items-center gap-1 rounded-xl p-4 text-center">
-          <span className="text-success text-xs font-medium">الإجمالي النهائي</span>
-          <span className="text-success text-3xl font-bold tabular-nums">
-            {finalTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-          </span>
-          <span className="text-success text-xs">جنيه مصري</span>
-        </div>
-      </aside>
-    </form>
+        <label className="block space-y-1 text-sm">
+          <span className="text-muted-foreground">ملاحظات العميل</span>
+          <textarea
+            value={customerNotes}
+            onChange={(e) => setCustomerNotes(e.target.value)}
+            rows={2}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+        <label className="block space-y-1 text-sm">
+          <span className="text-muted-foreground">ملاحظات داخلية (لا تظهر للعميل)</span>
+          <textarea
+            value={internalNotes}
+            onChange={(e) => setInternalNotes(e.target.value)}
+            rows={2}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+      </div>
+    </div>
   );
 }

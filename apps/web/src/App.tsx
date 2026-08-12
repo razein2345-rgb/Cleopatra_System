@@ -13,6 +13,7 @@ import { PartnersPage } from '@/pages/partners/PartnersPage';
 import { PartnerProfilePage } from '@/pages/partners/PartnerProfilePage';
 import { DocumentsPage } from '@/pages/documents/DocumentsPage';
 import { QuotationDetailPage } from '@/pages/quotations/QuotationDetailPage';
+import { QuotationDocumentPage } from '@/pages/quotations/QuotationDocumentPage';
 import { NewOrderPage } from '@/pages/orders/NewOrderPage';
 import { OrderDocumentPage } from '@/pages/orders/OrderDocumentPage';
 import { WorkOrderDocumentPage } from '@/pages/orders/WorkOrderDocumentPage';
@@ -51,6 +52,8 @@ function App() {
               <Route element={<ProtectedRoute permission="quotations.view" />}>
                 <Route path="/quotations" element={<DocumentsPage />} />
                 <Route path="/quotations/:id" element={<QuotationDetailPage />} />
+                {/* FEATURE-006 M8 — Quotation document (print), same pattern as OrderDocumentPage. */}
+                <Route path="/quotations/:id/print" element={<QuotationDocumentPage />} />
               </Route>
 
               {/* FEATURE-007 — "الطلبات والمستندات": unified creation screen, save

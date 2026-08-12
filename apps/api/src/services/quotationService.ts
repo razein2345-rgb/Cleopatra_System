@@ -2,6 +2,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import type { CreateQuotationItemInput, Quotation, QuotationItem, QuotationStatus } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
+import { getPublicAttachmentUrl } from './attachmentService.js';
 
 /**
  * Centralized here (not duplicated per controller) — mirrors
@@ -190,6 +191,17 @@ export async function createQuotation(
   const ctx = await buildPricingContext(input.items);
   const priced = input.items.map((item) => computeItemPricing(item, ctx));
 
+  // FEATURE-007 — same reference-image resolution as createOrder (see its
+  // doc comment) — never trust a client-supplied URL string.
+  const attachmentIds = [...new Set(input.items.map((i) => i.attachmentId).filter((id): id is string => Boolean(id)))];
+  const attachmentUrlById = new Map(
+    attachmentIds.length
+      ? (await prisma.attachment.findMany({ where: { id: { in: attachmentIds } }, select: { id: true, storagePath: true } }))
+          .filter((a) => a.storagePath)
+          .map((a) => [a.id, getPublicAttachmentUrl(a.storagePath!)] as const)
+      : [],
+  );
+
   const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
   const discountPercent = input.discountPercent ?? 0;
   const afterDiscount = subtotal * (1 - discountPercent / 100);
@@ -199,7 +211,7 @@ export async function createQuotation(
 
   return prisma.$transaction(async (tx) => {
     const quotationNumber = await nextQuotationNumber(tx, input.branchId);
-    return tx.quotation.create({
+    const created = await tx.quotation.create({
       data: {
         quotationNumber,
         branchId: input.branchId,
@@ -226,7 +238,10 @@ export async function createQuotation(
               serviceId: item.serviceId ?? null,
               kind: item.itemType,
               modelName: readyProductName ?? serviceName,
-              breakdown: result.breakdown,
+              breakdown: {
+                ...(result.breakdown as Record<string, unknown>),
+                referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
+              },
               itemTotal: result.total,
               sizeFamilyKey: result.sizeFamilyKey,
               realSizeLabel: result.realSizeLabel,
@@ -236,5 +251,11 @@ export async function createQuotation(
       },
       include: QUOTATION_INCLUDE,
     });
+
+    if (attachmentIds.length) {
+      await tx.attachment.updateMany({ where: { id: { in: attachmentIds } }, data: { quotationId: created.id } });
+    }
+
+    return created;
   });
 }

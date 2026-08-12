@@ -104,6 +104,12 @@ export const createOrderItemSchema = z.object({
   description: z.string().trim().min(1).max(1000).optional(),
   readyProductId: z.string().uuid().optional(),
   serviceId: z.string().uuid().optional(),
+  // FEATURE-007 — id of an already-uploaded Attachment (POST
+  // /api/attachments happens before the item is added to the cart); the
+  // service resolves it to a real URL and freezes that into the item's
+  // breakdown as `referenceImageUrl`, and links Attachment.orderId once
+  // the Order exists.
+  attachmentId: z.string().uuid().optional(),
   pricing: orderItemPricingInputSchema,
 });
 

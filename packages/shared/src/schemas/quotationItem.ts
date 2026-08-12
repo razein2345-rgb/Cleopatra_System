@@ -56,6 +56,9 @@ export const createQuotationItemSchema = z.object({
   description: z.string().trim().min(1).max(1000).optional(),
   readyProductId: z.string().uuid().optional(),
   serviceId: z.string().uuid().optional(),
+  // FEATURE-007 — same attachment-linking pattern as createOrderItemSchema
+  // (order.ts) — see its doc comment.
+  attachmentId: z.string().uuid().optional(),
   pricing: orderItemPricingInputSchema,
 });
 

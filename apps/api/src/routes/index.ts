@@ -23,6 +23,7 @@ import { treasuryEntriesRouter } from './treasuryEntries.js';
 import { documentTemplatesRouter } from './documentTemplates.js';
 import { inventoryItemsRouter } from './inventoryItems.js';
 import { pricingReferenceRouter } from './pricingReference.js';
+import { attachmentsRouter } from './attachments.js';
 
 export const apiRouter = Router();
 
@@ -53,4 +54,5 @@ api.use('/treasury-entries', treasuryEntriesRouter);
 api.use('/document-templates', documentTemplatesRouter);
 api.use('/inventory-items', inventoryItemsRouter);
 api.use('/pricing-reference', pricingReferenceRouter);
+api.use('/attachments', attachmentsRouter);
 apiRouter.use('/api', api);

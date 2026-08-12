@@ -3,6 +3,7 @@ import type { CreateOrderItemInput, CreatePaymentInput, Order, OrderItem, Paymen
 import { prisma } from '../lib/prisma.js';
 import { deductStockForOrderItem } from './inventoryService.js';
 import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
+import { getPublicAttachmentUrl } from './attachmentService.js';
 
 export { PricingInputError } from './pricingEngineService.js';
 
@@ -248,6 +249,21 @@ export async function createOrder(
   const ctx = await buildPricingContext(input.items);
   const priced = input.items.map((item) => computeItemPricing(item, ctx));
 
+  // FEATURE-007 — reference-image upload (video's "صورة المنتج" dropzone).
+  // Each item's `attachmentId` points at an Attachment already uploaded via
+  // POST /api/attachments before the item was added to the cart; resolve
+  // the real storage path here (never trust a client-supplied URL string —
+  // this gets embedded as an <img> src on the printed Work Order) rather
+  // than inventing an OrderItem↔Attachment column.
+  const attachmentIds = [...new Set(input.items.map((i) => i.attachmentId).filter((id): id is string => Boolean(id)))];
+  const attachmentUrlById = new Map(
+    attachmentIds.length
+      ? (await prisma.attachment.findMany({ where: { id: { in: attachmentIds } }, select: { id: true, storagePath: true } }))
+          .filter((a) => a.storagePath)
+          .map((a) => [a.id, getPublicAttachmentUrl(a.storagePath!)] as const)
+      : [],
+  );
+
   const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
   const discountPercent = input.discountPercent ?? 0;
   const afterDiscount = subtotal * (1 - discountPercent / 100);
@@ -296,7 +312,11 @@ export async function createOrder(
               // silently lost: `buildOrderItemCreate`'s own `notes` param
               // only feeds its ad-hoc fallback shape, which this
               // `breakdownOverride` always bypasses.
-              breakdownOverride: { ...(result.breakdown as Record<string, unknown>), notes: item.notes ?? null },
+              breakdownOverride: {
+                ...(result.breakdown as Record<string, unknown>),
+                notes: item.notes ?? null,
+                referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
+              },
               sizeFamilyKey: result.sizeFamilyKey,
               realSizeLabel: result.realSizeLabel,
               inventoryItemId: result.inventoryItemId,
@@ -307,6 +327,12 @@ export async function createOrder(
       },
       select: { id: true, branchId: true, partnerId: true, invoiceNumber: true, _count: { select: { items: true } } },
     });
+
+    // Link each uploaded Attachment to this Order now that it exists —
+    // mirrors the Payment+TreasuryEntry atomicity below, same transaction.
+    if (attachmentIds.length) {
+      await tx.attachment.updateMany({ where: { id: { in: attachmentIds } }, data: { orderId: created.id } });
+    }
 
     // FEATURE-007 M2 — auto-deduct stock in the same transaction as the
     // order, mirroring the Payment+Treasury atomicity pattern. Locked

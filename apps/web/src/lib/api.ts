@@ -41,6 +41,25 @@ export function apiPost<T>(path: string, data?: unknown): Promise<T> {
   });
 }
 
+/**
+ * FEATURE-007 — attachment upload (multipart). Can't reuse `request()`
+ * directly — it hardcodes `Content-Type: application/json`, which would
+ * override the `multipart/form-data; boundary=...` the browser needs to
+ * set itself from the FormData body.
+ */
+export async function apiPostFormData<T>(path: string, formData: FormData): Promise<T> {
+  const res = await fetch(`${apiUrl}${path}`, {
+    method: 'POST',
+    headers: await authHeaders(),
+    body: formData,
+  });
+  const body = (await res.json()) as ApiResponse<T>;
+  if (!body.success) {
+    throw new Error(body.error.message);
+  }
+  return body.data;
+}
+
 export function apiPut<T>(path: string, data?: unknown): Promise<T> {
   return request<T>(path, {
     method: 'PUT',
