@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import { createBranchSchema, updateBranchSchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 
-const BRANCH_SELECT = { id: true, name: true, code: true, address: true, isDefault: true };
+const BRANCH_SELECT = { id: true, name: true, code: true, address: true, isDefault: true, logoUrl: true };
 
 /**
  * Read-only, requireAuth-only (no specific permission) — branch name/code is

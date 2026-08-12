@@ -170,6 +170,17 @@
  * other screen is meant to be printed directly.
  */
 @media print {
+  /*
+   * FEATURE-007 (2026-08-12, owner: "مش عايز في الطباعة يطلع لينك
+   * الموقع في الورقة") — Chrome/Edge print the page title + URL in the
+   * margin area by default ("Headers and footers" in the print dialog);
+   * this isn't anything DocumentRenderer renders itself. Zeroing the
+   * @page margin reclaims that area so there's nothing left for the
+   * browser to draw its own header/footer into.
+   */
+  @page {
+    margin: 0;
+  }
   body * {
     visibility: hidden;
   }
@@ -183,6 +194,6 @@
     width: 100%;
     max-width: none;
     margin: 0;
-    padding: 0;
+    padding: 1.5cm;
   }
 }

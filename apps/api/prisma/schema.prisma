@@ -261,6 +261,8 @@ model Branch {
   code      String  @unique
   address   String?
   isDefault Boolean @default(false)
+  /// FEATURE-007 (2026-08-12, owner: "لما اختار فرع بيت الطباعة يطلعلي فاتورة فيها لوجو بيت الطباعة") — per-branch letterhead logo. Null falls back to the global `Setting.logoUrl` (documents from a branch with no logo of its own still print something).
+  logoUrl   String?
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?

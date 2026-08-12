@@ -89,18 +89,19 @@ export function DocumentRenderer({
           src={business.logoUrl ?? undefined}
           alt=""
           aria-hidden
-          className="pointer-events-none absolute start-1/2 top-1/2 max-h-[65%] max-w-[65%] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.06] print:opacity-[0.08]"
+          className="pointer-events-none absolute left-1/2 top-1/2 max-h-[65%] max-w-[65%] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.06] print:opacity-[0.08]"
         />
       )}
 
       <div className="relative">
         {showBranding && (
           <header className="mb-6 flex items-start justify-between">
-            <div>{showLogo && <img src={business.logoUrl ?? undefined} alt="" className="h-16 object-contain" />}</div>
+            {/* عايز اللوجو يظهر شمال والإسم يظهر يمين (owner, 2026-08-12) — الاسم أول عنصر في DOM (يمين في RTL)، اللوجو تاني عنصر (شمال). */}
             <div className="text-end">
               <div className="text-primary text-2xl font-extrabold">{business.nameAr || '—'}</div>
               {business.nameEn && <div className="text-muted-foreground text-sm">{business.nameEn}</div>}
             </div>
+            <div>{showLogo && <img src={business.logoUrl ?? undefined} alt="" className="h-16 object-contain" />}</div>
           </header>
         )}
 

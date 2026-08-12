@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { BusinessIdentity, BusinessPartner, Quotation } from '@cleopatra/shared';
+import type { BranchSummary, BusinessIdentity, BusinessPartner, Quotation } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
@@ -17,6 +17,7 @@ export function QuotationDocumentPage() {
   const [quotation, setQuotation] = useState<Quotation | null>(null);
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
+  const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -27,11 +28,13 @@ export function QuotationDocumentPage() {
         return Promise.all([
           apiGet<BusinessPartner>(`/api/partners/${q.partnerId}`),
           apiGet<BusinessIdentity>('/api/settings/business-identity'),
+          apiGet<BranchSummary[]>('/api/branches').catch(() => []),
         ]);
       })
-      .then(([p, b]) => {
+      .then(([p, b, br]) => {
         setPartner(p);
         setBusiness(b);
+        setBranches(br);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل عرض السعر'));
   }, [id]);
@@ -51,7 +54,8 @@ export function QuotationDocumentPage() {
     };
   });
 
-  const snapshot = resolveDocumentSnapshot(business, null, null);
+  const branch = branches.find((b) => b.id === quotation.branchId);
+  const snapshot = resolveDocumentSnapshot(business, null, null, branch?.logoUrl);
 
   return (
     <div className="space-y-4">

@@ -37,6 +37,8 @@ export function resolveDocumentSnapshot(
   setting: BusinessIdentity | null,
   template: DocumentTemplate | null,
   overrides: DocumentTemplateConfig | null,
+  /** FEATURE-007 (2026-08-12, owner: "لما اختار فرع بيت الطباعة يطلعلي فاتورة فيها لوجو بيت الطباعة") — the issuing Branch's own logo, when it has one, wins over the global business logo. */
+  branchLogoUrl?: string | null,
 ): DocumentSnapshot {
   return {
     business: {
@@ -48,7 +50,7 @@ export function resolveDocumentSnapshot(
       website: setting?.website ?? null,
       taxNumber: setting?.taxNumber ?? null,
       commercialRegisterNumber: setting?.commercialRegisterNumber ?? null,
-      logoUrl: setting?.logoUrl ?? null,
+      logoUrl: branchLogoUrl ?? setting?.logoUrl ?? null,
     },
     templateName: template?.name ?? null,
     config: {

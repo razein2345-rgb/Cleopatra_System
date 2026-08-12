@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { BusinessIdentity, BusinessPartner, Order, OrderItem, User, WorkOrder } from '@cleopatra/shared';
+import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem, User, WorkOrder } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
@@ -100,6 +100,7 @@ export function WorkOrderDocumentPage() {
   const [order, setOrder] = useState<Order | null>(null);
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
+  const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [staff, setStaff] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,12 +117,14 @@ export function WorkOrderDocumentPage() {
           apiGet<BusinessPartner>(`/api/partners/${o.partnerId}`),
           apiGet<BusinessIdentity>('/api/settings/business-identity'),
           apiGet<User[]>('/api/users').catch(() => []),
+          apiGet<BranchSummary[]>('/api/branches').catch(() => []),
         ]);
       })
-      .then(([p, b, s]) => {
+      .then(([p, b, s, br]) => {
         setPartner(p);
         setBusiness(b);
         setStaff(s);
+        setBranches(br);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل أمر الشغل'));
   }, [id]);
@@ -134,6 +137,9 @@ export function WorkOrderDocumentPage() {
   const responsibleStaff = staff.find((s) => s.id === order.staffId)?.name ?? '—';
   const qrData = encodeURIComponent(`WorkOrder:${workOrder.workOrderNumber}|Client:${partner.nameAr}`);
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${qrData}`;
+  // FEATURE-007 (2026-08-12) — the issuing branch's own logo wins over the global one.
+  const branch = branches.find((b) => b.id === order.branchId);
+  const effectiveLogoUrl = branch?.logoUrl || business.logoUrl;
 
   if (order.productionTrack !== 'OFFSET') {
     const items: DocumentRendererItem[] = order.items.map((item) => {
@@ -146,7 +152,7 @@ export function WorkOrderDocumentPage() {
         notes: breakdown?.notes ?? null,
       };
     });
-    const snapshot = resolveDocumentSnapshot(business, null, null);
+    const snapshot = resolveDocumentSnapshot(business, null, null, branch?.logoUrl);
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between print:hidden">
@@ -188,13 +194,18 @@ export function WorkOrderDocumentPage() {
         </Button>
       </div>
 
-      <div className="document-print-root bg-background text-foreground mx-auto max-w-4xl p-8 text-sm">
-        <header className="border-border mb-6 flex items-start justify-between border-b pb-4">
-          <div>
-            {business.logoUrl && <img src={business.logoUrl} alt="" className="mb-2 h-14 object-contain" />}
-            <div className="text-lg font-bold">{business.businessNameAr || '—'}</div>
-          </div>
+      <div className="document-print-root bg-background text-foreground relative mx-auto max-w-4xl overflow-hidden p-8 text-sm">
+        {effectiveLogoUrl && (
+          <img
+            src={effectiveLogoUrl}
+            alt=""
+            aria-hidden
+            className="pointer-events-none absolute left-1/2 top-1/2 max-h-[65%] max-w-[65%] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.06] print:opacity-[0.08]"
+          />
+        )}
+        <header className="border-border relative mb-6 flex items-start justify-between border-b pb-4">
           <div className="text-end">
+            <div className="text-lg font-bold">{business.businessNameAr || '—'}</div>
             <div className="text-lg font-bold">أمر شغل — أوفست</div>
             <div className="text-xs">
               رقم: <span dir="ltr">{workOrder.workOrderNumber}</span>
@@ -208,9 +219,10 @@ export function WorkOrderDocumentPage() {
               </div>
             )}
           </div>
+          <div>{effectiveLogoUrl && <img src={effectiveLogoUrl} alt="" className="h-14 object-contain" />}</div>
         </header>
 
-        <section className="mb-6 flex items-start justify-between">
+        <section className="relative mb-6 flex items-start justify-between">
           <div className="space-y-1">
             <div>
               <span className="text-muted-foreground text-xs">العميل: </span>
