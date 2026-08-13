@@ -60,7 +60,7 @@ export function EmployeeProfilePage() {
       <div>
         <h1 className="text-2xl font-bold">{user.name}</h1>
         <Link to="/users" className="text-muted-foreground text-sm hover:underline">
-          العودة إلى المستخدمين
+          العودة إلى الموظفين
         </Link>
       </div>
 

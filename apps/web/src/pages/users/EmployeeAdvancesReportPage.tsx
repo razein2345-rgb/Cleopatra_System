@@ -31,7 +31,7 @@ export function EmployeeAdvancesReportPage() {
       <div>
         <h1 className="text-2xl font-bold">تقرير السلف والمرتبات</h1>
         <Link to="/users" className="text-muted-foreground text-sm hover:underline">
-          العودة إلى المستخدمين
+          العودة إلى الموظفين
         </Link>
       </div>
 

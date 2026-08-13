@@ -34,7 +34,7 @@ const NAV_ITEMS: NavEntry[] = [
   },
   { kind: 'link', to: '/inventory', label: 'المخزن', icon: Package, permission: 'inventory.view' },
   { kind: 'link', to: '/production-board', label: 'لوحة الإنتاج', icon: Factory, permission: 'work-orders.view' },
-  { kind: 'link', to: '/users', label: 'المستخدمون', icon: UserCog, permission: 'employees.view' },
+  { kind: 'link', to: '/users', label: 'الموظفين', icon: UserCog, permission: 'employees.view' },
   { kind: 'link', to: '/roles', label: 'الأدوار', icon: ShieldCheck, permission: 'roles.view' },
   { kind: 'link', to: '/permissions', label: 'الصلاحيات', icon: KeyRound, permission: 'permissions.view' },
 ];

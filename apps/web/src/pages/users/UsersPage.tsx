@@ -31,7 +31,7 @@ export function UsersPage() {
         setBranches(b);
       })
       .catch((err: unknown) =>
-        setError(err instanceof Error ? err.message : 'تعذر تحميل المستخدمين'),
+        setError(err instanceof Error ? err.message : 'تعذر تحميل الموظفين'),
       );
   };
 
@@ -56,12 +56,12 @@ export function UsersPage() {
   };
 
   if (error) return <div className="text-destructive">{error}</div>;
-  if (!users) return <div className="text-muted-foreground">جارٍ تحميل المستخدمين…</div>;
+  if (!users) return <div className="text-muted-foreground">جارٍ تحميل الموظفين…</div>;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">المستخدمون</h1>
+        <h1 className="text-2xl font-bold">الموظفين</h1>
         <div className="flex gap-2">
           {can('employees.view') && (
             <Link to="/users/advances-report">

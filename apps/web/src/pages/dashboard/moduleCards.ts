@@ -39,7 +39,7 @@ export const DASHBOARD_MODULE_CARDS: DashboardModuleCard[] = [
   { id: 'treasury', to: '/treasury', label: 'الخزينة والنقدية', icon: Wallet, tone: 'warning', permission: ['treasury.view', 'treasury.create'] },
   { id: 'inventory', to: '/inventory', label: 'المخزن', icon: Package, tone: 'info', permission: 'inventory.view' },
   { id: 'production-board', to: '/production-board', label: 'لوحة الإنتاج', icon: Factory, tone: 'primary', permission: 'work-orders.view' },
-  { id: 'users', to: '/users', label: 'المستخدمون', icon: UserCog, tone: 'secondary', permission: 'employees.view' },
+  { id: 'users', to: '/users', label: 'الموظفين', icon: UserCog, tone: 'secondary', permission: 'employees.view' },
   { id: 'roles', to: '/roles', label: 'الأدوار', icon: ShieldCheck, tone: 'info', permission: 'roles.view' },
   { id: 'permissions', to: '/permissions', label: 'الصلاحيات', icon: KeyRound, tone: 'danger', permission: 'permissions.view' },
   { id: 'settings', to: '/settings', label: 'الإعدادات', icon: SettingsIcon, tone: 'warning', permission: 'settings.view' },
