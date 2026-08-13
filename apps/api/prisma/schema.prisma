@@ -54,6 +54,17 @@ enum InventoryUnit {
 enum ServiceCategory {
   DESIGN
   MONTAGE
+  /// FEATURE-009 (2026-08-13) — عايز نعيد تنظيم قسم الطلبات والمستندات:
+  /// "خدمات" parent tab gets 5 sub-tabs (تصميم/مونتاج/مواقع/تصوير/تسويق).
+  WEBSITES
+  PHOTOGRAPHY
+  MARKETING
+}
+
+/// FEATURE-009 (2026-08-13) — `ReadyProduct.sourceType`; see that field's own doc comment.
+enum ProductSourceType {
+  INTERNAL_PRODUCTION
+  EXTERNAL_SUPPLIER
 }
 
 enum OrderStatus {
@@ -76,6 +87,14 @@ enum ProductionTrack {
   DIGITAL
   BOARDS_SIGNAGE
   OTHER_PRODUCTS
+  /// FEATURE-009 (2026-08-13) — reserved so a services-only or ready-
+  /// products-only order can eventually get its own dedicated
+  /// WorkflowTemplate/Work Order shape; no template exists for either yet
+  /// (owner: "جهز الـarchitecture فقط... لا تخترع لها قواعد من عندك") —
+  /// `createWorkOrder` already returns a clean 400 NO_PUBLISHED_TEMPLATE
+  /// if one is picked before a template is defined.
+  SERVICES
+  READY_PRODUCTS
 }
 
 /// @deprecated FEATURE-004 M1. See `WorkOrder.productionStatus`'s own doc
@@ -522,9 +541,15 @@ model SheetType {
 }
 
 model ReadyProduct {
-  id    String  @id @default(uuid()) @db.Uuid
-  name  String
-  price Decimal @db.Decimal(12, 2)
+  id         String             @id @default(uuid()) @db.Uuid
+  name       String
+  price      Decimal            @db.Decimal(12, 2)
+  /// FEATURE-009 (2026-08-13, owner: "لا تبني Products جاهزة على افتراض أن
+  /// كل المنتجات يتم إنتاجها داخل المطبعة... يجب أن يكون الـarchitecture
+  /// قادرًا على تحديد مصدر تنفيذ المنتج") — metadata only, no pricing/
+  /// workflow behavior attached yet. Nullable: existing products stay
+  /// unset until an admin fills this in.
+  sourceType ProductSourceType?
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?

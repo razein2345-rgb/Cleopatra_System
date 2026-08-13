@@ -7,7 +7,11 @@ import { useAuth } from '@/state/AuthContext';
 const CATEGORY_LABELS: Record<ServiceCategory, string> = {
   DESIGN: 'تصميم',
   MONTAGE: 'مونتاج',
+  WEBSITES: 'بناء المواقع الإلكترونية',
+  PHOTOGRAPHY: 'التصوير',
+  MARKETING: 'التسويق',
 };
+const CATEGORY_OPTIONS = Object.keys(CATEGORY_LABELS) as ServiceCategory[];
 
 export function ServicesEditor({ services, onChanged }: { services: Service[]; onChanged: () => void }) {
   const { can } = useAuth();
@@ -30,7 +34,7 @@ export function ServicesEditor({ services, onChanged }: { services: Service[]; o
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-muted-foreground text-sm font-bold">الخدمات (تصميم / مونتاج)</h3>
+        <h3 className="text-muted-foreground text-sm font-bold">الخدمات</h3>
         {canManage && (
           <Button variant="secondary" size="sm" onClick={() => setShowCreate((v) => !v)}>
             {showCreate ? 'إلغاء' : '+ إضافة'}
@@ -140,8 +144,11 @@ function ServiceForm({
           onChange={(e) => setCategory(e.target.value as ServiceCategory)}
           className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
         >
-          <option value="DESIGN">تصميم</option>
-          <option value="MONTAGE">مونتاج</option>
+          {CATEGORY_OPTIONS.map((c) => (
+            <option key={c} value={c}>
+              {CATEGORY_LABELS[c]}
+            </option>
+          ))}
         </select>
       </label>
       <label className="w-28 space-y-1 text-xs">

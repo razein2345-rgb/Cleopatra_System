@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-export const serviceCategorySchema = z.enum(['DESIGN', 'MONTAGE']);
+/** FEATURE-009 (2026-08-13) — "خدمات" parent tab's 5 sub-tabs (تصميم/مونتاج/مواقع/تصوير/تسويق). */
+export const serviceCategorySchema = z.enum(['DESIGN', 'MONTAGE', 'WEBSITES', 'PHOTOGRAPHY', 'MARKETING']);
 
 export const serviceSchema = z.object({
   id: z.string().uuid(),

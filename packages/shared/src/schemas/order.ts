@@ -20,7 +20,18 @@ export const orderStatusSchema = z.enum([
  * either Offset or Digital and only the person taking the order knows
  * which. `createWorkOrder` reads this to auto-resolve `templateCode`.
  */
-export const productionTrackSchema = z.enum(['OFFSET', 'DIGITAL', 'BOARDS_SIGNAGE', 'OTHER_PRODUCTS']);
+// FEATURE-009 (2026-08-13) — SERVICES/READY_PRODUCTS reserved so a
+// services-only or ready-products-only order can eventually get its own
+// dedicated WorkflowTemplate; no template exists for either yet (owner:
+// "جهز الـarchitecture فقط... لا تخترع لها قواعد من عندك").
+export const productionTrackSchema = z.enum([
+  'OFFSET',
+  'DIGITAL',
+  'BOARDS_SIGNAGE',
+  'OTHER_PRODUCTS',
+  'SERVICES',
+  'READY_PRODUCTS',
+]);
 
 /**
  * A historical line item snapshot — `kind`/`modelName`/`breakdown` are

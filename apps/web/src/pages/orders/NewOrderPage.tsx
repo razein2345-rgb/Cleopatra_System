@@ -37,10 +37,16 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/state/AuthContext';
+import { ORDER_ITEM_CATEGORIES } from '@/lib/orders/itemCategories';
 
 type PricingKind = OrderItemPricingInput['kind'];
 /** Which document the unified الطلبات والمستندات screen saves the same item set as (owner, 2026-08-10 — one creation flow, two destinations). Work Order generation is a follow-on action on an already-created Invoice, not a third save target — a WorkOrder always wraps an existing Order (see `createWorkOrder`'s own doc comment). */
 type DocumentType = 'INVOICE' | 'QUOTATION';
+
+const PRODUCT_SOURCE_TYPE_LABELS: Record<NonNullable<ReadyProduct['sourceType']>, string> = {
+  INTERNAL_PRODUCTION: 'تصنيع داخلي',
+  EXTERNAL_SUPPLIER: 'مورّد خارجي',
+};
 
 const KIND_LABELS: Record<PricingKind, string> = {
   LOOSE_PAPER: 'ورق سايب',
@@ -51,8 +57,6 @@ const KIND_LABELS: Record<PricingKind, string> = {
   PRODUCT: 'منتج جاهز',
   SERVICE: 'خدمة',
 };
-/** Everything except NOTEBOOK — the video's "مطبوعات ورقية وخدمات" tab (owner, 2026-08-12: keep all 7 real pricing kinds intact, just regroup visually to match the reference video's two-tab layout instead of collapsing them into the video's own simpler generic model). */
-const PAPER_AND_SERVICES_KINDS: PricingKind[] = ['LOOSE_PAPER', 'ENVELOPE', 'FOLDER', 'BOARDS', 'PRODUCT', 'SERVICE'];
 
 /** FEATURE-007 WF-B — matches `WorkflowTemplate.code` for the 4 tracks seeded by WF-A; the customer's chosen track routes the eventual Work Order, never inferred from item kind (owner, 2026-08-12). */
 const PRODUCTION_TRACK_LABELS: Record<ProductionTrack, string> = {
@@ -60,6 +64,11 @@ const PRODUCTION_TRACK_LABELS: Record<ProductionTrack, string> = {
   DIGITAL: 'ديجيتال',
   BOARDS_SIGNAGE: 'لوحات وإعلانات',
   OTHER_PRODUCTS: 'منتجات أخرى',
+  // FEATURE-009 (2026-08-13) — reserved tracks, no WorkflowTemplate exists
+  // for either yet; createWorkOrder already handles that gracefully
+  // (400 NO_PUBLISHED_TEMPLATE) if picked before one is defined.
+  SERVICES: 'خدمات',
+  READY_PRODUCTS: 'منتجات جاهزة',
 };
 const PRODUCTION_TRACK_OPTIONS = Object.keys(PRODUCTION_TRACK_LABELS) as ProductionTrack[];
 
@@ -1023,7 +1032,9 @@ function NewOrderForm({
       .filter((w): w is string => w !== null);
   });
   // النموذج على اليمين — بند واحد بيتصمم في المرة (نمط الفيديو)
-  const [activeTab, setActiveTab] = useState<'PAPER_SERVICES' | 'NCR'>('PAPER_SERVICES');
+  // FEATURE-009 (2026-08-13) — الأقسام الرئيسية والفرعية، مبنية على ORDER_ITEM_CATEGORIES.
+  const [activeParentId, setActiveParentId] = useState('OFFSET');
+  const [activeSubTabId, setActiveSubTabId] = useState<string | undefined>('LOOSE_PAPER');
   const [draft, setDraft] = useState<DraftItem>(() => emptyDraftItem());
   const [itemError, setItemError] = useState<string | null>(null);
 
@@ -1064,13 +1075,20 @@ function NewOrderForm({
 
   const updateDraft = (patch: Partial<DraftItem>) => setDraft((prev) => ({ ...prev, ...patch }));
 
-  const switchTab = (tab: 'PAPER_SERVICES' | 'NCR') => {
-    setActiveTab(tab);
-    if (tab === 'NCR' && draft.kind !== 'NOTEBOOK') {
-      setDraft(emptyDraftItem('NOTEBOOK'));
-    } else if (tab === 'PAPER_SERVICES' && draft.kind === 'NOTEBOOK') {
-      setDraft(emptyDraftItem('LOOSE_PAPER'));
-    }
+  const activeParent = ORDER_ITEM_CATEGORIES.find((c) => c.id === activeParentId) ?? ORDER_ITEM_CATEGORIES[0]!;
+  const activeSubTab = activeParent.subTabs?.find((s) => s.id === activeSubTabId);
+  const isPendingCategory = activeParent.status === 'pending';
+
+  /** FEATURE-009 (2026-08-13) — selecting a parent (and its sub-tab, if any) resolves the real pricing `kind` and resets the draft to it, mirroring the old `switchTab`'s behavior exactly — just generalized from 2 flat tabs to 5 parent tabs (some with sub-tabs). Digital (`status: 'pending'`) never sets `draft.kind` — there's no pricing logic to build a form around yet. */
+  const selectCategory = (parentId: string, subTabId?: string) => {
+    const parent = ORDER_ITEM_CATEGORIES.find((c) => c.id === parentId);
+    if (!parent) return;
+    const resolvedSubTabId = subTabId ?? parent.subTabs?.[0]?.id;
+    setActiveParentId(parentId);
+    setActiveSubTabId(resolvedSubTabId);
+    if (parent.status === 'pending') return;
+    const kind = parent.kind ?? parent.subTabs?.find((s) => s.id === resolvedSubTabId)?.kind;
+    if (kind) setDraft(emptyDraftItem(kind));
   };
 
   const familyEntries = (familyKey: string): SizeFamily['entries'] =>
@@ -1131,7 +1149,7 @@ function NewOrderForm({
       total: preview.total,
     };
     setCart((prev) => [...prev, line]);
-    setDraft(emptyDraftItem(activeTab === 'NCR' ? 'NOTEBOOK' : 'LOOSE_PAPER'));
+    setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER'));
   };
 
   const removeFromCart = (key: string) => setCart((prev) => prev.filter((line) => line.key !== key));
@@ -1564,43 +1582,43 @@ function NewOrderForm({
           </div>
         </div>
 
-        {/* التابين — مطبوعات ورقية وخدمات / دفاتر مكررة NCR */}
-        <div className="border-border bg-muted/30 inline-flex rounded-lg border p-1 text-sm">
-          <button
-            type="button"
-            onClick={() => switchTab('PAPER_SERVICES')}
-            className={`rounded-md px-4 py-1.5 font-medium ${activeTab === 'PAPER_SERVICES' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}
-          >
-            🖶 مطبوعات ورقية وخدمات
-          </button>
-          <button
-            type="button"
-            onClick={() => switchTab('NCR')}
-            className={`rounded-md px-4 py-1.5 font-medium ${activeTab === 'NCR' ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}
-          >
-            📑 دفاتر مكررة (NCR)
-          </button>
+        {/* FEATURE-009 (2026-08-13) — الأقسام الرئيسية: أوفست / ديجيتال / لوحات وإعلانات / خدمات / منتجات جاهزة */}
+        <div className="border-border bg-muted/30 inline-flex flex-wrap gap-1 rounded-lg border p-1 text-sm">
+          {ORDER_ITEM_CATEGORIES.map((parent) => (
+            <button
+              key={parent.id}
+              type="button"
+              onClick={() => selectCategory(parent.id)}
+              className={`rounded-md px-4 py-1.5 font-medium ${activeParentId === parent.id ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}
+            >
+              {parent.label}
+              {parent.status === 'pending' && <span className="text-muted-foreground text-xs"> (قريبًا)</span>}
+            </button>
+          ))}
         </div>
+
+        {activeParent.subTabs && (
+          <div className="border-border bg-muted/20 inline-flex flex-wrap gap-1 rounded-lg border p-1 text-xs">
+            {activeParent.subTabs.map((sub) => (
+              <button
+                key={sub.id}
+                type="button"
+                onClick={() => selectCategory(activeParentId, sub.id)}
+                className={`rounded-md px-3 py-1 font-medium ${activeSubTabId === sub.id ? 'bg-card shadow-sm' : 'text-muted-foreground'}`}
+              >
+                {sub.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="border-border bg-card space-y-4 rounded-2xl border p-4">
           {itemError && <div className="text-destructive text-sm">{itemError}</div>}
 
-          {activeTab === 'PAPER_SERVICES' && (
-            <label className="block max-w-xs space-y-1 text-sm">
-              <span className="text-muted-foreground">نوع البند</span>
-              <select
-                value={draft.kind}
-                onChange={(e) => setDraft(emptyDraftItem(e.target.value as PricingKind))}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              >
-                {PAPER_AND_SERVICES_KINDS.map((k) => (
-                  <option key={k} value={k}>
-                    {KIND_LABELS[k]}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
+          {isPendingCategory ? (
+            <p className="text-muted-foreground text-sm">منطق التسعير الخاص بـ{activeParent.label} هيتحدد لاحقًا — قريبًا.</p>
+          ) : (
+            <>
 
           <label className="block space-y-1 text-sm">
             <span className="text-muted-foreground">اسم البند / العملية</span>
@@ -1961,6 +1979,7 @@ function NewOrderForm({
                   {readyProducts.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
+                      {p.sourceType ? ` (${PRODUCT_SOURCE_TYPE_LABELS[p.sourceType]})` : ''}
                     </option>
                   ))}
                 </select>
@@ -1988,11 +2007,13 @@ function NewOrderForm({
                   className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 >
                   <option value="">— اختر —</option>
-                  {services.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
+                  {services
+                    .filter((s) => !activeSubTab?.serviceCategory || s.category === activeSubTab.serviceCategory)
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                      </option>
+                    ))}
                 </select>
               </label>
               <label className="space-y-1 text-sm">
@@ -2114,6 +2135,8 @@ function NewOrderForm({
               🛒 إضافة للفاتورة
             </Button>
           </div>
+            </>
+          )}
         </div>
 
         <label className="block space-y-1 text-sm">

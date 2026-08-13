@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem, User, WorkOrder } from '@cleopatra/shared';
+import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem, ProductionTrack, User, WorkOrder } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
@@ -40,6 +40,28 @@ interface OffsetItemBreakdown {
 function offsetBreakdown(item: OrderItem): OffsetItemBreakdown {
   return (item.breakdown as OffsetItemBreakdown | null) ?? {};
 }
+
+/**
+ * FEATURE-009 (2026-08-13, owner: "كل قسم رئيسي... له شكل Work Order
+ * مختلف حسب طبيعة العمل... يجب تصميم النظام بحيث يكون هناك Work Order
+ * structure قابل للتخصيص حسب نوع الـProduct/Service والـDepartment"). A
+ * registry keyed by `ProductionTrack`, not an ad-hoc boolean check — adding
+ * a distinct shape for a track later (once its content is actually
+ * specified) means adding a new `TrackRenderer` case + a new branch below,
+ * without touching how the others render. OFFSET is the only track with a
+ * defined distinct shape today (`OffsetItemsTable`); every other track
+ * intentionally falls through to the same generic shape until its own is
+ * specified — never invented ahead of a real spec.
+ */
+type TrackRenderer = 'OFFSET_DETAILED' | 'GENERIC';
+const WORK_ORDER_TRACK_RENDERERS: Record<ProductionTrack, TrackRenderer> = {
+  OFFSET: 'OFFSET_DETAILED',
+  DIGITAL: 'GENERIC',
+  BOARDS_SIGNAGE: 'GENERIC',
+  OTHER_PRODUCTS: 'GENERIC',
+  SERVICES: 'GENERIC',
+  READY_PRODUCTS: 'GENERIC',
+};
 
 function OffsetItemsTable({ items }: { items: OrderItem[] }) {
   return (
@@ -136,14 +158,13 @@ export function WorkOrderDocumentPage() {
   }
 
   const responsibleStaff = staff.find((s) => s.id === order.staffId)?.name ?? '—';
-  const qrData = encodeURIComponent(`WorkOrder:${workOrder.workOrderNumber}|Client:${partner.nameAr}`);
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${qrData}`;
   // FEATURE-007 (2026-08-12) — the issuing branch's own identity wins over the global one.
   const branch = branches.find((b) => b.id === order.branchId);
   const effectiveLogoUrl = branch?.logoUrl || business.logoUrl;
   const effectiveName = branch?.name || business.businessNameAr;
 
-  if (order.productionTrack !== 'OFFSET') {
+  const trackRenderer = order.productionTrack ? WORK_ORDER_TRACK_RENDERERS[order.productionTrack] : 'GENERIC';
+  if (trackRenderer !== 'OFFSET_DETAILED') {
     const items: DocumentRendererItem[] = order.items.map((item) => {
       const breakdown = item.breakdown as { quantity?: number; notes?: string | null } | null;
       return {
@@ -226,28 +247,25 @@ export function WorkOrderDocumentPage() {
           <div>{effectiveLogoUrl && <img src={effectiveLogoUrl} alt="" className="h-14 object-contain" />}</div>
         </header>
 
-        <section className="relative mb-6 flex items-start justify-between">
-          <div className="space-y-1">
-            <div>
-              <span className="text-muted-foreground text-xs">العميل: </span>
-              <span className="font-medium">{partner.nameAr}</span>
-            </div>
-            {partner.phone && (
-              <div>
-                <span className="text-muted-foreground text-xs">الهاتف: </span>
-                <span dir="ltr">{partner.phone}</span>
-              </div>
-            )}
-            <div>
-              <span className="text-muted-foreground text-xs">الموظف المسؤول: </span>
-              <span>{responsibleStaff}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground text-xs">الحالة الحالية: </span>
-              <span>{ORDER_STATUS_LABELS[order.status]}</span>
-            </div>
+        <section className="relative mb-6 space-y-1">
+          <div>
+            <span className="text-muted-foreground text-xs">العميل: </span>
+            <span className="font-medium">{partner.nameAr}</span>
           </div>
-          <img src={qrUrl} alt="QR" width={90} height={90} />
+          {partner.phone && (
+            <div>
+              <span className="text-muted-foreground text-xs">الهاتف: </span>
+              <span dir="ltr">{partner.phone}</span>
+            </div>
+          )}
+          <div>
+            <span className="text-muted-foreground text-xs">الموظف المسؤول: </span>
+            <span>{responsibleStaff}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground text-xs">الحالة الحالية: </span>
+            <span>{ORDER_STATUS_LABELS[order.status]}</span>
+          </div>
         </section>
 
         <OffsetItemsTable items={order.items} />

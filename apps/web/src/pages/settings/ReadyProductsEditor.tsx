@@ -1,8 +1,13 @@
 import { useState } from 'react';
-import type { ReadyProduct } from '@cleopatra/shared';
+import type { ProductSourceType, ReadyProduct } from '@cleopatra/shared';
 import { apiDelete, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/state/AuthContext';
+
+const SOURCE_TYPE_LABELS: Record<ProductSourceType, string> = {
+  INTERNAL_PRODUCTION: 'تصنيع داخلي',
+  EXTERNAL_SUPPLIER: 'مورّد خارجي',
+};
 
 export function ReadyProductsEditor({
   readyProducts,
@@ -40,8 +45,8 @@ export function ReadyProductsEditor({
       </div>
       {error && <div className="text-destructive mb-2 text-sm">{error}</div>}
       {showCreate && (
-        <NameFieldForm
-          onSubmit={(name, price) => apiPost('/api/ready-products', { name, price })}
+        <ReadyProductForm
+          onSubmit={(name, price, sourceType) => apiPost('/api/ready-products', { name, price, sourceType })}
           onSaved={() => {
             setShowCreate(false);
             onChanged();
@@ -53,10 +58,11 @@ export function ReadyProductsEditor({
         {readyProducts.map((p) =>
           editing?.id === p.id ? (
             <li key={p.id} className="border-border border-b py-1.5">
-              <NameFieldForm
+              <ReadyProductForm
                 initialName={p.name}
                 initialPrice={p.price}
-                onSubmit={(name, price) => apiPut(`/api/ready-products/${p.id}`, { name, price })}
+                initialSourceType={p.sourceType}
+                onSubmit={(name, price, sourceType) => apiPut(`/api/ready-products/${p.id}`, { name, price, sourceType })}
                 onSaved={() => {
                   setEditing(null);
                   onChanged();
@@ -66,7 +72,10 @@ export function ReadyProductsEditor({
             </li>
           ) : (
             <li key={p.id} className="border-border flex items-center justify-between border-b py-1.5">
-              <span>{p.name}</span>
+              <span>
+                {p.name}
+                {p.sourceType && <span className="text-muted-foreground"> ({SOURCE_TYPE_LABELS[p.sourceType]})</span>}
+              </span>
               <div className="flex items-center gap-3">
                 <span>{p.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج</span>
                 {canManage && (
@@ -89,21 +98,24 @@ export function ReadyProductsEditor({
   );
 }
 
-function NameFieldForm({
+function ReadyProductForm({
   initialName = '',
   initialPrice = 0,
+  initialSourceType = null,
   onSubmit,
   onSaved,
   onCancel,
 }: {
   initialName?: string;
   initialPrice?: number;
-  onSubmit: (name: string, price: number) => Promise<unknown>;
+  initialSourceType?: ProductSourceType | null;
+  onSubmit: (name: string, price: number, sourceType: ProductSourceType | null) => Promise<unknown>;
   onSaved: () => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(initialName);
   const [price, setPrice] = useState(initialPrice);
+  const [sourceType, setSourceType] = useState<ProductSourceType | ''>(initialSourceType ?? '');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -113,7 +125,7 @@ function NameFieldForm({
     setError(null);
     setSubmitting(true);
     try {
-      await onSubmit(name, price);
+      await onSubmit(name, price, sourceType || null);
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر الحفظ');
@@ -133,6 +145,18 @@ function NameFieldForm({
           onChange={(e) => setName(e.target.value)}
           className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
         />
+      </label>
+      <label className="w-40 space-y-1 text-xs">
+        <span className="text-muted-foreground">مصدر التنفيذ</span>
+        <select
+          value={sourceType}
+          onChange={(e) => setSourceType(e.target.value as ProductSourceType | '')}
+          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+        >
+          <option value="">غير محدد</option>
+          <option value="INTERNAL_PRODUCTION">تصنيع داخلي</option>
+          <option value="EXTERNAL_SUPPLIER">مورّد خارجي</option>
+        </select>
       </label>
       <label className="w-28 space-y-1 text-xs">
         <span className="text-muted-foreground">السعر</span>
