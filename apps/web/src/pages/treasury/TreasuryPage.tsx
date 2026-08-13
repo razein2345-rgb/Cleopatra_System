@@ -14,6 +14,7 @@ import type {
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { StatusBadge } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
@@ -49,6 +50,7 @@ function FullTreasuryView() {
   const [staff, setStaff] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [showAdvanceForm, setShowAdvanceForm] = useState(false);
 
   const [typeFilter, setTypeFilter] = useState<TreasuryType | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
@@ -104,11 +106,18 @@ function FullTreasuryView() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">الخزينة والنقدية</h1>
-        {can('treasury.create') && (
-          <Button type="button" onClick={() => setShowForm((v) => !v)}>
-            {showForm ? 'إلغاء' : '+ حركة جديدة'}
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {can('employees.edit') && (
+            <Button type="button" variant="secondary" onClick={() => setShowAdvanceForm(true)}>
+              صرف سلفة لموظف
+            </Button>
+          )}
+          {can('treasury.create') && (
+            <Button type="button" onClick={() => setShowForm((v) => !v)}>
+              {showForm ? 'إلغاء' : '+ حركة جديدة'}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -156,6 +165,17 @@ function FullTreasuryView() {
           partners={partners}
           onCreated={() => {
             setShowForm(false);
+            refreshAll();
+          }}
+        />
+      )}
+
+      {showAdvanceForm && (
+        <GiveAdvanceDialog
+          staff={staff}
+          onClose={() => setShowAdvanceForm(false)}
+          onCreated={() => {
+            setShowAdvanceForm(false);
             refreshAll();
           }}
         />
@@ -678,5 +698,130 @@ function NewEntryForm({
         {submitting ? 'جارٍ الحفظ…' : 'حفظ الحركة'}
       </Button>
     </form>
+  );
+}
+
+/**
+ * FEATURE-008 (2026-08-13, owner: "هل أقدر إني اصرف سلفه من الخزينة
+ * وتتسجل عند الموظف؟"). A second entry point to the exact same
+ * `POST /api/employee-advances` endpoint the employee profile page's
+ * "+ سلفة جديدة" already uses — not a separate manual Treasury entry with
+ * a free-text "سلفة موظف" category (which would show in the ledger but
+ * never link to the employee's own advances/salary report). Whichever
+ * screen you start from, it's the same atomic advance+TreasuryEntry
+ * operation, so the two can never drift apart.
+ */
+function GiveAdvanceDialog({ staff, onClose, onCreated }: { staff: User[]; onClose: () => void; onCreated: () => void }) {
+  const [staffId, setStaffId] = useState(staff[0]?.id ?? '');
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [reason, setReason] = useState('');
+  const [walletMethod, setWalletMethod] = useState<PaymentMethod>('CASH');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const selectedStaff = staff.find((s) => s.id === staffId);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting || !selectedStaff) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPost('/api/employee-advances', {
+        staffId,
+        branchId: selectedStaff.branchId,
+        amount: Number(amount),
+        date,
+        reason: reason.trim() || undefined,
+        walletMethod,
+      });
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر صرف السلفة');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>صرف سلفة لموظف</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">الموظف</span>
+            <select
+              required
+              value={staffId}
+              onChange={(e) => setStaffId(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {staff.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">المبلغ</span>
+            <input
+              required
+              autoFocus
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">التاريخ</span>
+            <input
+              required
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">المحفظة التي صُرف منها</span>
+            <select
+              value={walletMethod}
+              onChange={(e) => setWalletMethod(e.target.value as PaymentMethod)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {PAYMENT_METHOD_OPTIONS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">السبب (اختياري)</span>
+            <input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'صرف السلفة'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
