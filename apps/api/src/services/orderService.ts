@@ -253,6 +253,8 @@ export async function createOrder(
   },
   itemNames: Map<string, string>,
 ): Promise<{ id: string; branchId: string; partnerId: string; invoiceNumber: string; itemCount: number }> {
+  assertDeliveryDateNotBeforeOrderDate(input.deliveryDate, new Date());
+
   // Read-only reference data — safe outside the write transaction; the
   // actual order + stock deduction writes below run inside it.
   const ctx = await buildPricingContext(input.items);
@@ -391,6 +393,27 @@ export class OrderNotFoundError extends Error {
   }
 }
 
+export class DeliveryDateBeforeOrderDateError extends Error {
+  constructor() {
+    super('تاريخ الاستلام لا يمكن أن يكون قبل تاريخ المعاملة');
+    this.name = 'DeliveryDateBeforeOrderDateError';
+  }
+}
+
+// Owner, 2026-08-13: "مينفعش تاريخ الإستلام يكون قبل تاريخ المعامله" —
+// compares calendar days only (both `deliveryDate` and `Order.date` are
+// stored as UTC-midnight-anchored `Date`s, so truncating `orderDate` to
+// its UTC calendar day keeps the comparison consistent with how
+// `deliveryDate` itself gets parsed from the "YYYY-MM-DD" input string).
+function assertDeliveryDateNotBeforeOrderDate(deliveryDate: string | null | undefined, orderDate: Date): void {
+  if (!deliveryDate) return;
+  const delivery = new Date(deliveryDate);
+  const orderDateOnly = Date.UTC(orderDate.getUTCFullYear(), orderDate.getUTCMonth(), orderDate.getUTCDate());
+  if (delivery.getTime() < orderDateOnly) {
+    throw new DeliveryDateBeforeOrderDateError();
+  }
+}
+
 export class OrderHasPaymentsError extends Error {
   constructor() {
     super('لا يمكن حذف فاتورة عليها دفعات مسجلة — احذف الدفعات أولاً من الخزينة');
@@ -432,6 +455,11 @@ export async function updateOrder(
   if (!existing || existing.isDeleted) {
     throw new OrderNotFoundError();
   }
+
+  assertDeliveryDateNotBeforeOrderDate(
+    input.deliveryDate !== undefined ? input.deliveryDate : existing.deliveryDate?.toISOString(),
+    existing.date,
+  );
 
   const ctx = await buildPricingContext(input.items);
   const priced = input.items.map((item) => computeItemPricing(item, ctx));

@@ -1538,6 +1538,7 @@ function NewOrderForm({
                   <input
                     type="date"
                     value={deliveryDate}
+                    min={(editOrder?.date ?? new Date().toISOString()).slice(0, 10)}
                     onChange={(e) => setDeliveryDate(e.target.value)}
                     className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                   />

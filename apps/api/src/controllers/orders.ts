@@ -3,6 +3,7 @@ import { createOrderSchema, createPaymentSchema, hasPermission, updateOrderSchem
 import { prisma } from '../lib/prisma.js';
 import {
   createOrder,
+  DeliveryDateBeforeOrderDateError,
   deleteOrder,
   mapOrderToDto,
   OrderHasPaymentsError,
@@ -89,6 +90,10 @@ export async function createOrderHandler(req: Request, res: Response) {
       res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_PRICING_INPUT' } });
       return;
     }
+    if (err instanceof DeliveryDateBeforeOrderDateError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_DELIVERY_DATE' } });
+      return;
+    }
     throw err;
   }
 
@@ -140,6 +145,10 @@ export async function updateOrderHandler(req: Request<{ id: string }>, res: Resp
     }
     if (err instanceof PricingInputError) {
       res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_PRICING_INPUT' } });
+      return;
+    }
+    if (err instanceof DeliveryDateBeforeOrderDateError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_DELIVERY_DATE' } });
       return;
     }
     throw err;
