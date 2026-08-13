@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { BusinessIdentity, BusinessPartner, Order, User } from '@cleopatra/shared';
+import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, User } from '@cleopatra/shared';
 import { apiDelete, apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
@@ -28,6 +28,7 @@ export function OrderDocumentPage() {
   const [order, setOrder] = useState<Order | null>(null);
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
+  const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [staff, setStaff] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -40,12 +41,14 @@ export function OrderDocumentPage() {
         return Promise.all([
           apiGet<BusinessPartner>(`/api/partners/${o.partnerId}`),
           apiGet<BusinessIdentity>('/api/settings/business-identity'),
+          apiGet<BranchSummary[]>('/api/branches').catch(() => []),
           apiGet<User[]>('/api/users').catch(() => []),
         ]);
       })
-      .then(([p, b, s]) => {
+      .then(([p, b, br, s]) => {
         setPartner(p);
         setBusiness(b);
+        setBranches(br);
         setStaff(s);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل الفاتورة'));
@@ -79,7 +82,8 @@ export function OrderDocumentPage() {
     };
   });
 
-  const snapshot = resolveDocumentSnapshot(business, null, null);
+  const branch = branches.find((b) => b.id === order.branchId);
+  const snapshot = resolveDocumentSnapshot(business, null, null, branch);
   const createdByName = staff.find((s) => s.id === order.staffId)?.name ?? null;
 
   return (
@@ -113,6 +117,7 @@ export function OrderDocumentPage() {
       <DocumentRenderer
         snapshot={snapshot}
         showBranding={false}
+        contactIconTheme={branch && !branch.isDefault ? 'blue-pink' : 'red'}
         hideCustomerSignature
         showStamp={business.showStampOnInvoice}
         createdByName={createdByName}
