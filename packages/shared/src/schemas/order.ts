@@ -113,6 +113,14 @@ export const createOrderItemSchema = z.object({
   itemType: z.string().trim().min(1).max(50),
   notes: z.string().trim().min(1).max(1000).optional(),
   description: z.string().trim().min(1).max(1000).optional(),
+  // FEATURE-009 (2026-08-13, owner: "لون الحبر / نوع التجليد / نوع
+  // السلوفان" على أمر شغل الأوفست) — free-text, printed on the Work
+  // Order job-card only, no pricing effect (سلوفان/تجليد's own pricing
+  // flags — FOLDER.sellophaneEnabled, NOTEBOOK.bindingPricePerNotebook —
+  // are untouched, this is purely descriptive info for the worker).
+  inkColor: z.string().trim().min(1).max(200).optional(),
+  bindingType: z.string().trim().min(1).max(200).optional(),
+  sellophaneType: z.string().trim().min(1).max(200).optional(),
   readyProductId: z.string().uuid().optional(),
   serviceId: z.string().uuid().optional(),
   // FEATURE-007 — id of an already-uploaded Attachment (POST

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem, ProductionTrack, User, WorkOrder } from '@cleopatra/shared';
+import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem, PricingReference, ProductionTrack, User, WorkOrder } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
@@ -12,9 +12,9 @@ import { ORDER_STATUS_LABELS } from '../quotations/quotationLabels';
  * FEATURE-006 M10 — Work Order document. Owner's explicit clarification
  * (2026-08-12): Offset is the one track with a genuinely different,
  * richer internal production job-card (per-item sheet/run/numbering/
- * color/paper/binding detail — see `OffsetItemsTable` below, matching
- * the legacy system's own work-order print and PRICING_ENGINE_SPEC.md
- * §4); every other track (Digital/Boards & Signage/Other Products, or an
+ * color/paper/binding detail — see `OffsetItemCards` below, a stacked
+ * label/value card per item, owner: "العناوين تحت بعض مش جمب بعض"
+ * (2026-08-13)); every other track (Digital/Boards & Signage/Other Products, or an
  * order with no `productionTrack` set at all) "مش هيبقى فيه إلا تفاصيل
  * الأوردر اللي من الشاشة الرئيسية" — just the same item list already on
  * the invoice, reusing `DocumentRenderer` exactly like `OrderDocumentPage`
@@ -34,11 +34,111 @@ interface OffsetItemBreakdown {
   paperName?: string | null;
   contentType?: 'ORIGINAL_ONLY' | 'ORIGINAL_PLUS_COPIES';
   copies?: number | null;
+  // Present only on FOLDER/ENVELOPE breakdowns respectively — used only to
+  // tell the four Offset sub-kinds apart for the "عدد الدفاتر/عدد الورق"
+  // label below, same heuristic NewOrderPage.tsx's `inferStoredKind` uses.
+  sellophaneEnabled?: boolean;
+  readyEnvelopePricePerPiece?: number;
   notes?: string | null;
+  // FEATURE-009 (2026-08-13) — see createOrderItemSchema's own doc comment.
+  inkColor?: string | null;
+  bindingType?: string | null;
+  sellophaneType?: string | null;
+  referenceImageUrl?: string | null;
 }
 
 function offsetBreakdown(item: OrderItem): OffsetItemBreakdown {
   return (item.breakdown as OffsetItemBreakdown | null) ?? {};
+}
+
+/**
+ * FEATURE-009 (2026-08-13, owner: "عدد الدفاتر بتظهر لما اكون مختار دفاتر
+ * / عدد الورق بتظهر لما اكون مختار ورق سايب") — the quantity field's own
+ * label depends on which of the 4 Offset sub-kinds the item actually is;
+ * mirrors `NewOrderPage.tsx`'s `inferStoredKind` breakdown-shape heuristic
+ * (no `kind` column exists on `OrderItem` itself to read directly).
+ */
+function offsetQuantityLabel(b: OffsetItemBreakdown): string {
+  if (b.readyEnvelopePricePerPiece !== undefined) return 'عدد الأظرف';
+  if (b.contentType !== undefined) return 'عدد الدفاتر';
+  if (b.sellophaneEnabled !== undefined) return 'عدد الفولدرات';
+  return 'عدد الورق';
+}
+
+function Field({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="border-border flex flex-wrap gap-2 border-b py-1.5">
+      <span className="text-muted-foreground shrink-0">{label} :</span>
+      <span className="font-medium">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * FEATURE-009 (2026-08-13, owner: "عايز أمر الشغل بتاع الأوفست يكون
+ * العناوين تحت بعض مش جمب بعض") — replaces the previous wide table (one
+ * row per item, columns side by side) with a stacked label/value card per
+ * item, exact field order and labels as specified. "مقاس التكسير" is the
+ * press/sheet size already used in the pricing formulas (`SizeFamily.label`,
+ * e.g. "الفرخ العادي (٧٠×١٠٠)"); "مقاس الموديل" is the actual final product
+ * size (`OrderItem.realSizeLabel`, e.g. "17.5×25") — two distinct sizes,
+ * both real, neither invented.
+ */
+function OffsetItemCard({
+  item,
+  partnerName,
+  sizeFamilyLabel,
+}: {
+  item: OrderItem;
+  partnerName: string;
+  sizeFamilyLabel: string;
+}) {
+  const b = offsetBreakdown(item);
+  const quantityValue = (
+    <>
+      <span dir="ltr">{b.quantity ?? '—'}</span>
+      {b.contentType && (
+        <span className="text-muted-foreground">
+          {' — '}
+          {b.contentType === 'ORIGINAL_PLUS_COPIES' ? `أصل و${b.copies ?? '—'} صورة` : 'أصل فقط'}
+        </span>
+      )}
+    </>
+  );
+
+  return (
+    <div className="border-border mb-6 space-y-0 rounded-lg border p-3 text-sm break-inside-avoid">
+      <Field label="العميل" value={partnerName} />
+      <Field label="إسم الصنف" value={item.modelName ?? item.kind ?? '—'} />
+      <Field label={offsetQuantityLabel(b)} value={quantityValue} />
+      <Field label="نوع الورق" value={b.paperName ?? '—'} />
+      <Field label="عدد الأفرخ" value={<span dir="ltr">{b.sheetsNeeded ?? '—'}</span>} />
+      <div className="border-border flex flex-wrap gap-4 border-b py-1.5">
+        <span>
+          <span className="text-muted-foreground">الترقيم من :</span> <span dir="ltr">{b.numberingStartNumber ?? '—'}</span>
+        </span>
+        <span>
+          <span className="text-muted-foreground">إلى :</span> <span dir="ltr">{b.numberingEnd ?? '—'}</span>
+        </span>
+      </div>
+      <Field label="مقاس التكسير" value={sizeFamilyLabel} />
+      <Field label="مقاس الموديل" value={item.realSizeLabel ?? '—'} />
+      <Field label="نوع السلوفان" value={b.sellophaneType ?? '—'} />
+      <Field label="عدد الألوان" value={<span dir="ltr">{b.colorCount ?? '—'}</span>} />
+      <Field label="لون الحبر" value={b.inkColor ?? '—'} />
+      <Field label="نوع التجليد" value={b.bindingType ?? '—'} />
+      <div className="py-1.5">
+        <div className="text-muted-foreground">ملاحظات</div>
+        <div className="font-medium">{b.notes ?? '—'}</div>
+      </div>
+      {b.referenceImageUrl && (
+        <div className="py-1.5">
+          <div className="text-muted-foreground mb-1">صورة الموديل</div>
+          <img src={b.referenceImageUrl} alt="" className="max-h-40 rounded-md border object-contain" />
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -49,7 +149,7 @@ function offsetBreakdown(item: OrderItem): OffsetItemBreakdown {
  * a distinct shape for a track later (once its content is actually
  * specified) means adding a new `TrackRenderer` case + a new branch below,
  * without touching how the others render. OFFSET is the only track with a
- * defined distinct shape today (`OffsetItemsTable`); every other track
+ * defined distinct shape today (`OffsetItemCards`); every other track
  * intentionally falls through to the same generic shape until its own is
  * specified — never invented ahead of a real spec.
  */
@@ -63,57 +163,26 @@ const WORK_ORDER_TRACK_RENDERERS: Record<ProductionTrack, TrackRenderer> = {
   READY_PRODUCTS: 'GENERIC',
 };
 
-function OffsetItemsTable({ items }: { items: OrderItem[] }) {
+function OffsetItemCards({
+  items,
+  partnerName,
+  sizeFamilyLabelByKey,
+}: {
+  items: OrderItem[];
+  partnerName: string;
+  sizeFamilyLabelByKey: Map<string, string>;
+}) {
   return (
-    <table className="mb-6 w-full border-collapse text-xs">
-      <thead>
-        <tr className="border-border border-b text-start">
-          <th className="p-1.5 text-start">الصنف</th>
-          <th className="p-1.5 text-start">المقاس</th>
-          <th className="p-1.5 text-end">الكمية</th>
-          <th className="p-1.5 text-end">عدد الألوان</th>
-          <th className="p-1.5 text-start">الأوجه</th>
-          <th className="p-1.5 text-start">نوع الورق</th>
-          <th className="p-1.5 text-end">أفرخ الورق</th>
-          <th className="p-1.5 text-end">التراجات</th>
-          <th className="p-1.5 text-start">الترقيم</th>
-          <th className="p-1.5 text-start">التصميم</th>
-          <th className="p-1.5 text-start">ملاحظات</th>
-        </tr>
-      </thead>
-      <tbody>
-        {items.map((item) => {
-          const b = offsetBreakdown(item);
-          const numbering =
-            b.numberingStartNumber != null
-              ? `من ${b.numberingStartNumber} إلى ${b.numberingEnd ?? '—'}${b.numberingRuns ? ` (${b.numberingRuns} تراج)` : ''}`
-              : 'بدون';
-          return (
-            <tr key={item.id} className="border-border border-b align-top">
-              <td className="p-1.5">{item.modelName ?? item.kind ?? '—'}</td>
-              <td className="p-1.5">{item.realSizeLabel ?? '—'}</td>
-              <td className="p-1.5 text-end">
-                <span dir="ltr">{b.quantity ?? '—'}</span>
-              </td>
-              <td className="p-1.5 text-end">
-                <span dir="ltr">{b.colorCount ?? '—'}</span>
-              </td>
-              <td className="p-1.5">{b.sides === 2 ? 'وجهين' : b.sides === 1 ? 'وجه واحد' : '—'}</td>
-              <td className="p-1.5">{b.paperName ?? '—'}</td>
-              <td className="p-1.5 text-end">
-                <span dir="ltr">{b.sheetsNeeded ?? '—'}</span>
-              </td>
-              <td className="p-1.5 text-end">
-                <span dir="ltr">{b.printRuns ?? '—'}</span>
-              </td>
-              <td className="p-1.5">{numbering}</td>
-              <td className="p-1.5">{b.isNewDesign ? 'جديد' : 'جاهز'}</td>
-              <td className="p-1.5">{b.notes ?? '—'}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div>
+      {items.map((item) => (
+        <OffsetItemCard
+          key={item.id}
+          item={item}
+          partnerName={partnerName}
+          sizeFamilyLabel={(item.sizeFamilyKey && sizeFamilyLabelByKey.get(item.sizeFamilyKey)) || '—'}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -125,6 +194,7 @@ export function WorkOrderDocumentPage() {
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [staff, setStaff] = useState<User[]>([]);
+  const [pricingReference, setPricingReference] = useState<PricingReference | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -141,13 +211,15 @@ export function WorkOrderDocumentPage() {
           apiGet<BusinessIdentity>('/api/settings/business-identity'),
           apiGet<User[]>('/api/users').catch(() => []),
           apiGet<BranchSummary[]>('/api/branches').catch(() => []),
+          apiGet<PricingReference>('/api/pricing-reference').catch(() => null),
         ]);
       })
-      .then(([p, b, s, br]) => {
+      .then(([p, b, s, br, pr]) => {
         setPartner(p);
         setBusiness(b);
         setStaff(s);
         setBranches(br);
+        setPricingReference(pr);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل أمر الشغل'));
   }, [id]);
@@ -268,7 +340,11 @@ export function WorkOrderDocumentPage() {
           </div>
         </section>
 
-        <OffsetItemsTable items={order.items} />
+        <OffsetItemCards
+          items={order.items}
+          partnerName={partner.nameAr}
+          sizeFamilyLabelByKey={new Map((pricingReference?.sizeFamilies ?? []).map((f) => [f.key, f.label]))}
+        />
 
         {order.customerNotes && (
           <section className="mb-3">

@@ -118,6 +118,11 @@ interface DraftItem {
   kind: PricingKind;
   itemType: string;
   notes: string;
+  // FEATURE-009 (2026-08-13) — printed on the Offset Work Order job-card
+  // only, no pricing effect. Shown only for print-section kinds.
+  inkColor: string;
+  bindingType: string;
+  sellophaneType: string;
   description: string;
   readyProductId: string;
   serviceId: string;
@@ -177,6 +182,9 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     kind,
     itemType: '',
     notes: '',
+    inkColor: '',
+    bindingType: '',
+    sellophaneType: '',
     description: '',
     readyProductId: '',
     serviceId: '',
@@ -522,6 +530,10 @@ interface StoredBreakdown {
   extraCosts?: number;
   notes?: string | null;
   referenceImageUrl?: string | null;
+  // FEATURE-009 (2026-08-13) — see createOrderItemSchema's own doc comment.
+  inkColor?: string | null;
+  bindingType?: string | null;
+  sellophaneType?: string | null;
   /** FEATURE-007 (2026-08-12, owner: "المفروض أقدر أعدل في عرض السعر إني أضيف مثلا بند") — `QuotationItem` has no top-level `inventoryItemId` column (a Quotation never draws down stock) and the pricing engine never freezes the raw id into `breakdown` either (only `orderService`'s own `OrderItem.inventoryItemId` column gets it, from the pricing result's sibling field, not from `breakdown` itself). `paperName`, however, IS frozen into `breakdown` for LOOSE_PAPER/NOTEBOOK/FOLDER (see `pricingEngineService.ts`'s per-kind breakdown merge) — matched back to a live `InventoryItem` by name below, the same "match by name" fallback `matchCatalogIdByName` already uses for PRODUCT/SERVICE catalog references. */
   paperName?: string | null;
 }
@@ -692,6 +704,9 @@ function reconstructCartLine(
       itemType: item.modelName || item.kind || KIND_LABELS[kind],
       summary: `${item.modelName || KIND_LABELS[kind]} — الكمية ${b.quantity ?? '—'}`,
       notes: b.notes ?? undefined,
+      inkColor: b.inkColor ?? undefined,
+      bindingType: b.bindingType ?? undefined,
+      sellophaneType: b.sellophaneType ?? undefined,
       readyProductId,
       serviceId,
       attachmentUrl: b.referenceImageUrl ?? undefined,
@@ -949,6 +964,9 @@ interface CartLine {
   itemType: string;
   summary: string;
   notes?: string;
+  inkColor?: string;
+  bindingType?: string;
+  sellophaneType?: string;
   readyProductId?: string;
   serviceId?: string;
   attachmentId?: string;
@@ -1141,6 +1159,9 @@ function NewOrderForm({
       itemType: label,
       summary: describeDraft(draft, readyProducts, services),
       notes: draft.notes || undefined,
+      inkColor: draft.inkColor || undefined,
+      bindingType: draft.bindingType || undefined,
+      sellophaneType: draft.sellophaneType || undefined,
       readyProductId: draft.kind === 'PRODUCT' ? draft.readyProductId || undefined : undefined,
       serviceId: draft.kind === 'SERVICE' ? draft.serviceId || undefined : undefined,
       attachmentId: draft.attachmentId || undefined,
@@ -1173,6 +1194,9 @@ function NewOrderForm({
     const outputItems = cart.map((line) => ({
       itemType: line.itemType,
       notes: line.notes,
+      inkColor: line.inkColor,
+      bindingType: line.bindingType,
+      sellophaneType: line.sellophaneType,
       // `validateQuotationItemRefs` requires a description on any item
       // with no readyProductId/serviceId — reuse the same label the
       // user already typed (or the kind's default) rather than adding
@@ -2065,6 +2089,38 @@ function NewOrderForm({
               })}
             </div>
           </div>
+
+          {hasPrintSection && (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">لون الحبر (اختياري)</span>
+                <input
+                  value={draft.inkColor}
+                  onChange={(e) => updateDraft({ inkColor: e.target.value })}
+                  placeholder="مثال: أزرق غامق PMS 286"
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">نوع التجليد (اختياري)</span>
+                <input
+                  value={draft.bindingType}
+                  onChange={(e) => updateDraft({ bindingType: e.target.value })}
+                  placeholder="مثال: دبوس، سلك حلزوني..."
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">نوع السلوفان (اختياري)</span>
+                <input
+                  value={draft.sellophaneType}
+                  onChange={(e) => updateDraft({ sellophaneType: e.target.value })}
+                  placeholder="مثال: لامع، مطفي..."
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+          )}
 
           <label className="block space-y-1 text-sm">
             <span className="text-muted-foreground">ملاحظات أمر الشغل (تظهر في الطباعة)</span>

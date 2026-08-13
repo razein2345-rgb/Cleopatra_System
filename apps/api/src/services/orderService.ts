@@ -329,6 +329,11 @@ export async function createOrder(
                 ...(result.breakdown as Record<string, unknown>),
                 notes: item.notes ?? null,
                 referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
+                // FEATURE-009 (2026-08-13) — printed on the Offset Work
+                // Order job-card only, no pricing effect.
+                inkColor: item.inkColor ?? null,
+                bindingType: item.bindingType ?? null,
+                sellophaneType: item.sellophaneType ?? null,
               },
               sizeFamilyKey: result.sizeFamilyKey,
               realSizeLabel: result.realSizeLabel,
@@ -526,6 +531,9 @@ export async function updateOrder(
                 ...(result.breakdown as Record<string, unknown>),
                 notes: item.notes ?? null,
                 referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
+                inkColor: item.inkColor ?? null,
+                bindingType: item.bindingType ?? null,
+                sellophaneType: item.sellophaneType ?? null,
               },
               sizeFamilyKey: result.sizeFamilyKey,
               realSizeLabel: result.realSizeLabel,
