@@ -79,6 +79,8 @@ export interface DocumentRendererProps {
   totals?: DocumentRendererTotals | null;
   paymentSummary?: DocumentRendererPaymentSummary | null;
   customerNotes?: string | null;
+  /** FEATURE-007 (2026-08-13, owner: "تاريخ الإستلام في الفاتورة محتاجه يظهر") — the order's own delivery/pickup date (`Order.deliveryDate`), shown only when set. */
+  deliveryDate?: string | null;
   /** FEATURE-007 (2026-08-12, owner: "الفاتورة ميكونش فيها الإسم ولا اللوجو فقط فاتورة — اما عرض السعر وأمر الشغل فيهم إسم المكان واللوجو") — Invoice omits the business name/logo/watermark entirely; Quotation and Work Order keep them. Defaults to `true` (Quotation/Work Order's own callers don't need to think about this). */
   showBranding?: boolean;
   /** FEATURE-007 (2026-08-12, owner: "لازم يتسجل مين اللي عمل الفاتورة او عرض السعر") — the staff member's name, resolved by the caller from the document's own `staffId`. */
@@ -129,6 +131,7 @@ export function DocumentRenderer({
   totals,
   paymentSummary,
   customerNotes,
+  deliveryDate,
   showBranding = true,
   createdByName,
   logoSizeCm,
@@ -206,6 +209,12 @@ export function DocumentRenderer({
             {showDate && (
               <div>
                 التاريخ: <span dir="ltr">{new Date(date).toLocaleDateString('en-GB')}</span>
+              </div>
+            )}
+            {deliveryDate && (
+              <div>
+                تاريخ الاستلام: {new Date(deliveryDate).toLocaleDateString('ar-EG', { weekday: 'long' })}{' '}
+                <span dir="ltr">{new Date(deliveryDate).toLocaleDateString('en-GB')}</span>
               </div>
             )}
             {createdByName && <div>بواسطة: {createdByName}</div>}
