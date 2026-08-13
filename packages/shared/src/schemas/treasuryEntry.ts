@@ -16,7 +16,14 @@ import { paymentMethodSchema } from './partnerCommercialProfile.js';
  * every new entry going forward.
  */
 export const treasuryTypeSchema = z.enum(['INCOME', 'EXPENSE', 'TRANSFER']);
-export const treasurySourceTypeSchema = z.enum(['MANUAL', 'INVOICE_PAYMENT']);
+export const treasurySourceTypeSchema = z.enum([
+  'MANUAL',
+  'INVOICE_PAYMENT',
+  // FEATURE-008 — an advance given to an employee (EXPENSE) or a cash
+  // repayment of one (INCOME); see employeeAdvance.ts.
+  'EMPLOYEE_ADVANCE',
+  'EMPLOYEE_ADVANCE_REPAYMENT',
+]);
 
 export const treasuryEntrySchema = z.object({
   id: z.string().uuid(),
@@ -29,6 +36,8 @@ export const treasuryEntrySchema = z.object({
   method: paymentMethodSchema.nullable(),
   orderId: z.string().uuid().nullable(),
   paymentId: z.string().uuid().nullable(),
+  employeeAdvanceId: z.string().uuid().nullable(),
+  employeeAdvanceRepaymentId: z.string().uuid().nullable(),
   partnerId: z.string().uuid().nullable(),
   staffId: z.string().uuid(),
   branchId: z.string().uuid(),

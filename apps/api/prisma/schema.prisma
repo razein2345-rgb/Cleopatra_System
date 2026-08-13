@@ -119,6 +119,25 @@ enum TreasuryType {
 enum TreasurySourceType {
   MANUAL
   INVOICE_PAYMENT
+  EMPLOYEE_ADVANCE
+  EMPLOYEE_ADVANCE_REPAYMENT
+}
+
+/// FEATURE-008 (2026-08-13) — how often an employee is paid; drives which
+/// unit `StaffProfile.baseSalary` is denominated in.
+enum PayFrequency {
+  WEEKLY
+  MONTHLY
+}
+
+/// FEATURE-008 — an advance repayment either returns physical cash (hits
+/// Treasury as INCOME, same atomic pattern as an invoice payment) or is
+/// deducted from the employee's salary (no cash movement — this system
+/// doesn't run payroll itself, so a salary deduction is simply recorded,
+/// not paid out through Treasury).
+enum AdvanceRepaymentMethod {
+  CASH
+  SALARY_DEDUCTION
 }
 
 enum TenderStatus {
@@ -264,15 +283,15 @@ enum AddressType {
 // ---------------------------------------------------------------------------
 
 model Branch {
-  id        String  @id @default(uuid()) @db.Uuid
-  name      String
-  code      String  @unique
-  address   String?
-  isDefault Boolean @default(false)
+  id            String  @id @default(uuid()) @db.Uuid
+  name          String
+  code          String  @unique
+  address       String?
+  isDefault     Boolean @default(false)
   /// FEATURE-007 (2026-08-12, owner: "لما اختار فرع بيت الطباعة يطلعلي فاتورة فيها لوجو بيت الطباعة" / "يظهرلي بيانات بيت الطباعة أو بيانات كليوباترا") — per-branch letterhead identity. Each null field falls back to the matching global `Setting` field, so a branch with none of its own still prints the company's normal letterhead.
-  logoUrl   String?
-  phone     String?
-  email     String?
+  logoUrl       String?
+  phone         String?
+  email         String?
   /// FEATURE-007 (2026-08-12, owner: "عايز اضيف كمان الرقم الأرضي وصفحة الفيسبوك تحت في البيانات بتاعت عرض السعر") — landline (as opposed to `phone`, the mobile/WhatsApp-style number) and Facebook page link, both falling back to the matching global `Setting` field like the rest of this identity block.
   landlinePhone String?
   facebookUrl   String?
@@ -299,6 +318,7 @@ model Branch {
   stockLevels       StockLevel[]
   stockMovements    StockMovement[]
   auditLogs         AuditLog[]
+  employeeAdvances  EmployeeAdvance[]
 
   @@index([isDeleted])
 }
@@ -365,25 +385,25 @@ model Setting {
   /// reused as-is (no upload endpoint exists anywhere in this codebase —
   /// confirmed by inspection — so this stays a plain URL field, not a file
   /// upload, per the explicit decision not to invent upload architecture).
-  businessNameAr           String?
-  businessNameEn           String?
+  businessNameAr              String?
+  businessNameEn              String?
   /// FEATURE-007 (2026-08-12, owner: "عايز تحت الإسم بتاع المكان يكون في وصف للدعاية والإعلان مش نفس خط الإسم") — a short tagline under the business name on documents (e.g. "للدعاية والإعلان"), rendered in a distinct, lighter style from the name itself.
-  businessTagline          String?
-  address                  String?
-  phone                    String?
-  email                    String?
-  website                  String?
-  taxNumber                String?
-  commercialRegisterNumber String?
+  businessTagline             String?
+  address                     String?
+  phone                       String?
+  email                       String?
+  website                     String?
+  taxNumber                   String?
+  commercialRegisterNumber    String?
   /// FEATURE-007 (2026-08-12, owner: "عايز اضيف صورة الختم فوق وتفضلو بقبول وافر الإحترام") — company stamp/seal image, printed above the closing line on Quotation/Work Order documents.
-  stampUrl                 String?
+  stampUrl                    String?
   /// FEATURE-007 (2026-08-12, owner: "عايز اضيف كمان الرقم الأرضي وصفحة الفيسبوك تحت في البيانات بتاعت عرض السعر") — landline (as opposed to `phone`, the mobile/WhatsApp-style number) and Facebook page link, shown in the document footer.
-  landlinePhone            String?
-  facebookUrl              String?
+  landlinePhone               String?
+  facebookUrl                 String?
   /// FEATURE-007 (2026-08-12, owner: "الختم المفروض اكون مخير إنه يظهر في الفاتورة ولا لا زي اللوجو والإسم") — the Invoice always omits logo/name/watermark (a deliberate, non-configurable code decision — a plain invoice, not promotional), but the stamp is a real owner choice. Off by default, matching the invoice's existing "plain" default.
-  showStampOnInvoice       Boolean @default(false)
+  showStampOnInvoice          Boolean @default(false)
   /// FEATURE-007 (2026-08-12, owner: "عايز اوبشن في عرض السعر إني اشيل التاريخ خالص او يكون موجود اللي هو تاريخ إصدار عرض السعر نفسه") — whether the quotation's own issue date prints at all. On by default (unchanged existing behavior).
-  showQuotationDate        Boolean @default(true)
+  showQuotationDate           Boolean @default(true)
   /// FEATURE-007 (2026-08-13, owner: "التوقيع ... والسيريل نمبر بتاع العرض حابب كل التفاصيل دي تكون داخليه متظهرش على العرض اللي هيتطبع للعميل") — the signature area and the quotation's own printed serial number, both off by default (internal-only, never shown to the customer copy).
   showQuotationSignatureArea  Boolean @default(false)
   showQuotationDocumentNumber Boolean @default(false)
@@ -571,6 +591,20 @@ model StaffProfile {
   departmentId String?     @db.Uuid
   department   Department? @relation(fields: [departmentId], references: [id])
 
+  /// FEATURE-008 (2026-08-13, owner: "منهم من يقبض بالأسبوع ومنهم من يقبض
+  /// بالشهر") — HR fields layered onto the existing IAM StaffProfile
+  /// rather than a parallel Employee model (this row is already the one
+  /// "employee" record in the system). All nullable: existing staff have
+  /// none set yet, and not every account (e.g. a system/admin-only login)
+  /// needs them.
+  position     String?
+  hireDate     DateTime?
+  payFrequency PayFrequency?
+  /// The pay amount per `payFrequency`'s own cycle (a weekly rate if
+  /// WEEKLY, a monthly rate if MONTHLY) — never both at once, so no
+  /// separate weekly/monthly columns.
+  baseSalary   Decimal?      @db.Decimal(12, 2)
+
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
@@ -589,6 +623,9 @@ model StaffProfile {
   auditLogs                  AuditLog[]
   assignedStageInstances     StageInstance[]
   workflowEvents             WorkflowEvent[]
+  advancesReceived           EmployeeAdvance[]          @relation("EmployeeAdvanceStaff")
+  advancesRecorded           EmployeeAdvance[]          @relation("EmployeeAdvanceRecordedBy")
+  advanceRepaymentsRecorded  EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -1763,6 +1800,11 @@ model TreasuryEntry {
   partnerId String?          @db.Uuid
   partner   BusinessPartner? @relation(fields: [partnerId], references: [id])
 
+  employeeAdvanceId          String?                   @unique @db.Uuid
+  employeeAdvance            EmployeeAdvance?          @relation(fields: [employeeAdvanceId], references: [id])
+  employeeAdvanceRepaymentId String?                   @unique @db.Uuid
+  employeeAdvanceRepayment   EmployeeAdvanceRepayment? @relation(fields: [employeeAdvanceRepaymentId], references: [id])
+
   staffId  String       @db.Uuid // employee who recorded it (or who saved the source invoice)
   staff    StaffProfile @relation(fields: [staffId], references: [id])
   branchId String       @db.Uuid
@@ -1779,6 +1821,69 @@ model TreasuryEntry {
   @@index([branchId])
   @@index([type])
   @@index([date])
+}
+
+// ---------------------------------------------------------------------------
+// Employee Advances (FEATURE-008, 2026-08-13, owner: "هل هيطلعلي تقرير
+// بالسلف بتاعت كل موظف ومتبقيله كام من المرتب"). Giving an advance is an
+// atomic Payment+TreasuryEntry-style transaction (money actually leaves the
+// drawer); a repayment either returns cash (same atomic pattern, INCOME) or
+// is a salary deduction (recorded only — no payroll run exists in this
+// system to pay out against). `remainingBalance` is always computed at read
+// time (amount - sum(repayments.amount)), mirroring Order.remainingBalance,
+// never stored.
+// ---------------------------------------------------------------------------
+
+model EmployeeAdvance {
+  id String @id @default(uuid()) @db.Uuid
+
+  staffId String       @db.Uuid
+  staff   StaffProfile @relation("EmployeeAdvanceStaff", fields: [staffId], references: [id])
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  amount Decimal  @db.Decimal(12, 2)
+  date   DateTime
+  reason String?
+
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation("EmployeeAdvanceRecordedBy", fields: [recordedById], references: [id])
+
+  treasuryEntry TreasuryEntry?
+  repayments    EmployeeAdvanceRepayment[]
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([staffId])
+  @@index([branchId])
+  @@index([isDeleted])
+}
+
+model EmployeeAdvanceRepayment {
+  id String @id @default(uuid()) @db.Uuid
+
+  advanceId String          @db.Uuid
+  advance   EmployeeAdvance @relation(fields: [advanceId], references: [id])
+
+  amount Decimal                @db.Decimal(12, 2)
+  date   DateTime
+  method AdvanceRepaymentMethod
+  note   String?
+
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation("EmployeeAdvanceRepaymentRecordedBy", fields: [recordedById], references: [id])
+
+  treasuryEntry TreasuryEntry?
+
+  createdAt DateTime @default(now())
+
+  @@index([advanceId])
 }
 
 // ---------------------------------------------------------------------------

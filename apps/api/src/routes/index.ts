@@ -24,6 +24,7 @@ import { documentTemplatesRouter } from './documentTemplates.js';
 import { inventoryItemsRouter } from './inventoryItems.js';
 import { pricingReferenceRouter } from './pricingReference.js';
 import { attachmentsRouter } from './attachments.js';
+import { employeeAdvancesRouter } from './employeeAdvances.js';
 
 export const apiRouter = Router();
 
@@ -55,4 +56,5 @@ api.use('/document-templates', documentTemplatesRouter);
 api.use('/inventory-items', inventoryItemsRouter);
 api.use('/pricing-reference', pricingReferenceRouter);
 api.use('/attachments', attachmentsRouter);
+api.use('/employee-advances', employeeAdvancesRouter);
 apiRouter.use('/api', api);

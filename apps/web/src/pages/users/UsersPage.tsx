@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { BranchSummary, Role, User } from '@cleopatra/shared';
 import { ADMIN_ROLE_NAMES } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
@@ -61,11 +62,18 @@ export function UsersPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">المستخدمون</h1>
-        {can('employees.create') && (
-          <Button onClick={() => setShowCreate((v) => !v)}>
-            {showCreate ? 'إلغاء' : '+ إضافة مستخدم'}
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {can('employees.view') && (
+            <Link to="/users/advances-report">
+              <Button variant="secondary">تقرير السلف والمرتبات</Button>
+            </Link>
+          )}
+          {can('employees.create') && (
+            <Button onClick={() => setShowCreate((v) => !v)}>
+              {showCreate ? 'إلغاء' : '+ إضافة مستخدم'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {showCreate && (
@@ -101,7 +109,11 @@ export function UsersPage() {
               const protectedAdmin = isLastActiveAdmin(user, users);
               return (
                 <tr key={user.id} className="border-border border-b last:border-0">
-                  <td className="p-3 font-medium">{user.name}</td>
+                  <td className="p-3 font-medium">
+                    <Link to={`/users/${user.id}`} className="hover:underline">
+                      {user.name}
+                    </Link>
+                  </td>
                   <td className="p-3">{user.email}</td>
                   <td className="p-3">{branchName(user.branchId)}</td>
                   <td className="p-3">

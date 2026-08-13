@@ -213,7 +213,10 @@ export async function updateUser(req: Request<{ id: string }>, res: Response) {
 
   const updated = await prisma.staffProfile.update({
     where: { id: req.params.id },
-    data: input,
+    data: {
+      ...input,
+      hireDate: input.hireDate !== undefined ? (input.hireDate ? new Date(input.hireDate) : null) : undefined,
+    },
     include: userInclude,
   });
 

@@ -29,6 +29,10 @@ export function mapStaffToUser(staff: StaffWithRoles): User {
     accessibleBranchIds: Array.from(
       new Set<string>([staff.branchId, ...staff.branchAccess.map((access) => access.branchId)]),
     ),
+    position: staff.position,
+    hireDate: staff.hireDate ? staff.hireDate.toISOString() : null,
+    payFrequency: staff.payFrequency,
+    baseSalary: staff.baseSalary ? staff.baseSalary.toNumber() : null,
     createdAt: staff.createdAt.toISOString(),
   };
 }

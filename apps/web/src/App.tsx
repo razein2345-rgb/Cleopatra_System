@@ -8,6 +8,8 @@ import { AcceptInvitePage } from '@/pages/accept-invite/AcceptInvitePage';
 import { DashboardPage } from '@/pages/dashboard/DashboardPage';
 import { SettingsPage } from '@/pages/settings/SettingsPage';
 import { UsersPage } from '@/pages/users/UsersPage';
+import { EmployeeProfilePage } from '@/pages/users/EmployeeProfilePage';
+import { EmployeeAdvancesReportPage } from '@/pages/users/EmployeeAdvancesReportPage';
 import { RolesPage } from '@/pages/roles/RolesPage';
 import { PermissionsPage } from '@/pages/permissions/PermissionsPage';
 import { PartnersPage } from '@/pages/partners/PartnersPage';
@@ -43,6 +45,8 @@ function App() {
 
               <Route element={<ProtectedRoute permission="employees.view" />}>
                 <Route path="/users" element={<UsersPage />} />
+                <Route path="/users/advances-report" element={<EmployeeAdvancesReportPage />} />
+                <Route path="/users/:id" element={<EmployeeProfilePage />} />
               </Route>
 
               <Route element={<ProtectedRoute permission="partners.view" />}>
