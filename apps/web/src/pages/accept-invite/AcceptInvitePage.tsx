@@ -52,7 +52,13 @@ function translateSetupError(message: string): string {
   ) {
     return 'تعذر الاتصال بالخادم';
   }
-  return 'حدث خطأ غير متوقع، حاول مرة أخرى';
+  // FEATURE-001.2 fix (2026-08-13) — found live: an unmatched error used to
+  // collapse into a fully opaque "حدث خطأ غير متوقع" with the real cause
+  // visible only in the browser console, making a real failure here
+  // undiagnosable from the owner's own report alone. Now the raw message
+  // rides along (still in a friendly Arabic sentence) so a screenshot is
+  // enough to actually debug it next time.
+  return message ? `حدث خطأ غير متوقع: ${message}` : 'حدث خطأ غير متوقع، حاول مرة أخرى';
 }
 
 export function AcceptInvitePage() {

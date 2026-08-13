@@ -95,6 +95,24 @@ export async function createUser(req: Request, res: Response) {
     return;
   }
 
+  // FEATURE-001.2 fix (2026-08-13) — found live: a retry after a failed/stuck
+  // invite (e.g. the invited person's accept-invite page errored before they
+  // ever set a password) used to hit inviteUserByEmail again — wasting a rate-
+  // limited invite email on an account that already exists — and then failed
+  // with a raw, unhandled Prisma unique-constraint exception instead of a
+  // clear message telling the caller what actually happened.
+  const existing = await prisma.staffProfile.findFirst({ where: { email: input.email, isDeleted: false } });
+  if (existing) {
+    res.status(400).json({
+      success: false,
+      error: {
+        message: 'هذا البريد الإلكتروني مسجّل بالفعل لموظف موجود — استخدم "إعادة تعيين كلمة المرور" له بدل إضافته من جديد',
+        code: 'EMAIL_ALREADY_REGISTERED',
+      },
+    });
+    return;
+  }
+
   const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(input.email, {
     redirectTo: ACCEPT_INVITE_REDIRECT_URL,
   });
@@ -105,17 +123,35 @@ export async function createUser(req: Request, res: Response) {
     return;
   }
 
-  const staff = await prisma.staffProfile.create({
-    data: {
-      supabaseUserId: data.user.id,
-      name: input.name,
-      email: input.email,
-      phone: input.phone,
-      branchId: input.branchId,
-      roles: { create: input.roleIds.map((roleId) => ({ roleId })) },
-    },
-    include: userInclude,
-  });
+  let staff;
+  try {
+    staff = await prisma.staffProfile.create({
+      data: {
+        supabaseUserId: data.user.id,
+        name: input.name,
+        email: input.email,
+        phone: input.phone,
+        branchId: input.branchId,
+        roles: { create: input.roleIds.map((roleId) => ({ roleId })) },
+      },
+      include: userInclude,
+    });
+  } catch (err) {
+    // The Supabase invite already went out at this point (it isn't
+    // transactional with the row below) — surface a message that at least
+    // explains a real account now exists in Supabase Auth without a
+    // matching StaffProfile, rather than an opaque Prisma stack trace.
+    const isDuplicate = err instanceof Error && err.message.includes('Unique constraint failed');
+    res.status(isDuplicate ? 409 : 500).json({
+      success: false,
+      error: {
+        message: isDuplicate
+          ? 'تم إنشاء حساب الدخول لكن فشل تسجيله كموظف — بريد إلكتروني مكرر. تواصل مع الدعم الفني.'
+          : 'تم إرسال الدعوة لكن فشل تسجيل الموظف في النظام',
+      },
+    });
+    return;
+  }
 
   await recordAudit({
     entityType: 'StaffProfile',
