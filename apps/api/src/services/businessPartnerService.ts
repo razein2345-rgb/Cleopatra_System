@@ -19,6 +19,7 @@ export function mapPartnerToDto(partner: PartnerRecord, tagIds: string[]): Busin
     nameEn: partner.nameEn,
     shortName: partner.shortName,
     isIndividual: partner.isIndividual,
+    gender: partner.gender,
     roles: partner.roles,
     status: partner.status,
     branchId: partner.branchId,

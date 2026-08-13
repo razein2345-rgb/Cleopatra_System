@@ -75,6 +75,8 @@ export interface DocumentRendererProps {
   date: string;
   partnerName: string;
   partnerPhone?: string | null;
+  /** FEATURE-002 (2026-08-13, owner: "عايزة يفرق بين الشركة والفرد... اكتب إسم فرد أو سيدة") — resolved by the caller from the partner's `isIndividual`/`gender` (see `partnerSalutation` helper). Defaults to "السادة" (company-style, the previous fixed behavior). */
+  partnerSalutation?: string;
   items: DocumentRendererItem[];
   totals?: DocumentRendererTotals | null;
   paymentSummary?: DocumentRendererPaymentSummary | null;
@@ -127,6 +129,7 @@ export function DocumentRenderer({
   date,
   partnerName,
   partnerPhone,
+  partnerSalutation = 'السادة',
   items,
   totals,
   paymentSummary,
@@ -193,7 +196,9 @@ export function DocumentRenderer({
 
         <div className="mb-4 flex items-start justify-between">
           <div>
-            <div className="text-[var(--doc-accent)] text-lg font-bold">السادة / {partnerName}</div>
+            <div className="text-[var(--doc-accent)] text-lg font-bold">
+              {partnerSalutation} / {partnerName}
+            </div>
             {partnerPhone && (
               <div className="text-xs">
                 <span dir="ltr">{partnerPhone}</span>
@@ -322,7 +327,10 @@ export function DocumentRenderer({
 
         {/* owner (2026-08-12, invoice): "تفضلوا بقبول وافر الأحترام عايزها على الشمال والختم فوقيها" — stamp + closing line moved to the end (left, in this RTL layout) and the stamp no longer waits on `showBranding` (the invoice omits the logo/business-name/watermark but still wants its own stamp). */}
         <div className="mb-2 flex flex-col items-end text-end">
-          {showStamp && business.stampUrl && <img src={business.stampUrl} alt="" className="mb-3 h-24 object-contain" />}
+          {showStamp && business.stampUrl && (
+            // Owner, 2026-08-13: "عايز مقاس الختم يكون عرض 5.5 * طول 2.07" — the stamp's real physical print size, not an arbitrary Tailwind height.
+            <img src={business.stampUrl} alt="" className="mb-3 object-contain" style={{ width: '5.5cm', height: '2.07cm' }} />
+          )}
           <p className="text-sm">وتفضلوا بقبول وافر الاحترام...</p>
         </div>
 

@@ -127,6 +127,7 @@ export async function updateBusinessPartner(req: Request<{ id: string }>, res: R
       nameEn: existing.nameEn,
       shortName: existing.shortName,
       isIndividual: existing.isIndividual,
+      gender: existing.gender,
       roles: existing.roles,
       status: existing.status,
       branchId: existing.branchId,

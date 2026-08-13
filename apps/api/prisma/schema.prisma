@@ -217,6 +217,14 @@ enum PartnerStatus {
   BLOCKED
 }
 
+/// Owner, 2026-08-13 — only meaningful on an individual BusinessPartner
+/// (isIndividual: true); picks the printed-document salutation ("السيد"/
+/// "السيدة" instead of the company-style "السادة").
+enum Gender {
+  MALE
+  FEMALE
+}
+
 /// FEATURE-002. What capacity a partner acts in; a partner may hold more
 /// than one at once (see 01_ANALYSIS.md's Approved decision).
 enum PartnerRole {
@@ -693,6 +701,10 @@ model BusinessPartner {
   nameEn       String?
   shortName    String?
   isIndividual Boolean @default(false)
+  // Owner, 2026-08-13: "عايزة يفرق بين الشركة والفرد... اكتب إسم فرد أو
+  // سيدة" — only meaningful when isIndividual is true; picks "السيد"/
+  // "السيدة" over the company-style "السادة" on printed documents.
+  gender       Gender?
 
   roles  PartnerRole[]
   status PartnerStatus @default(PROSPECT)

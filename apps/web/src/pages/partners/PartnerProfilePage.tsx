@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import type {
   BranchSummary,
   BusinessPartner,
+  Gender,
   PartnerRole,
   PartnerStatus,
   UpdateBusinessPartnerInput,
@@ -162,6 +163,7 @@ function OverviewForm({
   const [nameEn, setNameEn] = useState(partner.nameEn ?? '');
   const [shortName, setShortName] = useState(partner.shortName ?? '');
   const [isIndividual, setIsIndividual] = useState(partner.isIndividual);
+  const [gender, setGender] = useState<Gender | ''>(partner.gender ?? '');
   const [roles, setRoles] = useState<PartnerRole[]>(partner.roles);
   const [status, setStatus] = useState<PartnerStatus>(partner.status);
   const [branchId, setBranchId] = useState(partner.branchId);
@@ -187,6 +189,7 @@ function OverviewForm({
         nameEn: nameEn || null,
         shortName: shortName || null,
         isIndividual,
+        gender: isIndividual ? gender || null : null,
         roles,
         status,
         branchId,
@@ -247,6 +250,21 @@ function OverviewForm({
           />
           فرد (وليس جهة/مؤسسة)
         </label>
+        {isIndividual && (
+          <label className="space-y-1 text-sm">
+            <span className="text-muted-foreground">الجنس (لتحديد السيد/السيدة في المستندات)</span>
+            <select
+              disabled={!canEdit}
+              value={gender}
+              onChange={(e) => setGender(e.target.value as Gender | '')}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
+            >
+              <option value="">غير محدد</option>
+              <option value="MALE">ذكر (السيد)</option>
+              <option value="FEMALE">أنثى (السيدة)</option>
+            </select>
+          </label>
+        )}
 
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground">الحالة</span>

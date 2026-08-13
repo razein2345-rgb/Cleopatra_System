@@ -5,6 +5,7 @@ import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
+import { partnerSalutation } from '@/lib/documents/partnerSalutation';
 
 /**
  * FEATURE-006 M8 — Quotation document (print). Mirrors `OrderDocumentPage`
@@ -83,6 +84,7 @@ export function QuotationDocumentPage() {
         date={quotation.date}
         partnerName={partner.nameAr}
         partnerPhone={partner.phone}
+        partnerSalutation={partnerSalutation(partner)}
         items={items}
         totals={{
           subtotal: quotation.subtotal,

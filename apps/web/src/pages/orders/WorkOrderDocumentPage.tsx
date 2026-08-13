@@ -5,6 +5,7 @@ import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
+import { partnerSalutation } from '@/lib/documents/partnerSalutation';
 import { ORDER_STATUS_LABELS } from '../quotations/quotationLabels';
 
 /**
@@ -175,6 +176,7 @@ export function WorkOrderDocumentPage() {
           date={workOrder.createdAt}
           partnerName={partner.nameAr}
           partnerPhone={partner.phone}
+          partnerSalutation={partnerSalutation(partner)}
           items={items}
           customerNotes={order.customerNotes}
         />
