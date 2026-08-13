@@ -55,13 +55,13 @@ export async function listTreasuryEntries(filters: {
   dateFrom?: string;
   dateTo?: string;
   search?: string;
-  /** FEATURE-007 M3 — scopes to entries created by this staff member only (the reception-safe view, never the org-wide list). */
-  staffId?: string;
+  /** FEATURE-007 M3 (2026-08-13, owner: "الوارد والمنصرف في شاشة الموظف على حسب الفرع بتاعه") — scopes to this branch's entries only (the reception-safe view, never the org-wide list). Branch-scoped, not staff-scoped: everyone assigned to a branch sees that branch's own ledger, not just their own personal entries within it. */
+  branchId?: string;
 }): Promise<TreasuryEntry[]> {
   const entries = await prisma.treasuryEntry.findMany({
     where: {
       isDeleted: false,
-      ...(filters.staffId ? { staffId: filters.staffId } : {}),
+      ...(filters.branchId ? { branchId: filters.branchId } : {}),
       ...(filters.type ? { type: filters.type } : {}),
       ...(filters.dateFrom || filters.dateTo
         ? {
@@ -86,14 +86,20 @@ export async function listTreasuryEntries(filters: {
 }
 
 /**
- * The reception-safe summary — total and count of entries a specific
- * staff member created, never the org-wide balance. This is the only
+ * The reception-safe summary — total and count of entries recorded under
+ * a specific branch, never the org-wide balance. This is the only
  * treasury figure a caller with `treasury.create` but not `treasury.view`
  * may ever see (locked decision, FEATURE-007 00_REQUIREMENTS.md).
+ *
+ * Branch-scoped, not staff-scoped (2026-08-13, owner: "الوارد والمنصرف في
+ * شاشة الموظف على حسب الفرع بتاعه — لو حاطه في فرع كليوباترا يبقى الوارد
+ * والمنصرف بتاعه في كليوباترا بس") — a caller assigned to a branch sees
+ * that branch's own running total, not just the entries they personally
+ * recorded within it.
  */
-export async function getMyTreasurySummary(staffId: string): Promise<MyTreasurySummary> {
+export async function getMyTreasurySummary(branchId: string): Promise<MyTreasurySummary> {
   const result = await prisma.treasuryEntry.aggregate({
-    where: { isDeleted: false, staffId },
+    where: { isDeleted: false, branchId },
     _sum: { amount: true },
     _count: true,
   });

@@ -15,8 +15,11 @@ import { recordAudit } from '../services/auditService.js';
 /**
  * FEATURE-007 M3 — the route only requires `treasury.create` (see routes
  * file), so any caller lacking `treasury.view` (e.g. reception) is scoped
- * to their own entries here, not at the route layer — same "one DTO,
- * permission-shaped by value" precedent as `orders.ts`'s `canSeeInternal`.
+ * here, not at the route layer — same "one DTO, permission-shaped by
+ * value" precedent as `orders.ts`'s `canSeeInternal`. Scoped by branch
+ * (2026-08-13 owner decision — see `listTreasuryEntries`'s own doc
+ * comment), not by staff — everyone assigned to a branch sees that
+ * branch's whole ledger.
  */
 export async function listTreasuryEntriesHandler(req: Request, res: Response) {
   const auth = req.auth!;
@@ -33,7 +36,7 @@ export async function listTreasuryEntriesHandler(req: Request, res: Response) {
     dateFrom,
     dateTo,
     search,
-    staffId: canSeeAll ? undefined : auth.staffId,
+    branchId: canSeeAll ? undefined : auth.branchId,
   });
   res.json({ success: true, data: entries });
 }
@@ -44,10 +47,10 @@ export async function getTreasuryBalanceHandler(_req: Request, res: Response) {
   res.json({ success: true, data: balance });
 }
 
-/** The reception-safe alternative to the balance endpoint above — a caller's own total only, never the org-wide figure. */
+/** The reception-safe alternative to the balance endpoint above — the caller's own branch total only, never the org-wide figure. */
 export async function getMyTreasurySummaryHandler(req: Request, res: Response) {
   const auth = req.auth!;
-  const summary = await getMyTreasurySummary(auth.staffId);
+  const summary = await getMyTreasurySummary(auth.branchId);
   res.json({ success: true, data: summary });
 }
 

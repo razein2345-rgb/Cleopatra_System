@@ -277,7 +277,7 @@ function FullTreasuryView() {
  * decision exactly ("يشوف إجمالي حركاته هو بس").
  */
 function ReceptionTreasuryView() {
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
   const [summary, setSummary] = useState<MyTreasurySummary | null>(null);
   const [myEntries, setMyEntries] = useState<TreasuryEntry[] | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
@@ -302,6 +302,7 @@ function ReceptionTreasuryView() {
 
   const partnerName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? '—') : '—');
   const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? '—';
+  const myBranchName = authContext ? branchName(authContext.user.branchId) : null;
 
   const removeEntry = async (entry: TreasuryEntry) => {
     if (!confirm('حذف هذه الحركة؟')) return;
@@ -318,10 +319,11 @@ function ReceptionTreasuryView() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold">الوارد والمنصرف</h1>
+      <h1 className="text-2xl font-bold">الوارد والمنصرف{myBranchName ? ` — ${myBranchName}` : ''}</h1>
 
+      {/* FEATURE-007 M3 (2026-08-13, owner: "لو حاطه في فرع كليوباترا يبقى الوارد والمنصرف بتاعه في كليوباترا بس") — this total/list is the caller's own branch's ledger, not just entries they personally recorded within it. */}
       <Card className="p-4">
-        <p className="text-muted-foreground text-sm">إجمالي حركاتك</p>
+        <p className="text-muted-foreground text-sm">إجمالي حركات الفرع</p>
         <p className="text-xl font-bold">{(summary?.total ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
         <p className="text-muted-foreground mt-1 text-xs">{summary?.entryCount ?? 0} حركة</p>
       </Card>
@@ -397,7 +399,7 @@ function ReceptionTreasuryView() {
               {myEntries.length === 0 && (
                 <tr>
                   <td className="text-muted-foreground p-3 text-center" colSpan={9}>
-                    لسه معملتش أي حركة.
+                    لا توجد حركات مسجّلة على الفرع بعد.
                   </td>
                 </tr>
               )}
