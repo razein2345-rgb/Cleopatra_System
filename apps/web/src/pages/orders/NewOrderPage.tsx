@@ -8,6 +8,7 @@ import type {
   CreateOrderInput,
   CreatePaymentInput,
   CreateQuotationInput,
+  Gender,
   InventoryItem,
   Order,
   OrderItemPricingInput,
@@ -2168,6 +2169,8 @@ function QuickAddPartnerDialog({
 }) {
   const [nameAr, setNameAr] = useState('');
   const [phone, setPhone] = useState('');
+  const [isIndividual, setIsIndividual] = useState(false);
+  const [gender, setGender] = useState<Gender | ''>('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -2182,6 +2185,8 @@ function QuickAddPartnerDialog({
         phone: phone || undefined,
         branchId,
         roles: ['CUSTOMER'],
+        isIndividual,
+        gender: isIndividual ? gender || undefined : undefined,
       });
       onCreated(partner);
     } catch (err) {
@@ -2218,6 +2223,24 @@ function QuickAddPartnerDialog({
               className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
             />
           </label>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={isIndividual} onChange={(e) => setIsIndividual(e.target.checked)} />
+            فرد (وليس جهة/مؤسسة)
+          </label>
+          {isIndividual && (
+            <label className="block space-y-1 text-sm">
+              <span className="text-muted-foreground">الجنس (لتحديد السيد/السيدة في المستندات)</span>
+              <select
+                value={gender}
+                onChange={(e) => setGender(e.target.value as Gender | '')}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              >
+                <option value="">غير محدد</option>
+                <option value="MALE">ذكر (السيد)</option>
+                <option value="FEMALE">أنثى (السيدة)</option>
+              </select>
+            </label>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={onClose}>
               إلغاء
