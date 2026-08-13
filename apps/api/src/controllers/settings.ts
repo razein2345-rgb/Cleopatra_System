@@ -37,6 +37,8 @@ export async function getBusinessIdentity(_req: Request, res: Response) {
       facebookUrl: true,
       showStampOnInvoice: true,
       showQuotationDate: true,
+      showQuotationSignatureArea: true,
+      showQuotationDocumentNumber: true,
     },
   });
   if (!setting) {

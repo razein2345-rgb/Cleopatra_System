@@ -59,6 +59,11 @@ export const settingSchema = z.object({
   // التاريخ خالص او يكون موجود") — whether the quotation's own issue
   // date prints at all.
   showQuotationDate: z.boolean(),
+  // FEATURE-007 (2026-08-13, owner: "التوقيع... والسيريل نمبر بتاع العرض
+  // حابب كل التفاصيل دي تكون داخليه متظهرش على العرض اللي هيتطبع
+  // للعميل") — off by default: internal-only details, not printed.
+  showQuotationSignatureArea: z.boolean(),
+  showQuotationDocumentNumber: z.boolean(),
 });
 
 export const updateSettingSchema = settingSchema.omit({ id: true }).partial();
@@ -87,6 +92,8 @@ export const businessIdentitySchema = settingSchema.pick({
   facebookUrl: true,
   showStampOnInvoice: true,
   showQuotationDate: true,
+  showQuotationSignatureArea: true,
+  showQuotationDocumentNumber: true,
 });
 
 export type Setting = z.infer<typeof settingSchema>;

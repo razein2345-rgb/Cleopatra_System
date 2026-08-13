@@ -42,6 +42,8 @@ const baseSetting: Setting = {
   facebookUrl: null,
   showStampOnInvoice: false,
   showQuotationDate: true,
+  showQuotationSignatureArea: false,
+  showQuotationDocumentNumber: false,
 };
 
 const baseTemplate: DocumentTemplate = {

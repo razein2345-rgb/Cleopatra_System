@@ -93,6 +93,8 @@ export interface DocumentRendererProps {
   showStamp?: boolean;
   /** FEATURE-007 (2026-08-12, owner: "عايز اوبشن في عرض السعر إني اشيل التاريخ خالص او يكون موجود") — whether the document's own issue date prints. Defaults to `true`. */
   showDate?: boolean;
+  /** FEATURE-007 (2026-08-13, owner: "السيريل نمبر بتاع العرض حابب... متظهرش على العرض اللي هيتطبع للعميل") — whether the document's own serial number ("رقم: ...") prints. Defaults to `true`. */
+  showDocumentNumber?: boolean;
 }
 
 function money(n: number) {
@@ -134,6 +136,7 @@ export function DocumentRenderer({
   hideCustomerSignature = false,
   showStamp = true,
   showDate = true,
+  showDocumentNumber = true,
 }: DocumentRendererProps) {
   const { business, config } = snapshot;
   const showLogo = showBranding && Boolean(config.showLogo) && business.logoUrl;
@@ -195,9 +198,11 @@ export function DocumentRenderer({
             )}
           </div>
           <div className="text-end text-xs">
-            <div>
-              رقم: <span dir="ltr">{documentNumber}</span>
-            </div>
+            {showDocumentNumber && (
+              <div>
+                رقم: <span dir="ltr">{documentNumber}</span>
+              </div>
+            )}
             {showDate && (
               <div>
                 التاريخ: <span dir="ltr">{new Date(date).toLocaleDateString('en-GB')}</span>

@@ -125,6 +125,8 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
   const [stampUrl, setStampUrl] = useState(setting.stampUrl ?? '');
   const [showStampOnInvoice, setShowStampOnInvoice] = useState(setting.showStampOnInvoice);
   const [showQuotationDate, setShowQuotationDate] = useState(setting.showQuotationDate);
+  const [showQuotationSignatureArea, setShowQuotationSignatureArea] = useState(setting.showQuotationSignatureArea);
+  const [showQuotationDocumentNumber, setShowQuotationDocumentNumber] = useState(setting.showQuotationDocumentNumber);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -141,6 +143,8 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
               setStampUrl(setting.stampUrl ?? '');
               setShowStampOnInvoice(setting.showStampOnInvoice);
               setShowQuotationDate(setting.showQuotationDate);
+              setShowQuotationSignatureArea(setting.showQuotationSignatureArea);
+              setShowQuotationDocumentNumber(setting.showQuotationDocumentNumber);
               setEditing(true);
             }}
           >
@@ -169,6 +173,12 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
         <p className="text-muted-foreground text-sm">
           إظهار تاريخ الإصدار في عرض السعر: <span className="font-medium">{setting.showQuotationDate ? 'نعم' : 'لا'}</span>
         </p>
+        <p className="text-muted-foreground text-sm">
+          إظهار مكان التوقيع في عرض السعر: <span className="font-medium">{setting.showQuotationSignatureArea ? 'نعم' : 'لا'}</span>
+        </p>
+        <p className="text-muted-foreground text-sm">
+          إظهار رقم عرض السعر عند الطباعة: <span className="font-medium">{setting.showQuotationDocumentNumber ? 'نعم' : 'لا'}</span>
+        </p>
         <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
           {TEXT_FIELDS.map((f) => (
             <div key={f.key} className="border-border flex flex-col gap-1 border-b border-dashed py-2 text-sm">
@@ -193,6 +203,8 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
         stampUrl: stampUrl.trim() === '' ? null : stampUrl.trim(),
         showStampOnInvoice,
         showQuotationDate,
+        showQuotationSignatureArea,
+        showQuotationDocumentNumber,
       } satisfies UpdateSettingInput;
       await apiPut('/api/settings', payload);
       setEditing(false);
@@ -226,6 +238,14 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
       <label className="flex items-center gap-2 text-sm">
         <Checkbox checked={showQuotationDate} onCheckedChange={(v) => setShowQuotationDate(v === true)} />
         <span>إظهار تاريخ الإصدار في عرض السعر</span>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={showQuotationSignatureArea} onCheckedChange={(v) => setShowQuotationSignatureArea(v === true)} />
+        <span>إظهار مكان التوقيع في عرض السعر</span>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={showQuotationDocumentNumber} onCheckedChange={(v) => setShowQuotationDocumentNumber(v === true)} />
+        <span>إظهار رقم عرض السعر عند الطباعة</span>
       </label>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

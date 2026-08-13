@@ -55,7 +55,8 @@ export function QuotationDocumentPage() {
   });
 
   const branch = branches.find((b) => b.id === quotation.branchId);
-  const snapshot = resolveDocumentSnapshot(business, null, null, branch);
+  // owner (2026-08-13): "التوقيع... والسيريل نمبر... حابب كل التفاصيل دي تكون داخليه" — an explicit one-time override on top of the default template config, exactly what this `overrides` param exists for.
+  const snapshot = resolveDocumentSnapshot(business, null, { showSignatureArea: business.showQuotationSignatureArea }, branch);
 
   return (
     <div className="space-y-4">
@@ -76,6 +77,7 @@ export function QuotationDocumentPage() {
         logoSizeCm={3.5}
         contactIconTheme={branch && !branch.isDefault ? 'blue-pink' : 'red'}
         showDate={business.showQuotationDate}
+        showDocumentNumber={business.showQuotationDocumentNumber}
         documentTypeLabel="عرض سعر"
         documentNumber={quotation.quotationNumber}
         date={quotation.date}

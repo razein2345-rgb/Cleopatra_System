@@ -376,6 +376,9 @@ model Setting {
   showStampOnInvoice       Boolean @default(false)
   /// FEATURE-007 (2026-08-12, owner: "عايز اوبشن في عرض السعر إني اشيل التاريخ خالص او يكون موجود اللي هو تاريخ إصدار عرض السعر نفسه") — whether the quotation's own issue date prints at all. On by default (unchanged existing behavior).
   showQuotationDate        Boolean @default(true)
+  /// FEATURE-007 (2026-08-13, owner: "التوقيع ... والسيريل نمبر بتاع العرض حابب كل التفاصيل دي تكون داخليه متظهرش على العرض اللي هيتطبع للعميل") — the signature area and the quotation's own printed serial number, both off by default (internal-only, never shown to the customer copy).
+  showQuotationSignatureArea  Boolean @default(false)
+  showQuotationDocumentNumber Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
