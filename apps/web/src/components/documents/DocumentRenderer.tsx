@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ComponentType, CSSProperties } from 'react';
 import { Mail, MapPin, Phone, PhoneCall } from 'lucide-react';
 import type { DocumentSnapshot } from '@/lib/documents/documentSnapshot';
 
@@ -15,10 +15,23 @@ function FacebookGlyph({ className }: { className?: string }) {
  * FEATURE-007 (2026-08-12, owner: "ويكون الأيقونات زي كده الاحمر
  * لكليوباترا والأزرق والبينك لبيت الطباعة") — circular colored contact
  * badges, themed per issuing branch rather than a single fixed color.
+ * `blue-pink`'s exact values (2026-08-13) are sampled straight from the
+ * real "عرض أسعار برينتنج هاوس" reference letterhead the owner sent —
+ * blue for email/phone-type contacts, pink for location/social — not a
+ * guess.
  */
-const CONTACT_ICON_COLORS: Record<'red' | 'blue-pink', { phone: string; landline: string; facebook: string }> = {
-  red: { phone: '#dc2626', landline: '#dc2626', facebook: '#dc2626' },
-  'blue-pink': { phone: '#2563eb', landline: '#2563eb', facebook: '#ec4899' },
+const CONTACT_ICON_COLORS: Record<
+  'red' | 'blue-pink',
+  { address: string; email: string; phone: string; landline: string; facebook: string }
+> = {
+  red: { address: '#dc2626', email: '#dc2626', phone: '#dc2626', landline: '#dc2626', facebook: '#dc2626' },
+  'blue-pink': { address: '#e62590', email: '#00adef', phone: '#e62590', landline: '#00adef', facebook: '#e62590' },
+};
+
+/** Same reference letterhead's brand cyan, used for the business name/heading/table-header accent when `contactIconTheme === 'blue-pink'`. `undefined` for 'red' falls back to the app's own `--primary` CSS variable — Cleopatra's real red, not a re-guessed hex. */
+const ACCENT_COLOR_OVERRIDE: Record<'red' | 'blue-pink', string | undefined> = {
+  red: undefined,
+  'blue-pink': '#00adef',
 };
 
 function ContactBadge({ icon: Icon, color }: { icon: ComponentType<{ className?: string }>; color: string }) {
@@ -126,6 +139,7 @@ export function DocumentRenderer({
   const showLogo = showBranding && Boolean(config.showLogo) && business.logoUrl;
   const hasPricing = items.some((i) => typeof i.lineTotal === 'number');
   const badgeColors = CONTACT_ICON_COLORS[contactIconTheme];
+  const accentStyle = { '--doc-accent': ACCENT_COLOR_OVERRIDE[contactIconTheme] ?? 'var(--primary)' } as CSSProperties;
   const hasContactFooter =
     (Boolean(config.showBusinessAddress) && business.address) ||
     business.email ||
@@ -135,7 +149,7 @@ export function DocumentRenderer({
     business.website;
 
   return (
-    <div className="document-print-root bg-background text-foreground relative mx-auto max-w-3xl overflow-hidden p-8 text-sm">
+    <div className="document-print-root bg-background text-foreground relative mx-auto max-w-3xl overflow-hidden p-8 text-sm" style={accentStyle}>
       {showLogo && (
         <img
           src={business.logoUrl ?? undefined}
@@ -150,7 +164,7 @@ export function DocumentRenderer({
           <header className="mb-6 flex items-start justify-between">
             {/* عايز اللوجو يظهر شمال والإسم يظهر يمين (owner, 2026-08-12) — الاسم أول عنصر في DOM (يمين في RTL)، اللوجو تاني عنصر (شمال). */}
             <div className="text-end">
-              <div className="text-primary text-2xl font-extrabold">{business.nameAr || '—'}</div>
+              <div className="text-[var(--doc-accent)] text-2xl font-extrabold">{business.nameAr || '—'}</div>
               {business.tagline && <div className="text-foreground/70 text-sm font-normal italic">{business.tagline}</div>}
               {business.nameEn && <div className="text-muted-foreground text-sm">{business.nameEn}</div>}
             </div>
@@ -173,7 +187,7 @@ export function DocumentRenderer({
 
         <div className="mb-4 flex items-start justify-between">
           <div>
-            <div className="text-primary text-lg font-bold">السادة / {partnerName}</div>
+            <div className="text-[var(--doc-accent)] text-lg font-bold">السادة / {partnerName}</div>
             {partnerPhone && (
               <div className="text-xs">
                 <span dir="ltr">{partnerPhone}</span>
@@ -193,12 +207,12 @@ export function DocumentRenderer({
           </div>
         </div>
 
-        <div className="text-primary mb-3 text-center text-xl font-bold">{documentTypeLabel}</div>
+        <div className="text-[var(--doc-accent)] mb-3 text-center text-xl font-bold">{documentTypeLabel}</div>
         <p className="mb-3 text-sm">نقدم لسيادتكم التفاصيل الآتي بيانها:</p>
 
         <table className="border-foreground/70 mb-6 w-full border-collapse border text-xs">
           <thead>
-            <tr className="bg-primary text-primary-foreground">
+            <tr className="bg-[var(--doc-accent)] text-primary-foreground">
               <th className="border-foreground/70 border p-2">م</th>
               <th className="border-foreground/70 border p-2 text-start">البيان</th>
               {items.some((i) => i.size) && <th className="border-foreground/70 border p-2">المقاس</th>}
@@ -258,7 +272,7 @@ export function DocumentRenderer({
                   <span dir="ltr">{money(totals.vatAmount)}</span>
                 </div>
               )}
-              <div className="border-primary/40 text-primary flex justify-between border-t pt-1 text-sm font-bold">
+              <div className="border-border text-[var(--doc-accent)] flex justify-between border-t pt-1 text-sm font-bold">
                 <span>الإجمالي النهائي</span>
                 <span dir="ltr">{money(totals.finalTotal)}</span>
               </div>
@@ -314,12 +328,12 @@ export function DocumentRenderer({
             <div className="flex flex-wrap items-center gap-3">
               {Boolean(config.showBusinessAddress) && business.address && (
                 <span className="flex items-center gap-1">
-                  <MapPin className="size-3.5" /> {business.address}
+                  <ContactBadge icon={MapPin} color={badgeColors.address} /> {business.address}
                 </span>
               )}
               {Boolean(config.showBusinessEmail) && business.email && (
                 <span className="flex items-center gap-1">
-                  <Mail className="size-3.5" /> {business.email}
+                  <ContactBadge icon={Mail} color={badgeColors.email} /> {business.email}
                 </span>
               )}
             </div>
