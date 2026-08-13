@@ -64,6 +64,15 @@ export const settingSchema = z.object({
   // للعميل") — off by default: internal-only details, not printed.
   showQuotationSignatureArea: z.boolean(),
   showQuotationDocumentNumber: z.boolean(),
+  // FEATURE-008 (2026-08-13, owner: "في الفاتورة مش عايز يظهر فيها العنوان
+  // والرقم الأرضي والإيميل ورقم التليفون وصفحة الفيس إلا بإختياري") — off
+  // by default, each independently toggleable, Invoice-specific (Quotation/
+  // Work Order keep showing these per their own template config, unaffected).
+  showInvoiceAddress: z.boolean(),
+  showInvoicePhone: z.boolean(),
+  showInvoiceEmail: z.boolean(),
+  showInvoiceLandline: z.boolean(),
+  showInvoiceFacebook: z.boolean(),
 });
 
 export const updateSettingSchema = settingSchema.omit({ id: true }).partial();
@@ -94,6 +103,11 @@ export const businessIdentitySchema = settingSchema.pick({
   showQuotationDate: true,
   showQuotationSignatureArea: true,
   showQuotationDocumentNumber: true,
+  showInvoiceAddress: true,
+  showInvoicePhone: true,
+  showInvoiceEmail: true,
+  showInvoiceLandline: true,
+  showInvoiceFacebook: true,
 });
 
 export type Setting = z.infer<typeof settingSchema>;

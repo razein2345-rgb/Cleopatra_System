@@ -151,10 +151,10 @@ export function DocumentRenderer({
   const accentStyle = { '--doc-accent': ACCENT_COLOR_OVERRIDE[contactIconTheme] ?? 'var(--primary)' } as CSSProperties;
   const hasContactFooter =
     (Boolean(config.showBusinessAddress) && business.address) ||
-    business.email ||
-    business.phone ||
-    business.landlinePhone ||
-    business.facebookUrl ||
+    (Boolean(config.showBusinessEmail) && business.email) ||
+    (Boolean(config.showBusinessPhone) && business.phone) ||
+    (Boolean(config.showBusinessLandline) && business.landlinePhone) ||
+    (Boolean(config.showBusinessFacebook) && business.facebookUrl) ||
     business.website;
 
   return (
@@ -366,13 +366,13 @@ export function DocumentRenderer({
                   <span dir="ltr">{business.phone}</span>
                 </span>
               )}
-              {business.landlinePhone && (
+              {Boolean(config.showBusinessLandline) && business.landlinePhone && (
                 <span className="flex items-center gap-1">
                   <ContactBadge icon={PhoneCall} color={badgeColors.landline} />
                   <span dir="ltr">{business.landlinePhone}</span>
                 </span>
               )}
-              {business.facebookUrl && (
+              {Boolean(config.showBusinessFacebook) && business.facebookUrl && (
                 <span className="flex items-center gap-1">
                   <ContactBadge icon={FacebookGlyph} color={badgeColors.facebook} />
                   <span dir="ltr">{business.facebookUrl}</span>

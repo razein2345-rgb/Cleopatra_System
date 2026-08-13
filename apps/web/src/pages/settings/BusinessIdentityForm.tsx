@@ -127,6 +127,11 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
   const [showQuotationDate, setShowQuotationDate] = useState(setting.showQuotationDate);
   const [showQuotationSignatureArea, setShowQuotationSignatureArea] = useState(setting.showQuotationSignatureArea);
   const [showQuotationDocumentNumber, setShowQuotationDocumentNumber] = useState(setting.showQuotationDocumentNumber);
+  const [showInvoiceAddress, setShowInvoiceAddress] = useState(setting.showInvoiceAddress);
+  const [showInvoicePhone, setShowInvoicePhone] = useState(setting.showInvoicePhone);
+  const [showInvoiceEmail, setShowInvoiceEmail] = useState(setting.showInvoiceEmail);
+  const [showInvoiceLandline, setShowInvoiceLandline] = useState(setting.showInvoiceLandline);
+  const [showInvoiceFacebook, setShowInvoiceFacebook] = useState(setting.showInvoiceFacebook);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -145,6 +150,11 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
               setShowQuotationDate(setting.showQuotationDate);
               setShowQuotationSignatureArea(setting.showQuotationSignatureArea);
               setShowQuotationDocumentNumber(setting.showQuotationDocumentNumber);
+              setShowInvoiceAddress(setting.showInvoiceAddress);
+              setShowInvoicePhone(setting.showInvoicePhone);
+              setShowInvoiceEmail(setting.showInvoiceEmail);
+              setShowInvoiceLandline(setting.showInvoiceLandline);
+              setShowInvoiceFacebook(setting.showInvoiceFacebook);
               setEditing(true);
             }}
           >
@@ -179,6 +189,21 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
         <p className="text-muted-foreground text-sm">
           إظهار رقم عرض السعر عند الطباعة: <span className="font-medium">{setting.showQuotationDocumentNumber ? 'نعم' : 'لا'}</span>
         </p>
+        <p className="text-muted-foreground text-sm">
+          إظهار العنوان في الفاتورة: <span className="font-medium">{setting.showInvoiceAddress ? 'نعم' : 'لا'}</span>
+        </p>
+        <p className="text-muted-foreground text-sm">
+          إظهار الهاتف في الفاتورة: <span className="font-medium">{setting.showInvoicePhone ? 'نعم' : 'لا'}</span>
+        </p>
+        <p className="text-muted-foreground text-sm">
+          إظهار البريد الإلكتروني في الفاتورة: <span className="font-medium">{setting.showInvoiceEmail ? 'نعم' : 'لا'}</span>
+        </p>
+        <p className="text-muted-foreground text-sm">
+          إظهار الرقم الأرضي في الفاتورة: <span className="font-medium">{setting.showInvoiceLandline ? 'نعم' : 'لا'}</span>
+        </p>
+        <p className="text-muted-foreground text-sm">
+          إظهار صفحة الفيسبوك في الفاتورة: <span className="font-medium">{setting.showInvoiceFacebook ? 'نعم' : 'لا'}</span>
+        </p>
         <div className="grid grid-cols-1 gap-x-6 sm:grid-cols-2">
           {TEXT_FIELDS.map((f) => (
             <div key={f.key} className="border-border flex flex-col gap-1 border-b border-dashed py-2 text-sm">
@@ -205,6 +230,11 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
         showQuotationDate,
         showQuotationSignatureArea,
         showQuotationDocumentNumber,
+        showInvoiceAddress,
+        showInvoicePhone,
+        showInvoiceEmail,
+        showInvoiceLandline,
+        showInvoiceFacebook,
       } satisfies UpdateSettingInput;
       await apiPut('/api/settings', payload);
       setEditing(false);
@@ -246,6 +276,26 @@ export function BusinessIdentityForm({ setting, onSaved }: { setting: Setting; o
       <label className="flex items-center gap-2 text-sm">
         <Checkbox checked={showQuotationDocumentNumber} onCheckedChange={(v) => setShowQuotationDocumentNumber(v === true)} />
         <span>إظهار رقم عرض السعر عند الطباعة</span>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={showInvoiceAddress} onCheckedChange={(v) => setShowInvoiceAddress(v === true)} />
+        <span>إظهار العنوان في الفاتورة</span>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={showInvoicePhone} onCheckedChange={(v) => setShowInvoicePhone(v === true)} />
+        <span>إظهار الهاتف في الفاتورة</span>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={showInvoiceEmail} onCheckedChange={(v) => setShowInvoiceEmail(v === true)} />
+        <span>إظهار البريد الإلكتروني في الفاتورة</span>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={showInvoiceLandline} onCheckedChange={(v) => setShowInvoiceLandline(v === true)} />
+        <span>إظهار الرقم الأرضي في الفاتورة</span>
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <Checkbox checked={showInvoiceFacebook} onCheckedChange={(v) => setShowInvoiceFacebook(v === true)} />
+        <span>إظهار صفحة الفيسبوك في الفاتورة</span>
       </label>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

@@ -39,6 +39,11 @@ export async function getBusinessIdentity(_req: Request, res: Response) {
       showQuotationDate: true,
       showQuotationSignatureArea: true,
       showQuotationDocumentNumber: true,
+      showInvoiceAddress: true,
+      showInvoicePhone: true,
+      showInvoiceEmail: true,
+      showInvoiceLandline: true,
+      showInvoiceFacebook: true,
     },
   });
   if (!setting) {

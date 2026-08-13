@@ -84,7 +84,24 @@ export function OrderDocumentPage() {
   });
 
   const branch = branches.find((b) => b.id === order.branchId);
-  const snapshot = resolveDocumentSnapshot(business, null, null, branch);
+  // Owner (2026-08-13): "في الفاتورة مش عايز يظهر فيها العنوان والرقم
+  // الأرضي والإيميل ورقم التليفون وصفحة الفيس إلا بإختياري" — Invoice has
+  // no template, so these owner-configured toggles apply as a one-time
+  // override on top of the (address/phone/email true, landline/facebook
+  // true) template defaults, exactly like Quotation's showSignatureArea
+  // override above.
+  const snapshot = resolveDocumentSnapshot(
+    business,
+    null,
+    {
+      showBusinessAddress: business.showInvoiceAddress,
+      showBusinessPhone: business.showInvoicePhone,
+      showBusinessEmail: business.showInvoiceEmail,
+      showBusinessLandline: business.showInvoiceLandline,
+      showBusinessFacebook: business.showInvoiceFacebook,
+    },
+    branch,
+  );
   const createdByName = staff.find((s) => s.id === order.staffId)?.name ?? null;
 
   return (

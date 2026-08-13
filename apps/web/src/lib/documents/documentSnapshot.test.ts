@@ -44,6 +44,11 @@ const baseSetting: Setting = {
   showQuotationDate: true,
   showQuotationSignatureArea: false,
   showQuotationDocumentNumber: false,
+  showInvoiceAddress: false,
+  showInvoicePhone: false,
+  showInvoiceEmail: false,
+  showInvoiceLandline: false,
+  showInvoiceFacebook: false,
 };
 
 const baseTemplate: DocumentTemplate = {
@@ -117,5 +122,19 @@ describe('resolveDocumentSnapshot', () => {
     const a = resolveDocumentSnapshot(baseSetting, baseTemplate, { showLogo: false });
     const b = resolveDocumentSnapshot(baseSetting, baseTemplate, { showLogo: false });
     expect(a).toEqual(b);
+  });
+
+  it('suppresses the global English name for a non-default branch (owner: "مينفعش يظهر تحت كلمة للدعاية والإعلان كلمة Cleopatra")', () => {
+    const printingHouse = resolveDocumentSnapshot(baseSetting, null, null, { name: 'برينتنج هاوس', isDefault: false });
+    expect(printingHouse.business.nameAr).toBe('برينتنج هاوس');
+    expect(printingHouse.business.nameEn).toBeNull();
+
+    // the default branch keeps the global English name
+    const cleopatra = resolveDocumentSnapshot(baseSetting, null, null, { name: 'كليوباترا', isDefault: true });
+    expect(cleopatra.business.nameEn).toBe('Cleopatra Press');
+
+    // no branch at all (e.g. a document type that doesn't carry branch identity) also keeps it
+    const noBranch = resolveDocumentSnapshot(baseSetting, null, null);
+    expect(noBranch.business.nameEn).toBe('Cleopatra Press');
   });
 });

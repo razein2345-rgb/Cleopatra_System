@@ -1,0 +1,5 @@
+ALTER TABLE "Setting" ADD COLUMN "showInvoiceAddress" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "showInvoicePhone" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "showInvoiceEmail" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "showInvoiceLandline" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "showInvoiceFacebook" BOOLEAN NOT NULL DEFAULT false;

@@ -407,6 +407,12 @@ model Setting {
   /// FEATURE-007 (2026-08-13, owner: "التوقيع ... والسيريل نمبر بتاع العرض حابب كل التفاصيل دي تكون داخليه متظهرش على العرض اللي هيتطبع للعميل") — the signature area and the quotation's own printed serial number, both off by default (internal-only, never shown to the customer copy).
   showQuotationSignatureArea  Boolean @default(false)
   showQuotationDocumentNumber Boolean @default(false)
+  /// FEATURE-008 (2026-08-13, owner: "في الفاتورة مش عايز يظهر فيها العنوان والرقم الأرضي والإيميل ورقم التليفون وصفحة الفيس إلا بإختياري يعني يكون ليهم check box برضو") — off by default, each independently toggleable, Invoice-specific (Quotation/Work Order keep their own template-config-driven display, unaffected).
+  showInvoiceAddress          Boolean @default(false)
+  showInvoicePhone            Boolean @default(false)
+  showInvoiceEmail            Boolean @default(false)
+  showInvoiceLandline         Boolean @default(false)
+  showInvoiceFacebook         Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

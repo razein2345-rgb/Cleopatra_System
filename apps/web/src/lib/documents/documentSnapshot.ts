@@ -37,6 +37,8 @@ export interface DocumentSnapshot {
 /** FEATURE-007 (2026-08-12, owner: "يظهرلي بيانات بيت الطباعة أو بيانات كليوباترا لما اختار [الفرع]") — the issuing Branch's own letterhead fields; each one that's set wins over the matching global business-identity field. `name` maps to the document's `nameAr` (a branch is one printed name, not separate ar/en variants). */
 export interface DocumentBranchIdentity {
   name?: string | null;
+  /** Whether this is the main/default branch (كليوباترا) — used only to decide whether the global English name still applies (see `nameEn` below); every other field above overrides the global identity unconditionally regardless of this flag. */
+  isDefault?: boolean;
   address?: string | null;
   phone?: string | null;
   email?: string | null;
@@ -64,7 +66,12 @@ export function resolveDocumentSnapshot(
   return {
     business: {
       nameAr: branch?.name ?? setting?.businessNameAr ?? null,
-      nameEn: setting?.businessNameEn ?? null,
+      // Owner (2026-08-13): "العرض بتاع برينتينج مينفعش يظهر تحت كلمة
+      // للدعاية والإعلان كلمة Cleopatra" — `businessNameEn` is a single
+      // global field (no per-branch English name exists), so it only
+      // belongs on the default branch's own documents; a non-default
+      // branch (e.g. بيت الطباعة) must not inherit كليوباترا's English name.
+      nameEn: branch?.isDefault === false ? null : (setting?.businessNameEn ?? null),
       tagline: branch?.tagline ?? setting?.businessTagline ?? null,
       address: branch?.address ?? setting?.address ?? null,
       phone: branch?.phone ?? setting?.phone ?? null,
