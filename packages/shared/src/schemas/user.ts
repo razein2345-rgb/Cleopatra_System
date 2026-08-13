@@ -4,6 +4,12 @@ import { roleSchema } from './role.js';
 /** FEATURE-008 (2026-08-13, owner: "منهم من يقبض بالأسبوع ومنهم من يقبض بالشهر") — which cycle `User.baseSalary` is denominated in. */
 export const payFrequencySchema = z.enum(['WEEKLY', 'MONTHLY']);
 
+/** "HH:MM", 24h. */
+const shiftTimeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'صيغة الوقت غير صحيحة (HH:MM)');
+
+/** 0 = Sunday … 6 = Saturday, matching `Date.getUTCDay()`. */
+const weekdaySchema = z.number().int().min(0).max(6);
+
 export const userSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
@@ -19,6 +25,9 @@ export const userSchema = z.object({
   hireDate: z.string().nullable(),
   payFrequency: payFrequencySchema.nullable(),
   baseSalary: z.number().nullable(),
+  shiftStartTime: z.string().nullable(),
+  shiftEndTime: z.string().nullable(),
+  workingDays: z.array(weekdaySchema),
   createdAt: z.string(),
 });
 
@@ -39,6 +48,9 @@ export const updateUserSchema = z.object({
   hireDate: z.string().nullable().optional(),
   payFrequency: payFrequencySchema.nullable().optional(),
   baseSalary: z.number().nonnegative().nullable().optional(),
+  shiftStartTime: shiftTimeSchema.nullable().optional(),
+  shiftEndTime: shiftTimeSchema.nullable().optional(),
+  workingDays: z.array(weekdaySchema).optional(),
 });
 
 export const setUserRolesSchema = z.object({

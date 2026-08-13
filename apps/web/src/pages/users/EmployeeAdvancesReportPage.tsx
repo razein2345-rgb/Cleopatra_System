@@ -46,6 +46,7 @@ export function EmployeeAdvancesReportPage() {
                 <th className="p-3">دورة الصرف</th>
                 <th className="p-3">الراتب الأساسي</th>
                 <th className="p-3">السلف المستحقة</th>
+                <th className="p-3">تسوية الحضور</th>
                 <th className="p-3">متبقي المرتب</th>
               </tr>
             </thead>
@@ -63,6 +64,11 @@ export function EmployeeAdvancesReportPage() {
                   </td>
                   <td className="p-3">
                     <span dir="ltr">{money(s.totalOutstanding)}</span>
+                  </td>
+                  <td className="p-3">
+                    <span dir="ltr" className={s.attendanceAdjustment > 0 ? 'text-green-600' : s.attendanceAdjustment < 0 ? 'text-destructive' : ''}>
+                      {s.attendanceAdjustment !== 0 ? `${s.attendanceAdjustment > 0 ? '+' : ''}${money(s.attendanceAdjustment)}` : '—'}
+                    </span>
                   </td>
                   <td className="p-3 font-medium">
                     <span dir="ltr">{s.netDue != null ? money(s.netDue) : '—'}</span>

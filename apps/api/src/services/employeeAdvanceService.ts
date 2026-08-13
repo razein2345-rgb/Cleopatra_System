@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import type { CreateAdvanceRepaymentInput, CreateEmployeeAdvanceInput, EmployeeAdvance, EmployeeAdvanceSummary } from '@cleopatra/shared';
+import { computeEmployeePayroll } from './employeePayrollService.js';
 
 /**
  * FEATURE-008 (2026-08-13, owner: "إدارة السلف هتبقى من الخزينة ولا من قسم
@@ -159,7 +160,14 @@ export async function createRepayment(
   });
 }
 
-/** FEATURE-008 (2026-08-13, owner: "هل هيطلعلي تقرير بالسلف بتاعت كل موظف ومتبقيله كام من المرتب") — one row per employee with any advance history or salary data. */
+/**
+ * FEATURE-008 (2026-08-13, owner: "هل هيطلعلي تقرير بالسلف بتاعت كل موظف
+ * ومتبقيله كام من المرتب"). One row per employee with any advance history
+ * or salary data. `attendanceAdjustment` folds in the current pay
+ * period's lateness/early-leave deductions and overtime additions (see
+ * employeePayrollService.ts) — 0 for anyone without a shift schedule
+ * configured yet, never a hard failure.
+ */
 export async function getEmployeeAdvanceSummaries(): Promise<EmployeeAdvanceSummary[]> {
   const staff = await prisma.staffProfile.findMany({
     where: {
@@ -170,19 +178,24 @@ export async function getEmployeeAdvanceSummaries(): Promise<EmployeeAdvanceSumm
     orderBy: { name: 'asc' },
   });
 
-  return staff.map((s) => {
-    const totalOutstanding = s.advancesReceived.reduce((sum, advance) => {
-      const repaid = advance.repayments.reduce((rSum, r) => rSum + r.amount.toNumber(), 0);
-      return sum + (advance.amount.toNumber() - repaid);
-    }, 0);
-    const baseSalary = s.baseSalary ? s.baseSalary.toNumber() : null;
-    return {
-      staffId: s.id,
-      staffName: s.name,
-      payFrequency: s.payFrequency,
-      baseSalary,
-      totalOutstanding,
-      netDue: baseSalary !== null ? baseSalary - totalOutstanding : null,
-    };
-  });
+  return Promise.all(
+    staff.map(async (s) => {
+      const totalOutstanding = s.advancesReceived.reduce((sum, advance) => {
+        const repaid = advance.repayments.reduce((rSum, r) => rSum + r.amount.toNumber(), 0);
+        return sum + (advance.amount.toNumber() - repaid);
+      }, 0);
+      const baseSalary = s.baseSalary ? s.baseSalary.toNumber() : null;
+      const payroll = await computeEmployeePayroll(s.id);
+      const attendanceAdjustment = payroll?.totalAdjustment ?? 0;
+      return {
+        staffId: s.id,
+        staffName: s.name,
+        payFrequency: s.payFrequency,
+        baseSalary,
+        totalOutstanding,
+        attendanceAdjustment,
+        netDue: baseSalary !== null ? baseSalary - totalOutstanding + attendanceAdjustment : null,
+      };
+    }),
+  );
 }

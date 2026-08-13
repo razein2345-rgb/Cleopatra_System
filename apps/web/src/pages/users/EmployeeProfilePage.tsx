@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { AdvanceRepaymentMethod, AttendanceEntry, EmployeeAdvance, PayFrequency, User } from '@cleopatra/shared';
+import type { AdvanceRepaymentMethod, AttendanceEntry, EmployeeAdvance, EmployeePayroll, PayFrequency, User } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -11,6 +11,8 @@ const PAY_FREQUENCY_LABELS: Record<PayFrequency, string> = {
   WEEKLY: 'أسبوعي',
   MONTHLY: 'شهري',
 };
+
+const WEEKDAY_LABELS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 
 function money(n: number) {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -30,6 +32,7 @@ export function EmployeeProfilePage() {
   const [user, setUser] = useState<User | null>(null);
   const [advances, setAdvances] = useState<EmployeeAdvance[] | null>(null);
   const [attendance, setAttendance] = useState<AttendanceEntry[] | null>(null);
+  const [payroll, setPayroll] = useState<EmployeePayroll | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [showAddAdvance, setShowAddAdvance] = useState(false);
 
@@ -39,11 +42,13 @@ export function EmployeeProfilePage() {
       apiGet<User>(`/api/users/${id}`),
       apiGet<EmployeeAdvance[]>(`/api/employee-advances/staff/${id}`),
       apiGet<AttendanceEntry[]>(`/api/attendance/staff/${id}`),
+      apiGet<EmployeePayroll | null>(`/api/employee-advances/staff/${id}/payroll`),
     ])
-      .then(([u, a, att]) => {
+      .then(([u, a, att, p]) => {
         setUser(u);
         setAdvances(a);
         setAttendance(att);
+        setPayroll(p);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل بيانات الموظف'));
   };
@@ -51,9 +56,12 @@ export function EmployeeProfilePage() {
   useEffect(load, [id]);
 
   if (error) return <div className="text-destructive">{error}</div>;
-  if (!user || !advances || !attendance) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+  if (!user || !advances || !attendance || payroll === undefined) {
+    return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+  }
 
   const totalOutstanding = advances.reduce((sum, a) => sum + a.remainingBalance, 0);
+  const attendanceAdjustment = payroll?.totalAdjustment ?? 0;
 
   return (
     <div className="space-y-6">
@@ -75,7 +83,15 @@ export function EmployeeProfilePage() {
               {user.baseSalary != null && (
                 <>
                   {' '}
-                  — متبقي من المرتب: <span className="font-medium">{money(user.baseSalary - totalOutstanding)}</span>
+                  — متبقي من المرتب:{' '}
+                  <span className="font-medium">{money(user.baseSalary - totalOutstanding + attendanceAdjustment)}</span>
+                  {attendanceAdjustment !== 0 && (
+                    <span className={attendanceAdjustment > 0 ? 'text-green-600' : 'text-destructive'}>
+                      {' '}
+                      ({attendanceAdjustment > 0 ? '+' : ''}
+                      {money(attendanceAdjustment)} حضور)
+                    </span>
+                  )}
                 </>
               )}
             </p>
@@ -144,6 +160,66 @@ export function EmployeeProfilePage() {
         )}
       </div>
 
+      <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
+        <h2 className="font-semibold">حساب المرتب بالساعات — الفترة الحالية</h2>
+        {!payroll ? (
+          <p className="text-muted-foreground text-sm">
+            لازم تحدد دورة الصرف والراتب الأساسي ومواعيد الوردية وأيام العمل في "بيانات الوظيفة" فوق عشان يتحسب.
+          </p>
+        ) : payroll.scheduledDaysInPeriod === 0 ? (
+          <p className="text-muted-foreground text-sm">لا توجد أيام عمل مجدولة في الفترة الحالية.</p>
+        ) : (
+          <>
+            <p className="text-muted-foreground text-sm">
+              الفترة: {new Date(payroll.periodStart).toLocaleDateString('ar-EG')} — {new Date(payroll.periodEnd).toLocaleDateString('ar-EG')}
+              {' — '}
+              معدل اليوم: <span className="font-medium">{payroll.dailyRate != null ? money(payroll.dailyRate) : '—'}</span>
+              {' — '}
+              معدل الساعة: <span className="font-medium">{payroll.hourlyRate != null ? money(payroll.hourlyRate) : '—'}</span>
+            </p>
+            {payroll.days.length === 0 ? (
+              <p className="text-muted-foreground text-sm">لا توجد أيام عمل انقضت بعد في هذه الفترة.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+                      <th className="p-2">التاريخ</th>
+                      <th className="p-2">الحالة</th>
+                      <th className="p-2">دقائق التأخير</th>
+                      <th className="p-2">دقائق الانصراف المبكر</th>
+                      <th className="p-2">دقائق إضافية</th>
+                      <th className="p-2">التسوية</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payroll.days.map((d) => (
+                      <tr key={d.date} className="border-border border-b last:border-0">
+                        <td className="p-2">{new Date(d.date).toLocaleDateString('ar-EG')}</td>
+                        <td className="p-2">{d.isAbsent ? <span className="text-destructive">غياب</span> : 'حاضر'}</td>
+                        <td className="p-2">{d.lateMinutes > 0 ? Math.round(d.lateMinutes) : '—'}</td>
+                        <td className="p-2">{d.earlyLeaveMinutes > 0 ? Math.round(d.earlyLeaveMinutes) : '—'}</td>
+                        <td className="p-2">{d.overtimeMinutes > 0 ? Math.round(d.overtimeMinutes) : '—'}</td>
+                        <td className={`p-2 ${d.adjustment > 0 ? 'text-green-600' : d.adjustment < 0 ? 'text-destructive' : ''}`}>
+                          {d.adjustment !== 0 ? `${d.adjustment > 0 ? '+' : ''}${money(d.adjustment)}` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-sm font-medium">
+              إجمالي التسوية:{' '}
+              <span className={attendanceAdjustment > 0 ? 'text-green-600' : attendanceAdjustment < 0 ? 'text-destructive' : ''}>
+                {attendanceAdjustment > 0 ? '+' : ''}
+                {money(attendanceAdjustment)}
+              </span>
+            </p>
+          </>
+        )}
+      </div>
+
       {showAddAdvance && (
         <AddAdvanceDialog
           staffId={user.id}
@@ -165,6 +241,9 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
   const [hireDate, setHireDate] = useState(user.hireDate?.slice(0, 10) ?? '');
   const [payFrequency, setPayFrequency] = useState<PayFrequency | ''>(user.payFrequency ?? '');
   const [baseSalary, setBaseSalary] = useState(user.baseSalary != null ? String(user.baseSalary) : '');
+  const [shiftStartTime, setShiftStartTime] = useState(user.shiftStartTime ?? '');
+  const [shiftEndTime, setShiftEndTime] = useState(user.shiftEndTime ?? '');
+  const [workingDays, setWorkingDays] = useState<number[]>(user.workingDays);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -182,6 +261,9 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
                 setHireDate(user.hireDate?.slice(0, 10) ?? '');
                 setPayFrequency(user.payFrequency ?? '');
                 setBaseSalary(user.baseSalary != null ? String(user.baseSalary) : '');
+                setShiftStartTime(user.shiftStartTime ?? '');
+                setShiftEndTime(user.shiftEndTime ?? '');
+                setWorkingDays(user.workingDays);
                 setEditing(true);
               }}
             >
@@ -205,6 +287,24 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
             {user.baseSalary != null ? `${money(user.baseSalary)} ${user.payFrequency ? `/ ${PAY_FREQUENCY_LABELS[user.payFrequency]}` : ''}` : '—'}
           </span>
         </p>
+        <p className="text-sm">
+          مواعيد الوردية:{' '}
+          <span className="font-medium">
+            {user.shiftStartTime && user.shiftEndTime ? `${user.shiftStartTime} — ${user.shiftEndTime}` : '—'}
+          </span>
+        </p>
+        <p className="text-sm">
+          أيام العمل:{' '}
+          <span className="font-medium">
+            {user.workingDays.length > 0
+              ? user.workingDays
+                  .slice()
+                  .sort((a, b) => a - b)
+                  .map((d) => WEEKDAY_LABELS[d])
+                  .join('، ')
+              : '—'}
+          </span>
+        </p>
       </div>
     );
   }
@@ -220,6 +320,9 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
         hireDate: hireDate === '' ? null : hireDate,
         payFrequency: payFrequency === '' ? null : payFrequency,
         baseSalary: baseSalary.trim() === '' ? null : Number(baseSalary),
+        shiftStartTime: shiftStartTime === '' ? null : shiftStartTime,
+        shiftEndTime: shiftEndTime === '' ? null : shiftEndTime,
+        workingDays,
       });
       setEditing(false);
       onSaved();
@@ -275,6 +378,43 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           />
         </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">بداية الوردية</span>
+          <input
+            type="time"
+            value={shiftStartTime}
+            onChange={(e) => setShiftStartTime(e.target.value)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">نهاية الوردية</span>
+          <input
+            type="time"
+            value={shiftEndTime}
+            onChange={(e) => setShiftEndTime(e.target.value)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+      </div>
+      <div className="space-y-1">
+        <span className="text-muted-foreground text-sm">أيام العمل</span>
+        <div className="flex flex-wrap gap-3">
+          {WEEKDAY_LABELS.map((label, dayIndex) => (
+            <label key={dayIndex} className="flex items-center gap-1.5 text-sm">
+              <input
+                type="checkbox"
+                checked={workingDays.includes(dayIndex)}
+                onChange={(e) =>
+                  setWorkingDays((prev) =>
+                    e.target.checked ? [...prev, dayIndex] : prev.filter((d) => d !== dayIndex),
+                  )
+                }
+              />
+              {label}
+            </label>
+          ))}
+        </div>
       </div>
       <div className="flex gap-2">
         <Button type="submit" disabled={submitting}>

@@ -1,0 +1,3 @@
+ALTER TABLE "StaffProfile" ADD COLUMN "shiftStartTime" TEXT,
+ADD COLUMN "shiftEndTime" TEXT,
+ADD COLUMN "workingDays" INTEGER[] NOT NULL DEFAULT ARRAY[]::INTEGER[];

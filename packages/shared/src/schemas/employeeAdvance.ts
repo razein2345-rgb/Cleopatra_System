@@ -58,13 +58,22 @@ export const createAdvanceRepaymentSchema = z.object({
   walletMethod: paymentMethodSchema.optional(),
 });
 
-/** Per-employee summary row for the "السلف ومتبقي المرتب" report. */
+/**
+ * Per-employee summary row for the "السلف ومتبقي المرتب" report.
+ * FEATURE-008 (2026-08-13, owner: "يحسب مرتب الناس عن طريق الحضور
+ * والإنصراف عن طريق الساعات") — `attendanceAdjustment` folds in
+ * lateness/early-leave deductions and overtime additions for the
+ * employee's current pay period (see employeePayroll.ts); positive means
+ * the employee is owed extra, negative means a deduction.
+ * `netDue = baseSalary - totalOutstanding + attendanceAdjustment`.
+ */
 export const employeeAdvanceSummarySchema = z.object({
   staffId: z.string().uuid(),
   staffName: z.string(),
   payFrequency: z.enum(['WEEKLY', 'MONTHLY']).nullable(),
   baseSalary: z.number().nullable(),
   totalOutstanding: z.number(),
+  attendanceAdjustment: z.number(),
   netDue: z.number().nullable(),
 });
 

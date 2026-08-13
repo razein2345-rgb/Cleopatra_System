@@ -11,6 +11,7 @@ import {
   listAdvancesForStaff,
   MissingWalletMethodError,
 } from '../services/employeeAdvanceService.js';
+import { computeEmployeePayroll } from '../services/employeePayrollService.js';
 
 export async function listAdvancesForStaffHandler(req: Request<{ staffId: string }>, res: Response) {
   const advances = await listAdvancesForStaff(req.params.staffId);
@@ -73,4 +74,10 @@ export async function createAdvanceRepaymentHandler(req: Request<{ advanceId: st
 export async function getEmployeeAdvanceSummariesHandler(_req: Request, res: Response) {
   const summaries = await getEmployeeAdvanceSummaries();
   res.json({ success: true, data: summaries });
+}
+
+/** FEATURE-008 — the day-by-day breakdown behind a summary row's `attendanceAdjustment`, for the employee profile page. Null when the employee has no shift schedule configured yet. */
+export async function getEmployeePayrollHandler(req: Request<{ staffId: string }>, res: Response) {
+  const payroll = await computeEmployeePayroll(req.params.staffId);
+  res.json({ success: true, data: payroll });
 }

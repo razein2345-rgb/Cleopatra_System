@@ -604,13 +604,26 @@ model StaffProfile {
   /// "employee" record in the system). All nullable: existing staff have
   /// none set yet, and not every account (e.g. a system/admin-only login)
   /// needs them.
-  position     String?
-  hireDate     DateTime?
-  payFrequency PayFrequency?
+  position       String?
+  hireDate       DateTime?
+  payFrequency   PayFrequency?
   /// The pay amount per `payFrequency`'s own cycle (a weekly rate if
   /// WEEKLY, a monthly rate if MONTHLY) — never both at once, so no
   /// separate weekly/monthly columns.
-  baseSalary   Decimal?      @db.Decimal(12, 2)
+  baseSalary     Decimal?      @db.Decimal(12, 2)
+  /// FEATURE-008 (2026-08-13, owner: "يحسب مرتب الناس عن طريق الحضور
+  /// والإنصراف عن طريق الساعات") — shift schedule used to derive the
+  /// hourly rate (baseSalary ÷ scheduled work days in the pay period ÷
+  /// shift hours) and to detect lateness/early-leave/overtime against
+  /// AttendanceEntry. "HH:MM", 24h, no per-employee timezone (single-branch
+  /// business, matches every other time-of-day usage in this codebase).
+  shiftStartTime String?
+  shiftEndTime   String?
+  /// Weekday indices this employee is scheduled to work (0 = Sunday … 6 =
+  /// Saturday, JS/`Date.getUTCDay()` convention used everywhere else in
+  /// this codebase's date math). Empty/null = schedule not configured yet
+  /// — payroll-by-hours simply doesn't apply until it is.
+  workingDays    Int[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
