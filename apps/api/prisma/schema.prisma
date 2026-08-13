@@ -541,7 +541,11 @@ model StaffProfile {
   id             String    @id @default(uuid()) @db.Uuid
   supabaseUserId String    @unique @db.Uuid
   name           String
-  email          String    @unique
+  /// FEATURE-001.2 fix (2026-08-13, found live) — plain `@unique` used to
+  /// permanently block an email once its StaffProfile was soft-deleted,
+  /// exactly like ContactPerson's "only one Primary Contact" partial
+  /// index above — see the `@@unique(..., where: ...)` below instead.
+  email          String
   phone          String?
   isActive       Boolean   @default(true)
   lastLoginAt    DateTime?
@@ -575,6 +579,7 @@ model StaffProfile {
   assignedStageInstances     StageInstance[]
   workflowEvents             WorkflowEvent[]
 
+  @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
   @@index([branchId])
   @@index([departmentId])
