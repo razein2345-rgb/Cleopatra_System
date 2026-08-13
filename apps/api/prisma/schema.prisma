@@ -270,6 +270,8 @@ model Branch {
   facebookUrl   String?
   /// FEATURE-007 (2026-08-12, owner: "ختم بيت الطباعة بردو لازم يترفع في تفاصيل فرع بيت الطباعه") — per-branch stamp/seal image, same fallback-to-global-Setting behavior as logoUrl.
   stampUrl      String?
+  /// FEATURE-007 (2026-08-13, owner: "ضيفها كا حقل منفصل") — per-branch tagline (e.g. "للدعاية والإعلان"), same fallback-to-global-Setting behavior as the rest of this identity block.
+  tagline       String?
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?

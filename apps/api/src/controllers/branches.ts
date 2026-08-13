@@ -14,6 +14,7 @@ const BRANCH_SELECT = {
   landlinePhone: true,
   facebookUrl: true,
   stampUrl: true,
+  tagline: true,
 };
 
 /**

@@ -121,6 +121,7 @@ function BranchForm({
   const [email, setEmail] = useState(branch?.email ?? '');
   const [landlinePhone, setLandlinePhone] = useState(branch?.landlinePhone ?? '');
   const [facebookUrl, setFacebookUrl] = useState(branch?.facebookUrl ?? '');
+  const [tagline, setTagline] = useState(branch?.tagline ?? '');
   const [logoUrl, setLogoUrl] = useState(branch?.logoUrl ?? '');
   const [logoUploading, setLogoUploading] = useState(false);
   const [stampUrl, setStampUrl] = useState(branch?.stampUrl ?? '');
@@ -171,6 +172,7 @@ function BranchForm({
           facebookUrl: facebookUrl || null,
           logoUrl: logoUrl || null,
           stampUrl: stampUrl || null,
+          tagline: tagline || null,
         });
       } else {
         await apiPost('/api/branches', { name, code, address: address || undefined });
@@ -256,6 +258,15 @@ function BranchForm({
               onChange={(e) => setFacebookUrl(e.target.value)}
               dir="ltr"
               placeholder="لو فاضي بياخد صفحة الشركة"
+              className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+            />
+          </label>
+          <label className="flex-1 space-y-1 text-xs">
+            <span className="text-muted-foreground">وصف/شعار دعائي (اختياري — يظهر تحت اسم الفرع)</span>
+            <input
+              value={tagline}
+              onChange={(e) => setTagline(e.target.value)}
+              placeholder="لو فاضي بياخد شعار الشركة العام"
               className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
             />
           </label>

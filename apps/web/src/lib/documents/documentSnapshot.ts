@@ -44,6 +44,7 @@ export interface DocumentBranchIdentity {
   landlinePhone?: string | null;
   facebookUrl?: string | null;
   stampUrl?: string | null;
+  tagline?: string | null;
 }
 
 /**
@@ -64,7 +65,7 @@ export function resolveDocumentSnapshot(
     business: {
       nameAr: branch?.name ?? setting?.businessNameAr ?? null,
       nameEn: setting?.businessNameEn ?? null,
-      tagline: setting?.businessTagline ?? null,
+      tagline: branch?.tagline ?? setting?.businessTagline ?? null,
       address: branch?.address ?? setting?.address ?? null,
       phone: branch?.phone ?? setting?.phone ?? null,
       email: branch?.email ?? setting?.email ?? null,
