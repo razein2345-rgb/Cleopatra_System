@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
-import { ORDER_STATUS_LABELS } from '../quotations/quotationLabels';
 
 /**
  * FEATURE-006 M10 — Work Order document. Owner's explicit clarification
@@ -107,7 +106,7 @@ function OffsetItemCard({
   );
 
   return (
-    <div className="border-border mb-6 space-y-0 rounded-lg border p-3 text-sm break-inside-avoid">
+    <div className="border-border mb-6 space-y-0 rounded-lg border p-3 text-base break-inside-avoid">
       <Field label="العميل" value={partnerName} />
       <Field label="إسم الصنف" value={item.modelName ?? item.kind ?? '—'} />
       <Field label={offsetQuantityLabel(b)} value={quantityValue} />
@@ -319,24 +318,11 @@ export function WorkOrderDocumentPage() {
           <div>{effectiveLogoUrl && <img src={effectiveLogoUrl} alt="" className="h-14 object-contain" />}</div>
         </header>
 
+        {/* owner (2026-08-14): "العميل مكتوب مرتين... رقم تليفونه... الحالة الحالية دي مش فاهم ايه لازمة وجودها" — العميل now shows once, inside each item's own card below (it's a per-worker-slip field there, not a header field); phone and status dropped entirely as irrelevant to the worker producing the job. الموظف المسؤول stays (owner: "دي حاجه موافق عليها"). */}
         <section className="relative mb-6 space-y-1">
-          <div>
-            <span className="text-muted-foreground text-xs">العميل: </span>
-            <span className="font-medium">{partner.nameAr}</span>
-          </div>
-          {partner.phone && (
-            <div>
-              <span className="text-muted-foreground text-xs">الهاتف: </span>
-              <span dir="ltr">{partner.phone}</span>
-            </div>
-          )}
           <div>
             <span className="text-muted-foreground text-xs">الموظف المسؤول: </span>
             <span>{responsibleStaff}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground text-xs">الحالة الحالية: </span>
-            <span>{ORDER_STATUS_LABELS[order.status]}</span>
           </div>
         </section>
 
