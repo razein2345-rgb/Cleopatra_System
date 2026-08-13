@@ -9,6 +9,7 @@ import type {
   TreasuryEntry,
   TreasuryType,
   UpdateTreasuryEntryInput,
+  User,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -45,6 +46,7 @@ function FullTreasuryView() {
   const [balance, setBalance] = useState<TreasuryBalance | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
+  const [staff, setStaff] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
 
@@ -72,9 +74,12 @@ function FullTreasuryView() {
     loadBalance();
     apiGet<BranchSummary[]>('/api/branches').then(setBranches).catch(() => undefined);
     apiGet<BusinessPartner[]>('/api/partners').then(setPartners).catch(() => undefined);
+    apiGet<User[]>('/api/users').then(setStaff).catch(() => undefined);
   }, []);
 
   const partnerName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? '—') : '—');
+  const staffName = (id: string) => staff.find((s) => s.id === id)?.name ?? '—';
+  const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? '—';
 
   const refreshAll = () => {
     loadList();
@@ -192,6 +197,8 @@ function FullTreasuryView() {
                 <th className="p-3">التصنيف</th>
                 <th className="p-3">الملاحظات</th>
                 <th className="p-3">العميل/المورّد</th>
+                <th className="p-3">الفرع</th>
+                <th className="p-3">بواسطة</th>
                 <th className="p-3">المصدر</th>
                 {(can('treasury.edit') || can('treasury.delete')) && <th className="p-3"></th>}
               </tr>
@@ -200,7 +207,7 @@ function FullTreasuryView() {
               {entries.map((entry) =>
                 editingId === entry.id ? (
                   <tr key={entry.id} className="border-border border-b last:border-0">
-                    <td colSpan={9} className="p-3">
+                    <td colSpan={11} className="p-3">
                       <EditTreasuryEntryForm
                         entry={entry}
                         onSaved={() => {
@@ -222,6 +229,8 @@ function FullTreasuryView() {
                     <td className="p-3">{entry.category ?? '—'}</td>
                     <td className="text-muted-foreground p-3">{entry.note ?? '—'}</td>
                     <td className="p-3">{partnerName(entry.partnerId)}</td>
+                    <td className="text-muted-foreground p-3">{branchName(entry.branchId)}</td>
+                    <td className="text-muted-foreground p-3">{staffName(entry.staffId)}</td>
                     <td className="text-muted-foreground p-3">
                       {entry.sourceType === 'INVOICE_PAYMENT' ? 'تحصيل فاتورة تلقائي' : 'يدوي'}
                     </td>
@@ -248,7 +257,7 @@ function FullTreasuryView() {
               )}
               {entries.length === 0 && (
                 <tr>
-                  <td className="text-muted-foreground p-3 text-center" colSpan={9}>
+                  <td className="text-muted-foreground p-3 text-center" colSpan={11}>
                     لا توجد حركات مطابقة.
                   </td>
                 </tr>
@@ -292,6 +301,7 @@ function ReceptionTreasuryView() {
   }, []);
 
   const partnerName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? '—') : '—');
+  const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? '—';
 
   const removeEntry = async (entry: TreasuryEntry) => {
     if (!confirm('حذف هذه الحركة؟')) return;
@@ -330,7 +340,9 @@ function ReceptionTreasuryView() {
                 <th className="p-3">المبلغ</th>
                 <th className="p-3">طريقة الدفع</th>
                 <th className="p-3">التصنيف</th>
+                <th className="p-3">الملاحظات</th>
                 <th className="p-3">العميل/المورّد</th>
+                <th className="p-3">الفرع</th>
                 {(can('treasury.edit') || can('treasury.delete')) && <th className="p-3"></th>}
               </tr>
             </thead>
@@ -338,7 +350,7 @@ function ReceptionTreasuryView() {
               {myEntries.map((entry) =>
                 editingId === entry.id ? (
                   <tr key={entry.id} className="border-border border-b last:border-0">
-                    <td colSpan={7} className="p-3">
+                    <td colSpan={9} className="p-3">
                       <EditTreasuryEntryForm
                         entry={entry}
                         onSaved={() => {
@@ -358,7 +370,9 @@ function ReceptionTreasuryView() {
                     <td className="p-3 font-medium">{entry.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
                     <td className="p-3">{entry.method ? PAYMENT_METHOD_LABELS[entry.method] : '—'}</td>
                     <td className="p-3">{entry.category ?? '—'}</td>
+                    <td className="text-muted-foreground p-3">{entry.note ?? '—'}</td>
                     <td className="p-3">{partnerName(entry.partnerId)}</td>
+                    <td className="text-muted-foreground p-3">{branchName(entry.branchId)}</td>
                     {(can('treasury.edit') || can('treasury.delete')) && (
                       <td className="p-3">
                         {entry.sourceType === 'MANUAL' && (
@@ -382,7 +396,7 @@ function ReceptionTreasuryView() {
               )}
               {myEntries.length === 0 && (
                 <tr>
-                  <td className="text-muted-foreground p-3 text-center" colSpan={7}>
+                  <td className="text-muted-foreground p-3 text-center" colSpan={9}>
                     لسه معملتش أي حركة.
                   </td>
                 </tr>
@@ -479,11 +493,12 @@ function EditTreasuryEntryForm({
         <input
           value={category}
           onChange={(e) => setCategory(e.target.value)}
+          placeholder="مثال: إيجار، مرتبات، كهرباء"
           className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
         />
       </label>
       <label className="flex-1 space-y-1 text-xs">
-        <span className="text-muted-foreground">ملاحظات (اختياري)</span>
+        <span className="text-muted-foreground">تفاصيل — اتصرفت في إيه بالظبط؟ (اختياري)</span>
         <input
           value={note}
           onChange={(e) => setNote(e.target.value)}
@@ -642,16 +657,18 @@ function NewEntryForm({
           <input
             value={category}
             onChange={(e) => setCategory(e.target.value)}
+            placeholder="مثال: إيجار، مرتبات، كهرباء"
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           />
         </label>
       </div>
       <label className="block space-y-1 text-sm">
-        <span className="text-muted-foreground">ملاحظات (اختياري)</span>
+        <span className="text-muted-foreground">تفاصيل — اتصرفت في إيه بالظبط؟ (اختياري)</span>
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
+          placeholder="مثال: صيانة ماكينة الطباعة الكبيرة"
           className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
         />
       </label>
