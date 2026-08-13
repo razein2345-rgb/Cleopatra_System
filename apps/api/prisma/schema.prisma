@@ -319,6 +319,7 @@ model Branch {
   stockMovements    StockMovement[]
   auditLogs         AuditLog[]
   employeeAdvances  EmployeeAdvance[]
+  attendanceEntries AttendanceEntry[]
 
   @@index([isDeleted])
 }
@@ -632,6 +633,8 @@ model StaffProfile {
   advancesReceived           EmployeeAdvance[]          @relation("EmployeeAdvanceStaff")
   advancesRecorded           EmployeeAdvance[]          @relation("EmployeeAdvanceRecordedBy")
   advanceRepaymentsRecorded  EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
+  attendanceEntries          AttendanceEntry[]          @relation("AttendanceStaff")
+  attendanceEntriesRecorded  AttendanceEntry[]          @relation("AttendanceRecordedBy")
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -1890,6 +1893,46 @@ model EmployeeAdvanceRepayment {
   createdAt DateTime @default(now())
 
   @@index([advanceId])
+}
+
+// ---------------------------------------------------------------------------
+// Attendance (FEATURE-008, 2026-08-13, owner: "هل قسم الموظفين هيبقى مربوط
+// بجهاز البصمة (لسه مجبتهوش) ولا في بديل"). A software check-in/check-out
+// alternative until a fingerprint device is bought — one row per
+// (staff, calendar day), self-service (any authenticated staff checks
+// themself in/out) or admin-entered/corrected (employees.edit). Designed so
+// a future device integration only needs to populate the same table (e.g.
+// from an imported export), never a rewrite of this shape.
+// ---------------------------------------------------------------------------
+
+model AttendanceEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  staffId String       @db.Uuid
+  staff   StaffProfile @relation("AttendanceStaff", fields: [staffId], references: [id])
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  /// Calendar day this entry belongs to (midnight-anchored) — one row per (staffId, date).
+  date       DateTime
+  checkInAt  DateTime?
+  checkOutAt DateTime?
+  note       String?
+
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation("AttendanceRecordedBy", fields: [recordedById], references: [id])
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([staffId, date])
+  @@index([staffId])
+  @@index([branchId])
 }
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import { jobsByDepartmentWidget } from './widgets/JobsByDepartmentWidget';
 import { jobsByOperatorWidget } from './widgets/JobsByOperatorWidget';
 import { supplierDelaysWidget } from './widgets/SupplierDelaysWidget';
 import { readyForDeliveryWidget } from './widgets/ReadyForDeliveryWidget';
+import { attendanceWidget } from './widgets/AttendanceWidget';
 
 /**
  * Every Dashboard card, in render order. Add a widget by writing a
@@ -23,6 +24,7 @@ import { readyForDeliveryWidget } from './widgets/ReadyForDeliveryWidget';
  * four — all reading the same `WorkflowQueueSummaryProvider`.
  */
 export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
+  attendanceWidget,
   openQuotationsWidget,
   activeWorkOrdersWidget,
   waitingJobsWidget,

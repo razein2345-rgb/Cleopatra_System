@@ -38,3 +38,4 @@ export * from './pricing/boardsCostCalculation.js';
 export * from './pricing/productCostCalculation.js';
 export * from './schemas/inventoryItem.js';
 export * from './schemas/employeeAdvance.js';
+export * from './schemas/attendance.js';

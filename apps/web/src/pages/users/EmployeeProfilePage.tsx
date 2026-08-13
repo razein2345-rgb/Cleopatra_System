@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { AdvanceRepaymentMethod, EmployeeAdvance, PayFrequency, User } from '@cleopatra/shared';
+import type { AdvanceRepaymentMethod, AttendanceEntry, EmployeeAdvance, PayFrequency, User } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -29,15 +29,21 @@ export function EmployeeProfilePage() {
   const canEdit = can('employees.edit');
   const [user, setUser] = useState<User | null>(null);
   const [advances, setAdvances] = useState<EmployeeAdvance[] | null>(null);
+  const [attendance, setAttendance] = useState<AttendanceEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAddAdvance, setShowAddAdvance] = useState(false);
 
   const load = () => {
     if (!id) return;
-    Promise.all([apiGet<User>(`/api/users/${id}`), apiGet<EmployeeAdvance[]>(`/api/employee-advances/staff/${id}`)])
-      .then(([u, a]) => {
+    Promise.all([
+      apiGet<User>(`/api/users/${id}`),
+      apiGet<EmployeeAdvance[]>(`/api/employee-advances/staff/${id}`),
+      apiGet<AttendanceEntry[]>(`/api/attendance/staff/${id}`),
+    ])
+      .then(([u, a, att]) => {
         setUser(u);
         setAdvances(a);
+        setAttendance(att);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل بيانات الموظف'));
   };
@@ -45,7 +51,7 @@ export function EmployeeProfilePage() {
   useEffect(load, [id]);
 
   if (error) return <div className="text-destructive">{error}</div>;
-  if (!user || !advances) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+  if (!user || !advances || !attendance) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
 
   const totalOutstanding = advances.reduce((sum, a) => sum + a.remainingBalance, 0);
 
@@ -95,6 +101,42 @@ export function EmployeeProfilePage() {
               <tbody>
                 {advances.map((advance) => (
                   <AdvanceRow key={advance.id} advance={advance} canEdit={canEdit} onChanged={load} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
+        <h2 className="font-semibold">الحضور والانصراف — آخر الأيام</h2>
+        {attendance.length === 0 ? (
+          <p className="text-muted-foreground text-sm">لا توجد سجلات حضور بعد.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+                  <th className="p-2">التاريخ</th>
+                  <th className="p-2">الحضور</th>
+                  <th className="p-2">الانصراف</th>
+                  <th className="p-2">ملاحظة</th>
+                </tr>
+              </thead>
+              <tbody>
+                {attendance.map((entry) => (
+                  <tr key={entry.id} className="border-border border-b last:border-0">
+                    <td className="p-2">{new Date(entry.date).toLocaleDateString('ar-EG')}</td>
+                    <td className="p-2">
+                      {entry.checkInAt ? new Date(entry.checkInAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                    </td>
+                    <td className="p-2">
+                      {entry.checkOutAt
+                        ? new Date(entry.checkOutAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+                        : '—'}
+                    </td>
+                    <td className="p-2">{entry.note || '—'}</td>
+                  </tr>
                 ))}
               </tbody>
             </table>

@@ -25,6 +25,7 @@ import { inventoryItemsRouter } from './inventoryItems.js';
 import { pricingReferenceRouter } from './pricingReference.js';
 import { attachmentsRouter } from './attachments.js';
 import { employeeAdvancesRouter } from './employeeAdvances.js';
+import { attendanceRouter } from './attendance.js';
 
 export const apiRouter = Router();
 
@@ -57,4 +58,5 @@ api.use('/inventory-items', inventoryItemsRouter);
 api.use('/pricing-reference', pricingReferenceRouter);
 api.use('/attachments', attachmentsRouter);
 api.use('/employee-advances', employeeAdvancesRouter);
+api.use('/attendance', attendanceRouter);
 apiRouter.use('/api', api);
