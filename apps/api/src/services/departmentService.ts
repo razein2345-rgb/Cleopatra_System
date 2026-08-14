@@ -9,6 +9,7 @@ export function mapDepartmentToDto(record: DepartmentRecord): Department {
     name: record.name,
     code: record.code,
     description: record.description,
+    productionTrack: record.productionTrack,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };

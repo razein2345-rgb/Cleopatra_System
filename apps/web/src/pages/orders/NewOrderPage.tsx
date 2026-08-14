@@ -1023,6 +1023,12 @@ function NewOrderForm({
   const [partnerId, setPartnerId] = useState(editOrder?.partnerId ?? editQuotation?.partnerId ?? partners[0]?.id ?? '');
   const [branchId, setBranchId] = useState(editOrder?.branchId ?? editQuotation?.branchId ?? branches[0]?.id ?? '');
   const [productionTrack, setProductionTrack] = useState<ProductionTrack | ''>(editOrder?.productionTrack ?? '');
+  // FEATURE-010 (2026-08-14, owner: "عند إنشاء الطلب يجب أن يكون واضحًا هل:
+  // Requires Design = نعم / لا") — only meaningful for Offset/Digital today
+  // (the only tracks with a published v2 template whose first stage is a
+  // skippable design stage); defaults true (existing behavior: every order
+  // goes through design unless told otherwise).
+  const [requiresDesign, setRequiresDesign] = useState(editOrder?.requiresDesign ?? true);
   const [deliveryDate, setDeliveryDate] = useState(editOrder?.deliveryDate?.slice(0, 10) ?? '');
   const [validUntil, setValidUntil] = useState(() => {
     if (editQuotation) return editQuotation.validUntil?.slice(0, 10) ?? '';
@@ -1062,6 +1068,37 @@ function NewOrderForm({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<'SAVE_ONLY' | 'SAVE_AND_PRINT' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // FEATURE-012 (2026-08-14, owner: "لو بدأت اعمل اوردر وخرجت يديني تحذير
+  // إن الاوردر اللي بعمله دلوقتي هيتلغى") — warns before closing the tab/
+  // refreshing/typing a new address once the cart or any order-level field
+  // actually differs from the snapshot the form started with (captured once
+  // during render, not in an effect, so it survives React StrictMode's
+  // double-invoked effects in development without a false "changed" read on
+  // mount). Opening an existing document for edit and immediately leaving
+  // therefore doesn't warn either — only a real, human-made edit does.
+  // Native `beforeunload` only fires on real page unload, not in-app
+  // `navigate()` calls, so a successful save never triggers it.
+  const trackedFields = { cart, payments, partnerId, branchId, productionTrack, deliveryDate, discountPercent, vatOn, customerNotes, internalNotes };
+  const initialSnapshot = useRef<string | undefined>(undefined);
+  if (initialSnapshot.current === undefined) {
+    initialSnapshot.current = JSON.stringify(trackedFields);
+  }
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  useEffect(() => {
+    setHasUnsavedChanges(JSON.stringify(trackedFields) !== initialSnapshot.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, payments, partnerId, branchId, productionTrack, deliveryDate, discountPercent, vatOn, customerNotes, internalNotes]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasUnsavedChanges]);
 
   const paperInventoryItems = useMemo(() => inventoryItems.filter((i) => i.sheetPrice !== null), [inventoryItems]);
 
@@ -1246,6 +1283,7 @@ function NewOrderForm({
           customerNotes: customerNotes || null,
           internalNotes: internalNotes || null,
           productionTrack: productionTrack || null,
+          requiresDesign,
           items: outputItems,
         };
         const order = await apiPut<Order>(`/api/orders/${editOrder.id}`, input);
@@ -1263,6 +1301,7 @@ function NewOrderForm({
           customerNotes: customerNotes || undefined,
           internalNotes: internalNotes || undefined,
           productionTrack: productionTrack || undefined,
+          requiresDesign,
           items: outputItems,
           payments: paymentInputs.length ? paymentInputs : undefined,
         };
@@ -1601,6 +1640,16 @@ function NewOrderForm({
                     ))}
                   </select>
                 </label>
+                {(productionTrack === 'OFFSET' || productionTrack === 'DIGITAL') && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={requiresDesign}
+                      onChange={(e) => setRequiresDesign(e.target.checked)}
+                    />
+                    <span>يحتاج تصميم؟</span>
+                  </label>
+                )}
               </>
             )}
           </div>

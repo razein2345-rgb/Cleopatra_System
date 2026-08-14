@@ -16,6 +16,12 @@ export { PricingInputError } from './pricingEngineService.js';
 export const ORDER_INCLUDE = {
   items: true,
   quotationOrigin: { select: { id: true } },
+  // FEATURE-011 (2026-08-14) — Prisma doesn't support a `where` filter on a
+  // to-one relation include, so `isDeleted` is selected here and checked in
+  // `mapOrderToDto` instead: a soft-deleted WorkOrder (FEATURE-012, "أقدر
+  // أحذف أمر الشغل") must not leave a dangling "طباعة أمر الشغل" link on
+  // its former Order.
+  workOrder: { select: { id: true, isDeleted: true } },
   payments: true,
 } satisfies Prisma.OrderInclude;
 
@@ -77,7 +83,9 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
     internalNotes: canSeeInternal ? order.internalNotes : null,
     status: order.status,
     productionTrack: order.productionTrack,
+    requiresDesign: order.requiresDesign,
     quotationOriginId: order.quotationOrigin?.id ?? null,
+    workOrderId: order.workOrder && !order.workOrder.isDeleted ? order.workOrder.id : null,
     items: order.items.map(mapOrderItemToDto),
     // FEATURE-006 M3 — computed from `payments` at read time, never
     // stored (same discipline as computeIsDelayed).
@@ -248,6 +256,7 @@ export async function createOrder(
     customerNotes?: string;
     internalNotes?: string;
     productionTrack?: ProductionTrack;
+    requiresDesign?: boolean;
     items: CreateOrderItemInput[];
     payments?: CreatePaymentInput[];
   },
@@ -302,6 +311,7 @@ export async function createOrder(
         customerNotes: input.customerNotes ?? null,
         internalNotes: input.internalNotes ?? null,
         productionTrack: input.productionTrack ?? null,
+        requiresDesign: input.requiresDesign ?? true,
         status: 'CONFIRMED',
         // quotationOriginId is intentionally never set here — this is the
         // reverse relation from Quotation.convertedOrderId; a directly
@@ -452,6 +462,7 @@ export async function updateOrder(
     customerNotes?: string | null;
     internalNotes?: string | null;
     productionTrack?: ProductionTrack | null;
+    requiresDesign?: boolean;
     items: CreateOrderItemInput[];
   },
   itemNames: Map<string, string>,
@@ -515,6 +526,7 @@ export async function updateOrder(
         customerNotes: input.customerNotes !== undefined ? input.customerNotes : existing.customerNotes,
         internalNotes: input.internalNotes !== undefined ? input.internalNotes : existing.internalNotes,
         productionTrack: input.productionTrack !== undefined ? input.productionTrack : existing.productionTrack,
+        requiresDesign: input.requiresDesign !== undefined ? input.requiresDesign : existing.requiresDesign,
         items: {
           create: input.items.map((item, index) => {
             const result = priced[index]!;
@@ -582,7 +594,10 @@ export async function deleteOrder(
   if (existing.payments.length > 0) {
     throw new OrderHasPaymentsError();
   }
-  if (existing.workOrder) {
+  // FEATURE-012 (2026-08-14) — a soft-deleted WorkOrder (deleted via the
+  // new "حذف أمر الشغل" flow) must not keep blocking its parent invoice
+  // from being deleted — same isDeleted check as ORDER_INCLUDE's workOrder.
+  if (existing.workOrder && !existing.workOrder.isDeleted) {
     throw new OrderHasWorkOrderError();
   }
 

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem, PricingReference, ProductionTrack, User, WorkOrder } from '@cleopatra/shared';
-import { apiGet } from '@/lib/api';
+import { apiDelete, apiGet } from '@/lib/api';
+import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
@@ -187,6 +188,8 @@ function OffsetItemCards({
 
 export function WorkOrderDocumentPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { can } = useAuth();
   const [workOrder, setWorkOrder] = useState<WorkOrder | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
@@ -195,6 +198,8 @@ export function WorkOrderDocumentPage() {
   const [staff, setStaff] = useState<User[]>([]);
   const [pricingReference, setPricingReference] = useState<PricingReference | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -228,6 +233,21 @@ export function WorkOrderDocumentPage() {
     return <div className="text-muted-foreground">جارٍ التحميل…</div>;
   }
 
+  // FEATURE-012 (2026-08-14, owner: "لازم اكون أقدر أحذف أمر الشغل") — mirrors
+  // OrderDocumentPage.tsx's removeOrder exactly (confirm → soft-delete → leave).
+  const removeWorkOrder = async () => {
+    if (!confirm(`حذف أمر الشغل ${workOrder.workOrderNumber}؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      await apiDelete(`/api/work-orders/${workOrder.id}`);
+      navigate('/quotations');
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'تعذر حذف أمر الشغل');
+      setDeleting(false);
+    }
+  };
+
   const responsibleStaff = staff.find((s) => s.id === order.staffId)?.name ?? '—';
   // FEATURE-007 (2026-08-12) — the issuing branch's own identity wins over the global one.
   const branch = branches.find((b) => b.id === order.branchId);
@@ -256,10 +276,23 @@ export function WorkOrderDocumentPage() {
               العودة إلى المستندات
             </Link>
           </div>
-          <Button type="button" onClick={() => window.print()}>
-            طباعة أمر الشغل
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {can('orders.edit') && (
+              <Button type="button" variant="secondary" onClick={() => navigate(`/orders/new?editOrder=${order.id}`)}>
+                تعديل
+              </Button>
+            )}
+            {can('work-orders.delete') && (
+              <Button type="button" variant="destructive" disabled={deleting} onClick={() => void removeWorkOrder()}>
+                {deleting ? 'جارٍ الحذف…' : 'حذف أمر الشغل'}
+              </Button>
+            )}
+            <Button type="button" onClick={() => window.print()}>
+              طباعة أمر الشغل
+            </Button>
+          </div>
         </div>
+        {deleteError && <p className="text-destructive text-sm print:hidden">{deleteError}</p>}
         <DocumentRenderer
           snapshot={snapshot}
           contactIconTheme={branch && !branch.isDefault ? 'blue-pink' : 'red'}
@@ -285,10 +318,23 @@ export function WorkOrderDocumentPage() {
             العودة إلى المستندات
           </Link>
         </div>
-        <Button type="button" onClick={() => window.print()}>
-          طباعة أمر الشغل
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {can('orders.edit') && (
+            <Button type="button" variant="secondary" onClick={() => navigate(`/orders/new?editOrder=${order.id}`)}>
+              تعديل
+            </Button>
+          )}
+          {can('work-orders.delete') && (
+            <Button type="button" variant="destructive" disabled={deleting} onClick={() => void removeWorkOrder()}>
+              {deleting ? 'جارٍ الحذف…' : 'حذف أمر الشغل'}
+            </Button>
+          )}
+          <Button type="button" onClick={() => window.print()}>
+            طباعة أمر الشغل
+          </Button>
+        </div>
       </div>
+      {deleteError && <p className="text-destructive text-sm print:hidden">{deleteError}</p>}
 
       <div className="document-print-root bg-background text-foreground relative mx-auto max-w-4xl overflow-hidden p-8 text-sm">
         {effectiveLogoUrl && (

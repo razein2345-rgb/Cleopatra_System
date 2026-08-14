@@ -107,12 +107,25 @@ const DEFAULT_SETTINGS = {
 // Department-Based Workflow — starting data an administrator can rename,
 // add to, or remove (not `isSystem`-protected, unlike Role: no code ever
 // branches on a specific department's identity).
+// FEATURE-010 (2026-08-14) — `productionTrack` groups a department under
+// its لوحة الإنتاج track for the "الأقسام" tab; omitted (`undefined`) for
+// departments shared across every track (DESIGN, DELIVERY) or unrelated to
+// production (SALES, WAREHOUSE, PURCHASING, EXTERNAL_SUPPLIER,
+// CUSTOMER_SERVICE) — same nullable-on-purpose reasoning as the Prisma
+// field's own doc comment. NUMBERING/BINDING (Offset) and CELLOPHANE/
+// BASHR/CUTTING (Digital) are new — see DEFAULT_WORKFLOW_TEMPLATES below
+// for why (owner's exact stage lists for the two confirmed tracks).
 const DEFAULT_DEPARTMENTS = [
   { code: 'SALES', name: 'المبيعات' },
   { code: 'DESIGN', name: 'التصميم' },
-  { code: 'OFFSET_PRINTING', name: 'الطباعة الأوفست' },
-  { code: 'DIGITAL_PRINTING', name: 'الطباعة الديجيتال' },
-  { code: 'PLATE_PREPARATION', name: 'تجهيز الزنكات' },
+  { code: 'OFFSET_PRINTING', name: 'الطباعة الأوفست', productionTrack: 'OFFSET' },
+  { code: 'DIGITAL_PRINTING', name: 'الطباعة الديجيتال', productionTrack: 'DIGITAL' },
+  { code: 'PLATE_PREPARATION', name: 'تجهيز الزنكات', productionTrack: 'OFFSET' },
+  { code: 'NUMBERING', name: 'ترقيم', productionTrack: 'OFFSET' },
+  { code: 'BINDING', name: 'تقفيل', productionTrack: 'OFFSET' },
+  { code: 'CELLOPHANE', name: 'سلوفان', productionTrack: 'DIGITAL' },
+  { code: 'BASHR', name: 'بشر', productionTrack: 'DIGITAL' },
+  { code: 'CUTTING', name: 'قص', productionTrack: 'DIGITAL' },
   { code: 'FINISHING', name: 'التشطيب' },
   { code: 'WAREHOUSE', name: 'المخزن' },
   { code: 'PURCHASING', name: 'المشتريات' },
@@ -146,32 +159,42 @@ const DEFAULT_WORKFLOW_TEMPLATES: Array<{
     departmentCode: (typeof DEFAULT_DEPARTMENTS)[number]['code'];
     nextStageTempKey?: string;
     requiresFiles?: boolean;
+    isMandatory?: boolean;
+    canSkip?: boolean;
     variables?: Array<{ key: string; label: string; isRequired?: boolean; order?: number }>;
   }>;
 }> = [
   {
+    // FEATURE-010 (2026-08-14, owner's exact stage list) — التصميم is a
+    // shared, optional first stage (`Order.requiresDesign`, see
+    // createWorkflowInstance's auto-skip); تجهيز زنك/طباعة/ترقيم/تقفيل are
+    // this track's own real production stages; تسليم is the final stage
+    // (no `nextStageTempKey`), completing it auto-completes the instance.
     code: 'OFFSET',
     name: 'مسار الطباعة الأوفست',
-    description: 'التصميم ← تجهيز الزنكات ← الطباعة الأوفست ← التشطيب ← التسليم ← خدمة العملاء.',
+    description: 'التصميم (اختياري) ← تجهيز زنك ← طباعة ← ترقيم ← تقفيل ← تسليم.',
     stages: [
-      { tempKey: 'design', order: 1, name: 'التصميم', departmentCode: 'DESIGN', requiresFiles: true, nextStageTempKey: 'plate' },
-      { tempKey: 'plate', order: 2, name: 'تجهيز الزنكات', departmentCode: 'PLATE_PREPARATION', nextStageTempKey: 'print' },
-      { tempKey: 'print', order: 3, name: 'الطباعة الأوفست', departmentCode: 'OFFSET_PRINTING', nextStageTempKey: 'finish' },
-      { tempKey: 'finish', order: 4, name: 'التشطيب', departmentCode: 'FINISHING', nextStageTempKey: 'delivery' },
-      { tempKey: 'delivery', order: 5, name: 'التسليم', departmentCode: 'DELIVERY', nextStageTempKey: 'service' },
-      { tempKey: 'service', order: 6, name: 'خدمة العملاء', departmentCode: 'CUSTOMER_SERVICE' },
+      { tempKey: 'design', order: 1, name: 'التصميم', departmentCode: 'DESIGN', requiresFiles: true, isMandatory: false, canSkip: true, nextStageTempKey: 'plate' },
+      { tempKey: 'plate', order: 2, name: 'تجهيز زنك', departmentCode: 'PLATE_PREPARATION', nextStageTempKey: 'print' },
+      { tempKey: 'print', order: 3, name: 'طباعة', departmentCode: 'OFFSET_PRINTING', nextStageTempKey: 'numbering' },
+      { tempKey: 'numbering', order: 4, name: 'ترقيم', departmentCode: 'NUMBERING', nextStageTempKey: 'binding' },
+      { tempKey: 'binding', order: 5, name: 'تقفيل', departmentCode: 'BINDING', nextStageTempKey: 'delivery' },
+      { tempKey: 'delivery', order: 6, name: 'تسليم', departmentCode: 'DELIVERY' },
     ],
   },
   {
+    // FEATURE-010 (2026-08-14) — بشر is optional per the owner ("إن وجد"),
+    // same isMandatory:false/canSkip:true shape as design.
     code: 'DIGITAL',
     name: 'مسار الطباعة الديجيتال',
-    description: 'التصميم ← الطباعة الديجيتال ← التشطيب ← التسليم ← خدمة العملاء.',
+    description: 'التصميم (اختياري) ← طباعة ← سلوفان ← بشر (اختياري) ← قص ← تسليم.',
     stages: [
-      { tempKey: 'design', order: 1, name: 'التصميم', departmentCode: 'DESIGN', requiresFiles: true, nextStageTempKey: 'print' },
-      { tempKey: 'print', order: 2, name: 'الطباعة الديجيتال', departmentCode: 'DIGITAL_PRINTING', nextStageTempKey: 'finish' },
-      { tempKey: 'finish', order: 3, name: 'التشطيب', departmentCode: 'FINISHING', nextStageTempKey: 'delivery' },
-      { tempKey: 'delivery', order: 4, name: 'التسليم', departmentCode: 'DELIVERY', nextStageTempKey: 'service' },
-      { tempKey: 'service', order: 5, name: 'خدمة العملاء', departmentCode: 'CUSTOMER_SERVICE' },
+      { tempKey: 'design', order: 1, name: 'التصميم', departmentCode: 'DESIGN', requiresFiles: true, isMandatory: false, canSkip: true, nextStageTempKey: 'print' },
+      { tempKey: 'print', order: 2, name: 'طباعة', departmentCode: 'DIGITAL_PRINTING', nextStageTempKey: 'cellophane' },
+      { tempKey: 'cellophane', order: 3, name: 'سلوفان', departmentCode: 'CELLOPHANE', nextStageTempKey: 'bashr' },
+      { tempKey: 'bashr', order: 4, name: 'بشر', departmentCode: 'BASHR', isMandatory: false, canSkip: true, nextStageTempKey: 'cutting' },
+      { tempKey: 'cutting', order: 5, name: 'قص', departmentCode: 'CUTTING', nextStageTempKey: 'delivery' },
+      { tempKey: 'delivery', order: 6, name: 'تسليم', departmentCode: 'DELIVERY' },
     ],
   },
   {
@@ -386,7 +409,11 @@ async function main() {
     await prisma.department.upsert({
       where: { code: dept.code },
       update: {},
-      create: { code: dept.code, name: dept.name },
+      create: {
+        code: dept.code,
+        name: dept.name,
+        productionTrack: 'productionTrack' in dept ? dept.productionTrack : null,
+      },
     });
   }
 
@@ -417,6 +444,8 @@ async function main() {
           departmentId: departmentByCode.get(s.departmentCode),
           nextStageTempKey: s.nextStageTempKey,
           requiresFiles: s.requiresFiles,
+          isMandatory: s.isMandatory,
+          canSkip: s.canSkip,
           variables: s.variables,
         })),
       );

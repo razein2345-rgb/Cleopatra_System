@@ -1,7 +1,13 @@
 import type { Request, Response } from 'express';
 import { createWorkOrderSchema, hasPermission } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
-import { WORK_ORDER_INCLUDE, mapWorkOrderToDto, nextWorkOrderNumber } from '../services/workOrderService.js';
+import {
+  WORK_ORDER_INCLUDE,
+  deleteWorkOrder as deleteWorkOrderService,
+  mapWorkOrderToDto,
+  nextWorkOrderNumber,
+  WorkOrderNotFoundError,
+} from '../services/workOrderService.js';
 import { getLatestPublishedTemplate } from '../services/workflowTemplateService.js';
 import { createWorkflowInstance, WorkflowNoStagesError } from '../services/workflowInstanceService.js';
 import { recordAudit } from '../services/auditService.js';
@@ -70,6 +76,7 @@ export async function createWorkOrder(req: Request, res: Response) {
         templateId: template.id,
         workOrderId: workOrder.id,
         performedById: auth.staffId,
+        requiresDesign: order.requiresDesign,
       });
       return tx.workOrder.findUniqueOrThrow({ where: { id: workOrder.id }, include: WORK_ORDER_INCLUDE });
     });
@@ -98,10 +105,22 @@ export async function createWorkOrder(req: Request, res: Response) {
  * FEATURE-007 — the "المستندات" (Documents) unified list needs every
  * WorkOrder alongside Quotations/Orders. Same `isDeleted`/`orderBy`
  * pattern as `listQuotations`/`listOrders`.
+ *
+ * FEATURE-011 (2026-08-14) — `partnerId` filter for the customer profile's
+ * work-order history. `WorkOrder` has no `partnerId` column of its own
+ * (it links to a customer only transitively through `order.partnerId`), so
+ * this filters through the relation instead of adding a denormalized
+ * column — same `?partnerId=` query-param shape as `listOrders`/
+ * `listQuotations`.
  */
 export async function listWorkOrders(req: Request, res: Response) {
+  const partnerId = typeof req.query.partnerId === 'string' ? req.query.partnerId : undefined;
+
   const workOrders = await prisma.workOrder.findMany({
-    where: { isDeleted: false },
+    where: {
+      isDeleted: false,
+      ...(partnerId ? { order: { partnerId } } : {}),
+    },
     include: WORK_ORDER_INCLUDE,
     orderBy: { createdAt: 'desc' },
   });
@@ -120,4 +139,35 @@ export async function getWorkOrder(req: Request<{ id: string }>, res: Response) 
     return;
   }
   res.json({ success: true, data: mapWorkOrderToDto(workOrder, canSeeInternal(req)) });
+}
+
+/**
+ * FEATURE-012 (2026-08-14, owner: "لازم اكون أقدر أحذف أمر الشغل") —
+ * mirrors `deleteOrderHandler`'s exact shape (404 on not-found, `recordAudit`
+ * after the soft-delete succeeds, `{id}` response).
+ */
+export async function deleteWorkOrder(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  let result;
+  try {
+    result = await deleteWorkOrderService(req.params.id, auth.staffId);
+  } catch (err) {
+    if (err instanceof WorkOrderNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'WorkOrder',
+    entityId: req.params.id,
+    action: 'DELETE',
+    performedById: auth.staffId,
+    branchId: result.branchId,
+    partnerId: result.partnerId,
+    newValue: null,
+  });
+
+  res.json({ success: true, data: { id: req.params.id } });
 }

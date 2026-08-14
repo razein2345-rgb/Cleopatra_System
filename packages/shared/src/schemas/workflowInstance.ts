@@ -107,6 +107,21 @@ export const workflowQueueItemSchema = stageInstanceSchema.extend({
 });
 
 /**
+ * FEATURE-010 (2026-08-14) — لوحة الإنتاج's "الطلبات" tab: every active
+ * `WorkflowInstance` with enough display fields (workOrderNumber/
+ * customerName) to render as a card without a second fetch per row — the
+ * same "extend the base schema with display fields" shape
+ * `workflowQueueItemSchema` already uses. The current stage for the visual
+ * chain is whichever `stageInstances[].id === currentStageId` (or, for a
+ * COMPLETED/CANCELLED instance, `currentStageId` is null and there is no
+ * highlighted stage) — no separate highlighting field needed.
+ */
+export const workflowInstanceListItemSchema = workflowInstanceSchema.extend({
+  workOrderNumber: z.string().nullable(),
+  customerName: z.string().nullable(),
+});
+
+/**
  * FEATURE-005 Sprint 2 — the Production Dashboard's aggregate read.
  * Every count here is a grouping of the same open `StageInstance` rows
  * `getDepartmentQueue` already reads, using the same `computeIsDelayed`
@@ -157,6 +172,7 @@ export type WorkflowInstance = z.infer<typeof workflowInstanceSchema>;
 export type AdvanceWorkflowInstanceInput = z.infer<typeof advanceWorkflowInstanceSchema>;
 export type UpdateStageInstanceInput = z.infer<typeof updateStageInstanceSchema>;
 export type WorkflowQueueItem = z.infer<typeof workflowQueueItemSchema>;
+export type WorkflowInstanceListItem = z.infer<typeof workflowInstanceListItemSchema>;
 export type DepartmentJobSummary = z.infer<typeof departmentJobSummarySchema>;
 export type OperatorJobSummary = z.infer<typeof operatorJobSummarySchema>;
 export type SupplierDelaySummary = z.infer<typeof supplierDelaySummarySchema>;

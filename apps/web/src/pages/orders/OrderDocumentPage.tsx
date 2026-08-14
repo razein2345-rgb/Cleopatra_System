@@ -124,6 +124,11 @@ export function OrderDocumentPage() {
               {deleting ? 'جارٍ الحذف…' : 'حذف الفاتورة'}
             </Button>
           )}
+          {order.workOrderId && (
+            <Button type="button" variant="secondary" onClick={() => navigate(`/work-orders/${order.workOrderId}`)}>
+              طباعة أمر الشغل
+            </Button>
+          )}
           <Button type="button" onClick={() => window.print()}>
             طباعة الفاتورة
           </Button>

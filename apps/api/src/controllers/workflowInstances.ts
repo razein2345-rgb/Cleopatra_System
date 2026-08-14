@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import type { WorkflowInstanceStatus } from '@cleopatra/shared';
 import { advanceWorkflowInstanceSchema, hasPermission, updateStageInstanceSchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
@@ -8,6 +9,7 @@ import {
   advanceWorkflowInstance,
   getDepartmentQueue,
   getWorkflowDashboardSummary,
+  listWorkflowInstances,
   mapWorkflowInstanceToDto,
   updateCurrentStageInstance,
 } from '../services/workflowInstanceService.js';
@@ -16,6 +18,25 @@ import { recordAudit } from '../services/auditService.js';
 
 function canSeeInternal(req: Request): boolean {
   return hasPermission(req.auth!.permissions, 'work-orders.edit');
+}
+
+const LIST_STATUSES: readonly WorkflowInstanceStatus[] = ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'];
+
+/**
+ * FEATURE-010 (2026-08-14) — لوحة الإنتاج's "الطلبات" tab. Defaults to
+ * `IN_PROGRESS` (the active orders view) since that's the only status this
+ * tab ever needs today; `?status=` still accepts COMPLETED/CANCELLED for
+ * completeness (e.g. a future "records/history" view) without a second
+ * endpoint.
+ */
+export async function listWorkflowInstancesHandler(req: Request, res: Response) {
+  const rawStatus = typeof req.query.status === 'string' ? req.query.status : 'IN_PROGRESS';
+  if (!LIST_STATUSES.includes(rawStatus as WorkflowInstanceStatus)) {
+    res.status(400).json({ success: false, error: { message: 'Invalid status query parameter' } });
+    return;
+  }
+  const items = await listWorkflowInstances(rawStatus as WorkflowInstanceStatus);
+  res.json({ success: true, data: items });
 }
 
 export async function getWorkflowInstance(req: Request<{ id: string }>, res: Response) {

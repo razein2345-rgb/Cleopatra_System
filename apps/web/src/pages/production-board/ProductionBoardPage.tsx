@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RefreshCw, Route as RouteIcon } from 'lucide-react';
-import type { Department, User, WorkflowPriority, WorkflowQueueItem } from '@cleopatra/shared';
+import type { Department, ProductionTrack, User, WorkflowPriority, WorkflowQueueItem } from '@cleopatra/shared';
 import { apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/state/AuthContext';
 import { ConfirmStageActionDialog } from './ConfirmStageActionDialog';
 import { EditQueueItemDialog } from './EditQueueItemDialog';
+import { ProductionBoardOrdersTab } from './ProductionBoardOrdersTab';
 import {
   PRIORITY_LABELS,
   PRIORITY_OPTIONS,
@@ -21,16 +22,60 @@ import {
   rowToneClassName,
 } from './productionBoardLabels';
 
+const TRACK_GROUP_LABELS: Record<ProductionTrack, string> = {
+  OFFSET: 'أوفست',
+  DIGITAL: 'ديجيتال',
+  BOARDS_SIGNAGE: 'لوحات وإعلانات',
+  OTHER_PRODUCTS: 'منتجات أخرى',
+  SERVICES: 'خدمات',
+  READY_PRODUCTS: 'منتجات جاهزة',
+};
+
 /**
- * The Queue Philosophy screen (VISION.md) — a department's queue as the
- * entire interface between an employee and their work. Reads/writes go
- * through the exact endpoints FEATURE-004 M1 already built and secured
- * (`GET .../queue`, `PUT .../advance`, `PUT .../current-stage`); this page
- * adds no business logic of its own. Filtering (FEATURE-005 Sprint 2.5) is a
- * client-side narrowing of the array the server already returned, in the
- * order the server already sorted it — it never re-sorts or re-fetches.
+ * FEATURE-010 (2026-08-14, owner's exact spec) — two tabs, both reading
+ * from the same Workflow Engine data (WorkflowInstance/StageInstance),
+ * shown two different ways: "الطلبات" (every active order, its full
+ * Workflow as a stage chain) and "الأقسام" (the pre-existing department
+ * queue, unchanged behaviorally — see `DepartmentsTab` below, previously
+ * this whole file's default export).
  */
 export function ProductionBoardPage() {
+  const [tab, setTab] = useState<'ORDERS' | 'DEPARTMENTS'>('ORDERS');
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">لوحة الإنتاج</h1>
+        <div className="border-border bg-muted/40 flex gap-1 rounded-lg border p-1">
+          <button
+            type="button"
+            onClick={() => setTab('ORDERS')}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-sm font-medium',
+              tab === 'ORDERS' ? 'bg-background shadow-sm' : 'text-muted-foreground',
+            )}
+          >
+            الطلبات
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('DEPARTMENTS')}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-sm font-medium',
+              tab === 'DEPARTMENTS' ? 'bg-background shadow-sm' : 'text-muted-foreground',
+            )}
+          >
+            الأقسام
+          </button>
+        </div>
+      </div>
+
+      {tab === 'ORDERS' ? <ProductionBoardOrdersTab /> : <DepartmentsTab />}
+    </div>
+  );
+}
+
+function DepartmentsTab() {
   const { can } = useAuth();
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [departmentId, setDepartmentId] = useState('');
@@ -141,10 +186,38 @@ export function ProductionBoardPage() {
     </Link>
   );
 
+  // FEATURE-010 (2026-08-14) — grouped by `productionTrack` instead of a
+  // flat list, so "الأقسام" reads as one picker per track rather than an
+  // undifferentiated list of every department in the system. Untracked
+  // departments (shared like التصميم/التسليم, or unrelated like المبيعات)
+  // fall into a trailing "أقسام أخرى" group — never hidden, just ungrouped.
+  const departmentGroups = useMemo(() => {
+    if (!departments) return [];
+    const byTrack = new Map<ProductionTrack | 'OTHER', Department[]>();
+    for (const d of departments) {
+      const key = d.productionTrack ?? 'OTHER';
+      byTrack.set(key, [...(byTrack.get(key) ?? []), d]);
+    }
+    const order: (ProductionTrack | 'OTHER')[] = [
+      'OFFSET',
+      'DIGITAL',
+      'BOARDS_SIGNAGE',
+      'OTHER_PRODUCTS',
+      'SERVICES',
+      'READY_PRODUCTS',
+      'OTHER',
+    ];
+    return order
+      .filter((key) => byTrack.has(key))
+      .map((key) => ({
+        label: key === 'OTHER' ? 'أقسام أخرى' : TRACK_GROUP_LABELS[key],
+        departments: byTrack.get(key)!,
+      }));
+  }, [departments]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">لوحة الإنتاج</h1>
         <div className="flex flex-wrap items-center gap-2">
           {departments && (
             <select
@@ -152,10 +225,14 @@ export function ProductionBoardPage() {
               onChange={(e) => setDepartmentId(e.target.value)}
               className="border-input bg-background rounded-md border px-3 py-2 text-sm"
             >
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
+              {departmentGroups.map((group) => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.departments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           )}

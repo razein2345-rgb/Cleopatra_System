@@ -6,6 +6,7 @@ import {
   getWorkflowDashboardSummaryHandler,
   getWorkflowInstance,
   getWorkflowQueue,
+  listWorkflowInstancesHandler,
   updateCurrentStageInstanceHandler,
 } from '../controllers/workflowInstances.js';
 
@@ -13,6 +14,8 @@ export const workflowInstancesRouter = Router();
 
 workflowInstancesRouter.use(requireAuth);
 
+// FEATURE-010 (2026-08-14) — لوحة الإنتاج's "الطلبات" tab.
+workflowInstancesRouter.get('/', requirePermission('work-orders.view'), listWorkflowInstancesHandler);
 // /queue and /dashboard-summary must be registered before /:id —
 // otherwise Express would match them as an :id param.
 workflowInstancesRouter.get('/queue', requirePermission('work-orders.view'), getWorkflowQueue);

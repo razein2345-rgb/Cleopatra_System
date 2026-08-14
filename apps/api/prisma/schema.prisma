@@ -1210,6 +1210,14 @@ model Order {
   // `templateCode` instead of requiring a manual pick every time.
   productionTrack ProductionTrack?
 
+  // FEATURE-010 (2026-08-14, owner: "عند إنشاء الطلب يجب أن يكون واضحًا
+  // هل: Requires Design = نعم / لا"). Read once, at Work Order creation,
+  // to decide whether the chosen template's own design stage (if it has
+  // one) gets auto-skipped — see workflowInstanceService.ts's
+  // `createWorkflowInstance`. Defaults true (unchanged current behavior:
+  // every order goes through design unless explicitly told not to).
+  requiresDesign Boolean @default(true)
+
   // FEATURE-006 — Document Templates & Printing. `documentOverrides` is
   // this document's one-time presentation customization (never written
   // back to Setting or to documentTemplate); `documentSnapshot` is the
@@ -1493,10 +1501,16 @@ model WorkOrder {
 /// record, never from a Department-Branch relationship. Not `isSystem`
 /// like Role — no code ever branches on a specific department's identity.
 model Department {
-  id          String  @id @default(uuid()) @db.Uuid
-  name        String
-  code        String  @unique
-  description String?
+  id              String           @id @default(uuid()) @db.Uuid
+  name            String
+  code            String           @unique
+  description     String?
+  /// FEATURE-010 (2026-08-14) — groups a department under its production
+  /// track for لوحة الإنتاج's "الأقسام" tab. Nullable: departments shared
+  /// across every track (التصميم، التسليم) or unrelated to production
+  /// (SALES, WAREHOUSE, PURCHASING, EXTERNAL_SUPPLIER, CUSTOMER_SERVICE)
+  /// stay untagged on purpose — they don't belong to one track.
+  productionTrack ProductionTrack?
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?

@@ -87,7 +87,16 @@ export const orderSchema = z.object({
   internalNotes: z.string().nullable(),
   status: orderStatusSchema,
   productionTrack: productionTrackSchema.nullable(),
+  // FEATURE-010 (2026-08-14, owner: "عند إنشاء الطلب يجب أن يكون واضحًا
+  // هل: Requires Design = نعم / لا") — read once at Work Order creation
+  // to decide whether the chosen track's design stage gets auto-skipped.
+  requiresDesign: z.boolean(),
   quotationOriginId: z.string().uuid().nullable(),
+  // FEATURE-011 (2026-08-14, owner: "اقدر اطبع أمر الشغل من صفحة الطلبات")
+  // — lets OrderDocumentPage offer a "طباعة أمر الشغل" link straight to
+  // /work-orders/:id without a second fetch. Null until a WorkOrder is
+  // generated for this Order (see createWorkOrder in workOrders.ts).
+  workOrderId: z.string().uuid().nullable(),
   items: z.array(orderItemSchema),
   // FEATURE-006 M3 — deposits/remaining balance (Approved Addition,
   // "Deposit / Payment Flow"). `paidTotal`/`remainingBalance` are
@@ -150,6 +159,7 @@ export const createOrderSchema = z.object({
   customerNotes: z.string().trim().min(1).max(2000).optional(),
   internalNotes: z.string().trim().min(1).max(2000).optional(),
   productionTrack: productionTrackSchema.optional(),
+  requiresDesign: z.boolean().optional(),
   items: z.array(createOrderItemSchema).min(1),
   // FEATURE-007 — PRICING_ENGINE_SPEC.md §4's multi-payment array,
   // collected at creation time (e.g. cash + bank transfer for the same
@@ -175,6 +185,7 @@ export const updateOrderSchema = z.object({
   customerNotes: z.string().trim().min(1).max(2000).nullable().optional(),
   internalNotes: z.string().trim().min(1).max(2000).nullable().optional(),
   productionTrack: productionTrackSchema.nullable().optional(),
+  requiresDesign: z.boolean().optional(),
   items: z.array(createOrderItemSchema).min(1),
 });
 

@@ -1,10 +1,129 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { Order } from '@cleopatra/shared';
+import type { Order, Quotation, WorkOrder, WorkflowInstanceStatus } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
-import { ORDER_STATUS_LABELS } from '../quotations/quotationLabels';
+import { ORDER_STATUS_LABELS, QUOTATION_STATUS_LABELS } from '../quotations/quotationLabels';
 
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
+
+// FEATURE-011 (2026-08-14) — same 3-entry map DocumentsPage.tsx uses for
+// the same status enum; not worth extracting for 3 labels used in 2 places.
+const WORK_ORDER_STATUS_LABELS: Record<WorkflowInstanceStatus, string> = {
+  IN_PROGRESS: 'قيد التنفيذ',
+  COMPLETED: 'مكتمل',
+  CANCELLED: 'ملغي',
+};
+
+/**
+ * FEATURE-011 (2026-08-14, owner: "محتاج اشوف عند العملاء كل عروض الأسعار
+ * اللي طلعتلهم والفواتير واوامر الشغل") — quotations + work orders for
+ * this partner, reusing the already-existing `?partnerId=` filters
+ * (`GET /api/quotations`, and the new filter added to `GET /api/work-orders`
+ * alongside this feature). Kept as their own small tables below the
+ * existing invoice table/stats rather than merged into one list — the
+ * stats above stay purely financial (invoices only), unaffected.
+ */
+function QuotationsHistoryTable({ partnerId }: { partnerId: string }) {
+  const [quotations, setQuotations] = useState<Quotation[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiGet<Quotation[]>(`/api/quotations?partnerId=${partnerId}`)
+      .then(setQuotations)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل عروض الأسعار'));
+  }, [partnerId]);
+
+  if (error) return <div className="text-destructive text-sm">{error}</div>;
+  if (!quotations) return <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>;
+
+  return (
+    <div className="border-border overflow-hidden rounded-2xl border">
+      <table className="w-full text-sm">
+        <thead className="bg-muted/40">
+          <tr>
+            <th className="p-2 text-start">رقم العرض</th>
+            <th className="p-2 text-start">التاريخ</th>
+            <th className="p-2 text-start">الحالة</th>
+            <th className="p-2 text-start">الإجمالي</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...quotations]
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            .map((q) => (
+              <tr key={q.id} className="border-border border-t">
+                <td className="p-2">
+                  <Link to={`/quotations/${q.id}`} className="text-primary hover:underline">
+                    {q.quotationNumber}
+                  </Link>
+                </td>
+                <td className="p-2">{new Date(q.date).toLocaleDateString('ar-EG')}</td>
+                <td className="p-2">{QUOTATION_STATUS_LABELS[q.status]}</td>
+                <td className="p-2">{money(q.finalTotal)} ج.م</td>
+              </tr>
+            ))}
+          {quotations.length === 0 && (
+            <tr>
+              <td colSpan={4} className="text-muted-foreground p-4 text-center">
+                لا توجد عروض أسعار لهذا العميل بعد.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function WorkOrdersHistoryTable({ partnerId }: { partnerId: string }) {
+  const [workOrders, setWorkOrders] = useState<WorkOrder[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiGet<WorkOrder[]>(`/api/work-orders?partnerId=${partnerId}`)
+      .then(setWorkOrders)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل أوامر الشغل'));
+  }, [partnerId]);
+
+  if (error) return <div className="text-destructive text-sm">{error}</div>;
+  if (!workOrders) return <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>;
+
+  return (
+    <div className="border-border overflow-hidden rounded-2xl border">
+      <table className="w-full text-sm">
+        <thead className="bg-muted/40">
+          <tr>
+            <th className="p-2 text-start">رقم أمر الشغل</th>
+            <th className="p-2 text-start">التاريخ</th>
+            <th className="p-2 text-start">الحالة</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...workOrders]
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+            .map((w) => (
+              <tr key={w.id} className="border-border border-t">
+                <td className="p-2">
+                  <Link to={`/work-orders/${w.id}`} className="text-primary hover:underline">
+                    {w.workOrderNumber}
+                  </Link>
+                </td>
+                <td className="p-2">{new Date(w.createdAt).toLocaleDateString('ar-EG')}</td>
+                <td className="p-2">{w.workflowInstance ? WORK_ORDER_STATUS_LABELS[w.workflowInstance.status] : '—'}</td>
+              </tr>
+            ))}
+          {workOrders.length === 0 && (
+            <tr>
+              <td colSpan={3} className="text-muted-foreground p-4 text-center">
+                لا توجد أوامر شغل لهذا العميل بعد.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 /**
  * FEATURE-007 — order history on the customer profile (owner, 2026-08-12:
@@ -118,6 +237,16 @@ export function OrdersHistoryTab({ partnerId }: { partnerId: string }) {
             )}
           </tbody>
         </table>
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-bold">عروض الأسعار</h3>
+        <QuotationsHistoryTable partnerId={partnerId} />
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-bold">أوامر الشغل</h3>
+        <WorkOrdersHistoryTable partnerId={partnerId} />
       </div>
     </div>
   );

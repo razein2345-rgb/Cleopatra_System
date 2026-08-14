@@ -6,6 +6,8 @@ import type {
   UpdateStageInstanceInput,
   WorkflowDashboardSummary,
   WorkflowInstance,
+  WorkflowInstanceListItem,
+  WorkflowInstanceStatus,
   WorkflowQueueItem,
 } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
@@ -147,19 +149,128 @@ export function assertRequiredVariablesPresent(
   }
 }
 
+export class WorkflowNoStagesError extends Error {
+  constructor() {
+    super('This workflow template version has no stages');
+    this.name = 'WorkflowNoStagesError';
+  }
+}
+
+/**
+ * FEATURE-010 (2026-08-14) — the one shared transition core: close the
+ * current `StageInstance`, fire its event, then open the next stage or end
+ * the instance if there is none. Extracted so `advanceWorkflowInstance`
+ * (a manual action) and `createWorkflowInstance`'s design auto-skip (an
+ * automatic one, same SKIP semantics, triggered right at creation instead
+ * of by a later user click) are never two diverging copies of the same
+ * logic — exactly the "لا تخترع آلية موازية" the owner asked for when
+ * "Requires Design" was defined.
+ */
+async function applyStageTransition(
+  tx: Prisma.TransactionClient,
+  params: {
+    instanceId: string;
+    currentStageInstanceId: string;
+    currentStage: { id: string; name: string; nextStageId: string | null; failureStageId: string | null };
+    action: 'COMPLETE' | 'SKIP' | 'FAIL';
+    variableValues?: Record<string, unknown>;
+    notes?: string;
+    performedById: string;
+  },
+): Promise<{ stageInstanceId: string }> {
+  const now = new Date();
+  const newCurrentStatus = params.action === 'COMPLETE' ? 'DONE' : params.action === 'SKIP' ? 'SKIPPED' : 'FAILED';
+  const destinationStageId =
+    params.action === 'FAIL' ? params.currentStage.failureStageId : params.currentStage.nextStageId;
+
+  const currentStageInstance = await tx.stageInstance.findUniqueOrThrow({ where: { id: params.currentStageInstanceId } });
+  const updatedCurrent = await tx.stageInstance.update({
+    where: { id: params.currentStageInstanceId },
+    data: {
+      status: newCurrentStatus,
+      finishedAt: now,
+      actualDurationMinutes: currentStageInstance.startedAt
+        ? Math.round((now.getTime() - currentStageInstance.startedAt.getTime()) / 60000)
+        : null,
+      variableValues: (params.variableValues ?? currentStageInstance.variableValues ?? undefined) as
+        | Prisma.InputJsonValue
+        | undefined,
+      notes: params.notes ?? currentStageInstance.notes,
+    },
+  });
+
+  await recordWorkflowEvent(tx, {
+    workflowInstanceId: params.instanceId,
+    stageInstanceId: updatedCurrent.id,
+    eventType: params.action === 'COMPLETE' ? 'STAGE_COMPLETED' : params.action === 'SKIP' ? 'STAGE_SKIPPED' : 'STAGE_FAILED',
+    payload: { stageId: params.currentStage.id, stageName: params.currentStage.name },
+    performedById: params.performedById,
+  });
+
+  if (!destinationStageId) {
+    const finalStatus = params.action === 'FAIL' ? 'CANCELLED' : 'COMPLETED';
+    await tx.workflowInstance.update({
+      where: { id: params.instanceId },
+      data: { status: finalStatus, currentStageId: null },
+    });
+    await recordWorkflowEvent(tx, {
+      workflowInstanceId: params.instanceId,
+      eventType: finalStatus === 'COMPLETED' ? 'INSTANCE_COMPLETED' : 'INSTANCE_CANCELLED',
+      payload: { finalStageId: params.currentStage.id },
+      performedById: params.performedById,
+    });
+    return { stageInstanceId: updatedCurrent.id };
+  }
+
+  const nextStage = await tx.workflowStage.findUniqueOrThrow({ where: { id: destinationStageId } });
+  const newStageInstance = await tx.stageInstance.create({
+    data: {
+      workflowInstanceId: params.instanceId,
+      stageId: nextStage.id,
+      departmentId: nextStage.departmentId,
+      status: 'IN_PROGRESS',
+      assignedEmployeeId: nextStage.defaultAssignedEmployeeId,
+      estimatedDurationMinutes: nextStage.estimatedDurationMinutes,
+      startedAt: now,
+    },
+  });
+  await tx.workflowInstance.update({
+    where: { id: params.instanceId },
+    data: { currentStageId: nextStage.id },
+  });
+  await recordWorkflowEvent(tx, {
+    workflowInstanceId: params.instanceId,
+    stageInstanceId: newStageInstance.id,
+    eventType: 'STAGE_STARTED',
+    payload: { stageId: nextStage.id, stageName: nextStage.name, departmentId: nextStage.departmentId },
+    performedById: params.performedById,
+  });
+
+  return { stageInstanceId: newStageInstance.id };
+}
+
 /**
  * Creates a `WorkflowInstance` starting on a template version's first stage
  * (lowest `order`) plus that stage's `StageInstance`, and records the
  * `INSTANCE_STARTED`/`STAGE_STARTED` events — always called inside the same
  * transaction that creates the owning business record (today: `WorkOrder`).
+ *
+ * FEATURE-010 (2026-08-14, owner: "عند إنشاء الطلب يجب أن يكون واضحًا هل:
+ * Requires Design = نعم / لا") — when the starting stage is a DESIGN-
+ * department stage marked `canSkip` and the caller passes
+ * `requiresDesign: false`, it's auto-skipped immediately via the same
+ * `applyStageTransition` core a manual SKIP uses, landing the instance on
+ * whatever comes next. Only ever applies to the very first stage — never a
+ * general "skip cascade."
  */
 export async function createWorkflowInstance(
   tx: Prisma.TransactionClient,
-  params: { templateId: string; workOrderId: string; performedById: string },
+  params: { templateId: string; workOrderId: string; performedById: string; requiresDesign?: boolean },
 ): Promise<{ instanceId: string; stageInstanceId: string }> {
   const startingStage = await tx.workflowStage.findFirst({
     where: { templateId: params.templateId },
     orderBy: { order: 'asc' },
+    include: { department: { select: { code: true } } },
   });
   if (!startingStage) {
     throw new WorkflowNoStagesError();
@@ -201,14 +312,18 @@ export async function createWorkflowInstance(
     performedById: params.performedById,
   });
 
-  return { instanceId: instance.id, stageInstanceId: stageInstance.id };
-}
-
-export class WorkflowNoStagesError extends Error {
-  constructor() {
-    super('This workflow template version has no stages');
-    this.name = 'WorkflowNoStagesError';
+  if (params.requiresDesign === false && startingStage.department?.code === 'DESIGN' && startingStage.canSkip) {
+    const result = await applyStageTransition(tx, {
+      instanceId: instance.id,
+      currentStageInstanceId: stageInstance.id,
+      currentStage: startingStage,
+      action: 'SKIP',
+      performedById: params.performedById,
+    });
+    return { instanceId: instance.id, stageInstanceId: result.stageInstanceId };
   }
+
+  return { instanceId: instance.id, stageInstanceId: stageInstance.id };
 }
 
 /**
@@ -350,6 +465,38 @@ export async function getDepartmentQueue(departmentId: string): Promise<Workflow
     workOrderId: row.workflowInstance.workOrderId,
     workOrderNumber: row.workflowInstance.workOrder?.workOrderNumber ?? null,
     customerName: row.workflowInstance.workOrder?.order.partner.nameAr ?? null,
+  }));
+}
+
+const WORKFLOW_INSTANCE_LIST_INCLUDE = {
+  ...WORKFLOW_INSTANCE_INCLUDE,
+  workOrder: {
+    select: { workOrderNumber: true, order: { select: { partner: { select: { nameAr: true } } } } },
+  },
+} satisfies Prisma.WorkflowInstanceInclude;
+
+type WorkflowInstanceListRecord = Prisma.WorkflowInstanceGetPayload<{ include: typeof WORKFLOW_INSTANCE_LIST_INCLUDE }>;
+
+/**
+ * FEATURE-010 (2026-08-14) — لوحة الإنتاج's "الطلبات" tab: every
+ * `WorkflowInstance` (default `IN_PROGRESS`, i.e. still active), each with
+ * its full ordered `stageInstances[]` (the visual stage chain) plus
+ * `workOrderNumber`/`customerName` for display — same "extend the base
+ * mapper with display fields" pattern as `getDepartmentQueue`'s
+ * `WorkflowQueueItem`. Always internal (`canSeeInternal: true`) — same as
+ * `getWorkflowQueue`, no customer caller exists yet.
+ */
+export async function listWorkflowInstances(status: WorkflowInstanceStatus): Promise<WorkflowInstanceListItem[]> {
+  const rows = await prisma.workflowInstance.findMany({
+    where: { isDeleted: false, status },
+    include: WORKFLOW_INSTANCE_LIST_INCLUDE,
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return rows.map((row: WorkflowInstanceListRecord) => ({
+    ...mapWorkflowInstanceToDto(row, true),
+    workOrderNumber: row.workOrder?.workOrderNumber ?? null,
+    customerName: row.workOrder?.order.partner.nameAr ?? null,
   }));
 }
 

@@ -111,7 +111,12 @@ export function DocumentsPage() {
             statusLabel: status ? WORKFLOW_STATUS_LABELS[status] : '—',
             statusTone: status ? WORKFLOW_STATUS_TONES[status] : 'neutral',
             total: null,
-            link: w.workflowInstance ? `/production-board/timeline/${w.workflowInstance.id}` : null,
+            // FEATURE-011 (2026-08-14, owner: "اقدر اشوف أمر الشغل من قسم
+            // المستندات وأقدر اعدل عليه") — opens the actual work order
+            // document (view/print/edit), not the production-tracking
+            // timeline; always available since `WorkOrder.id` always
+            // exists, unlike `workflowInstance` which may not.
+            link: `/work-orders/${w.id}`,
           };
         });
 
