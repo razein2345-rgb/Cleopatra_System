@@ -144,6 +144,16 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
+    // FEATURE-013 (2026-08-14, owner: "جهاز الكشك") — a single narrow
+    // permission granted only to the dedicated Kiosk device account, never
+    // to a regular employee's own login. Deliberately not folded into
+    // `employees.*` (a much broader HR-management grant than "submit
+    // check-ins for one branch's staff from a fixed device").
+    module: 'attendance',
+    moduleLabel: 'Attendance',
+    actions: [{ action: 'kiosk', label: 'Submit Kiosk check-ins/outs' }],
+  },
+  {
     module: 'roles',
     moduleLabel: 'Roles',
     actions: [

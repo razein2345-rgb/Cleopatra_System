@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import type { WorkflowInstanceStatus } from '@cleopatra/shared';
+import type { ProductionTrack, WorkflowInstanceStatus } from '@cleopatra/shared';
 import { advanceWorkflowInstanceSchema, hasPermission, updateStageInstanceSchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
@@ -8,6 +8,7 @@ import {
   WORKFLOW_INSTANCE_INCLUDE,
   advanceWorkflowInstance,
   getDepartmentQueue,
+  getTrackQueue,
   getWorkflowDashboardSummary,
   listWorkflowInstances,
   mapWorkflowInstanceToDto,
@@ -132,8 +133,24 @@ export async function updateCurrentStageInstanceHandler(req: Request<{ id: strin
 export async function getWorkflowQueue(req: Request, res: Response) {
   const auth = req.auth!;
   const departmentId = typeof req.query.departmentId === 'string' ? req.query.departmentId : undefined;
+  const productionTrack =
+    typeof req.query.productionTrack === 'string' ? (req.query.productionTrack as ProductionTrack) : undefined;
+
+  // FEATURE-010 (2026-08-14) — لوحة الإنتاج's "الأقسام" sub-tabs: one
+  // combined queue for every department in a track, instead of the caller
+  // firing one request per department. Scoped to the caller's own
+  // accessible departments, same as the dashboard summary; an empty
+  // intersection is an empty queue, not a 403.
+  if (productionTrack) {
+    const items = await getTrackQueue(productionTrack, accessibleDepartmentScope(auth));
+    res.json({ success: true, data: items });
+    return;
+  }
+
   if (!departmentId) {
-    res.status(400).json({ success: false, error: { message: 'departmentId query parameter is required' } });
+    res
+      .status(400)
+      .json({ success: false, error: { message: 'departmentId or productionTrack query parameter is required' } });
     return;
   }
   if (!canAccessDepartment(auth, departmentId)) {

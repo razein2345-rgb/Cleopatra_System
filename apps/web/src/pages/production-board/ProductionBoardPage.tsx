@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { RefreshCw, Route as RouteIcon } from 'lucide-react';
+import { Ban, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
 import type { Department, ProductionTrack, User, WorkflowPriority, WorkflowQueueItem } from '@cleopatra/shared';
 import { apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -22,13 +22,34 @@ import {
   rowToneClassName,
 } from './productionBoardLabels';
 
-const TRACK_GROUP_LABELS: Record<ProductionTrack, string> = {
+/**
+ * FEATURE-010 (2026-08-14, owner's exact spec) — "الأقسام" tab's own sub-
+ * tabs: التصميم first (shared across every track — a real Department, not
+ * a `ProductionTrack`, so it's handled as `'DESIGN'` and queried by
+ * `departmentId` like before), then one tab per confirmed production
+ * track in the owner's exact order, plus "منتجات أخرى" (OTHER_PRODUCTS)
+ * appended at the end — a real, working track with real departments and
+ * a published template that wasn't in the owner's list but has jobs that
+ * would otherwise have nowhere to show.
+ */
+type TrackTabKey = 'DESIGN' | ProductionTrack;
+const TRACK_TAB_ORDER: TrackTabKey[] = [
+  'DESIGN',
+  'OFFSET',
+  'DIGITAL',
+  'BOARDS_SIGNAGE',
+  'READY_PRODUCTS',
+  'SERVICES',
+  'OTHER_PRODUCTS',
+];
+const TRACK_TAB_LABELS: Record<TrackTabKey, string> = {
+  DESIGN: 'التصميم',
   OFFSET: 'أوفست',
   DIGITAL: 'ديجيتال',
   BOARDS_SIGNAGE: 'لوحات وإعلانات',
-  OTHER_PRODUCTS: 'منتجات أخرى',
-  SERVICES: 'خدمات',
   READY_PRODUCTS: 'منتجات جاهزة',
+  SERVICES: 'خدمات',
+  OTHER_PRODUCTS: 'منتجات أخرى',
 };
 
 /**
@@ -78,7 +99,7 @@ export function ProductionBoardPage() {
 function DepartmentsTab() {
   const { can } = useAuth();
   const [departments, setDepartments] = useState<Department[] | null>(null);
-  const [departmentId, setDepartmentId] = useState('');
+  const [trackTab, setTrackTab] = useState<TrackTabKey>('DESIGN');
   const [employees, setEmployees] = useState<User[]>([]);
   const [queue, setQueue] = useState<WorkflowQueueItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -97,14 +118,15 @@ function DepartmentsTab() {
     apiGet<Department[]>('/api/departments')
       .then((depts) => {
         setDepartments(depts);
-        if (depts.length > 0) {
-          // FEATURE-005 Sprint 2.5 — a `?department=<id>` deep link from the
-          // Dashboard's Jobs by Department widget (Requirement 8). Read once
-          // at mount: arriving here is always a fresh route mount (navigating
-          // from the Dashboard), so `window.location.search` is accurate.
-          const fromLink = new URLSearchParams(window.location.search).get('department');
-          const target = fromLink && depts.some((d) => d.id === fromLink) ? fromLink : depts[0].id;
-          setDepartmentId((prev) => prev || target);
+        // FEATURE-005 Sprint 2.5 — a `?department=<id>` deep link from the
+        // Dashboard's Jobs by Department widget (Requirement 8). Read once
+        // at mount: arriving here is always a fresh route mount (navigating
+        // from the Dashboard), so `window.location.search` is accurate.
+        // Resolve the linked department to its track sub-tab (or التصميم).
+        const fromLink = new URLSearchParams(window.location.search).get('department');
+        const linkedDept = fromLink ? depts.find((d) => d.id === fromLink) : undefined;
+        if (linkedDept) {
+          setTrackTab(linkedDept.code === 'DESIGN' ? 'DESIGN' : (linkedDept.productionTrack ?? 'DESIGN'));
         }
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل الأقسام'));
@@ -112,16 +134,23 @@ function DepartmentsTab() {
   }, []);
 
   const employeeName = (id: string | null) => employees.find((e) => e.id === id)?.name ?? '—';
+  const designDepartmentId = departments?.find((d) => d.code === 'DESIGN')?.id;
 
   const loadQueue = useCallback(() => {
-    if (!departmentId) return;
-    apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?departmentId=${departmentId}`)
+    const query =
+      trackTab === 'DESIGN'
+        ? designDepartmentId
+          ? `departmentId=${designDepartmentId}`
+          : null
+        : `productionTrack=${trackTab}`;
+    if (!query) return;
+    apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?${query}`)
       .then((items) => {
         setQueue(items);
         setLastUpdated(new Date());
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل قائمة الانتظار'));
-  }, [departmentId]);
+  }, [trackTab, designDepartmentId]);
 
   useEffect(loadQueue, [loadQueue]);
 
@@ -157,20 +186,42 @@ function DepartmentsTab() {
 
   const canEdit = can('work-orders.edit');
 
+  // FEATURE-010 (2026-08-14, owner: "في الورك فلو متقسم ويدجيتز بتنتقل
+  // دايركت لما ادوس على الـchek box اللي جمب الطلب إلى المرحلة اللي بعدها")
+  // — a single checkbox replaces the "إنهاء" button: ticking it immediately
+  // completes the current stage (same `advance(item, 'COMPLETE')` call the
+  // button already made, no confirmation). تخطي/فشل/تعديل stay available as
+  // small secondary icons next to it — less common actions, not gone.
   const actionButtons = (item: WorkflowQueueItem) => (
-    <div className="flex flex-wrap gap-1.5">
-      <Button size="sm" variant="secondary" onClick={() => void advance(item, 'COMPLETE')}>
+    <div className="flex items-center gap-2">
+      <label className="flex items-center gap-1.5 text-xs" title="إنهاء المرحلة والانتقال للتالية">
+        <input type="checkbox" checked={false} onChange={() => void advance(item, 'COMPLETE')} />
         إنهاء
-      </Button>
-      <Button size="sm" variant="secondary" onClick={() => setConfirmAction({ item, action: 'SKIP' })}>
-        تخطي
-      </Button>
-      <Button size="sm" variant="ghost" onClick={() => setConfirmAction({ item, action: 'FAIL' })}>
-        فشل
-      </Button>
-      <Button size="sm" variant="ghost" onClick={() => setEditingItem(item)}>
-        تعديل
-      </Button>
+      </label>
+      <button
+        type="button"
+        title="تخطي"
+        onClick={() => setConfirmAction({ item, action: 'SKIP' })}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <SkipForward className="size-4" />
+      </button>
+      <button
+        type="button"
+        title="فشل"
+        onClick={() => setConfirmAction({ item, action: 'FAIL' })}
+        className="text-muted-foreground hover:text-destructive"
+      >
+        <Ban className="size-4" />
+      </button>
+      <button
+        type="button"
+        title="تعديل"
+        onClick={() => setEditingItem(item)}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <Pencil className="size-4" />
+      </button>
     </div>
   );
 
@@ -186,56 +237,26 @@ function DepartmentsTab() {
     </Link>
   );
 
-  // FEATURE-010 (2026-08-14) — grouped by `productionTrack` instead of a
-  // flat list, so "الأقسام" reads as one picker per track rather than an
-  // undifferentiated list of every department in the system. Untracked
-  // departments (shared like التصميم/التسليم, or unrelated like المبيعات)
-  // fall into a trailing "أقسام أخرى" group — never hidden, just ungrouped.
-  const departmentGroups = useMemo(() => {
-    if (!departments) return [];
-    const byTrack = new Map<ProductionTrack | 'OTHER', Department[]>();
-    for (const d of departments) {
-      const key = d.productionTrack ?? 'OTHER';
-      byTrack.set(key, [...(byTrack.get(key) ?? []), d]);
-    }
-    const order: (ProductionTrack | 'OTHER')[] = [
-      'OFFSET',
-      'DIGITAL',
-      'BOARDS_SIGNAGE',
-      'OTHER_PRODUCTS',
-      'SERVICES',
-      'READY_PRODUCTS',
-      'OTHER',
-    ];
-    return order
-      .filter((key) => byTrack.has(key))
-      .map((key) => ({
-        label: key === 'OTHER' ? 'أقسام أخرى' : TRACK_GROUP_LABELS[key],
-        departments: byTrack.get(key)!,
-      }));
-  }, [departments]);
-
   return (
     <div className="space-y-4">
+      <div className="border-border bg-muted/40 flex flex-wrap gap-1 rounded-lg border p-1">
+        {TRACK_TAB_ORDER.map((key) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setTrackTab(key)}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-sm font-medium',
+              trackTab === key ? 'bg-background shadow-sm' : 'text-muted-foreground',
+            )}
+          >
+            {TRACK_TAB_LABELS[key]}
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          {departments && (
-            <select
-              value={departmentId}
-              onChange={(e) => setDepartmentId(e.target.value)}
-              className="border-input bg-background rounded-md border px-3 py-2 text-sm"
-            >
-              {departmentGroups.map((group) => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.departments.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          )}
           <Button type="button" variant="secondary" size="icon" onClick={loadQueue} aria-label="تحديث">
             <RefreshCw className="size-4" />
           </Button>

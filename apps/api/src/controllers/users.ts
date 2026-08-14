@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import {
   createUserSchema,
+  setAttendancePinSchema,
   setUserBranchAccessSchema,
   setUserRolesSchema,
   updateUserSchema,
@@ -13,6 +14,7 @@ import { canAccessBranch } from '../services/authContext.js';
 import { recordAudit } from '../services/auditService.js';
 import { env } from '../config/env.js';
 import { AdminSafetyService, hasAdminRole, LastActiveAdminError } from '../services/adminSafety.js';
+import { setAttendancePin } from '../services/attendanceService.js';
 
 // Where invite/recovery email links send the user to complete account setup
 // (FEATURE-001.2). CORS_ORIGIN is already the frontend's own origin — reused
@@ -407,6 +409,38 @@ export async function resetUserPassword(req: Request<{ id: string }>, res: Respo
     action: 'PASSWORD_RESET',
     performedById: auth.staffId,
     branchId: existing.branchId,
+  });
+
+  res.status(204).send();
+}
+
+/**
+ * FEATURE-013 (2026-08-14) — set/change a staff member's Kiosk attendance
+ * PIN. Mirrors `resetUserPassword`'s branch-scoping exactly; never returns
+ * the PIN back once set.
+ */
+export async function setAttendancePinHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const input = setAttendancePinSchema.parse(req.body);
+  const existing = await prisma.staffProfile.findUnique({ where: { id: req.params.id } });
+  if (!existing || existing.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'User not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    res.status(403).json({ success: false, error: { message: 'You do not have access to this branch' } });
+    return;
+  }
+
+  await setAttendancePin(existing.id, input.pin);
+
+  await recordAudit({
+    entityType: 'StaffProfile',
+    entityId: existing.id,
+    action: 'UPDATE',
+    performedById: auth.staffId,
+    branchId: existing.branchId,
+    newValue: { attendancePinChanged: true },
   });
 
   res.status(204).send();

@@ -1,11 +1,22 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { AdvanceRepaymentMethod, AttendanceEntry, EmployeeAdvance, EmployeePayroll, PayFrequency, User } from '@cleopatra/shared';
+import type {
+  AdvanceRepaymentMethod,
+  AttendanceEntry,
+  EmployeeAdvance,
+  EmployeePayroll,
+  FieldAssignment,
+  PayFrequency,
+  User,
+} from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/state/AuthContext';
 import { PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
+import { LocationPickerMap } from '@/components/LocationPickerMap';
+
+const FIELD_ASSIGNMENT_STATUS_LABELS = { PENDING: 'في الانتظار', CONFIRMED: 'تم التأكيد', CANCELLED: 'ملغي' } as const;
 
 const PAY_FREQUENCY_LABELS: Record<PayFrequency, string> = {
   WEEKLY: 'أسبوعي',
@@ -33,8 +44,11 @@ export function EmployeeProfilePage() {
   const [advances, setAdvances] = useState<EmployeeAdvance[] | null>(null);
   const [attendance, setAttendance] = useState<AttendanceEntry[] | null>(null);
   const [payroll, setPayroll] = useState<EmployeePayroll | null | undefined>(undefined);
+  const [fieldAssignments, setFieldAssignments] = useState<FieldAssignment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAddAdvance, setShowAddAdvance] = useState(false);
+  const [showSetPin, setShowSetPin] = useState(false);
+  const [showAssignLocation, setShowAssignLocation] = useState(false);
 
   const load = () => {
     if (!id) return;
@@ -43,12 +57,14 @@ export function EmployeeProfilePage() {
       apiGet<EmployeeAdvance[]>(`/api/employee-advances/staff/${id}`),
       apiGet<AttendanceEntry[]>(`/api/attendance/staff/${id}`),
       apiGet<EmployeePayroll | null>(`/api/employee-advances/staff/${id}/payroll`),
+      apiGet<FieldAssignment[]>(`/api/attendance/field-assignments?staffId=${id}`),
     ])
-      .then(([u, a, att, p]) => {
+      .then(([u, a, att, p, fa]) => {
         setUser(u);
         setAdvances(a);
         setAttendance(att);
         setPayroll(p);
+        setFieldAssignments(fa);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل بيانات الموظف'));
   };
@@ -65,11 +81,18 @@ export function EmployeeProfilePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">{user.name}</h1>
-        <Link to="/users" className="text-muted-foreground text-sm hover:underline">
-          العودة إلى الموظفين
-        </Link>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">{user.name}</h1>
+          <Link to="/users" className="text-muted-foreground text-sm hover:underline">
+            العودة إلى الموظفين
+          </Link>
+        </div>
+        {canEdit && (
+          <Button variant="secondary" size="sm" onClick={() => setShowSetPin(true)}>
+            تعيين/تغيير الرقم السري لجهاز الحضور
+          </Button>
+        )}
       </div>
 
       <EmployeeHrForm user={user} canEdit={canEdit} onSaved={load} />
@@ -161,6 +184,37 @@ export function EmployeeProfilePage() {
       </div>
 
       <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">تكليفات بأماكن خارجية</h2>
+          {canEdit && <Button onClick={() => setShowAssignLocation(true)}>+ تكليف بمكان</Button>}
+        </div>
+        {!fieldAssignments || fieldAssignments.length === 0 ? (
+          <p className="text-muted-foreground text-sm">لا توجد تكليفات لهذا الموظف بعد.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+                  <th className="p-2">التاريخ</th>
+                  <th className="p-2">المكان</th>
+                  <th className="p-2">الحالة</th>
+                </tr>
+              </thead>
+              <tbody>
+                {fieldAssignments.map((a) => (
+                  <tr key={a.id} className="border-border border-b last:border-0">
+                    <td className="p-2">{new Date(a.date).toLocaleDateString('ar-EG')}</td>
+                    <td className="p-2">{a.locationLabel}</td>
+                    <td className="p-2">{FIELD_ASSIGNMENT_STATUS_LABELS[a.status]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
         <h2 className="font-semibold">حساب المرتب بالساعات — الفترة الحالية</h2>
         {!payroll ? (
           <p className="text-muted-foreground text-sm">
@@ -231,7 +285,164 @@ export function EmployeeProfilePage() {
           }}
         />
       )}
+
+      {showSetPin && (
+        <SetPinDialog staffId={user.id} onClose={() => setShowSetPin(false)} onSaved={() => setShowSetPin(false)} />
+      )}
+
+      {showAssignLocation && (
+        <AssignLocationDialog
+          staffId={user.id}
+          branchId={user.branchId}
+          onClose={() => setShowAssignLocation(false)}
+          onCreated={() => {
+            setShowAssignLocation(false);
+            load();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function SetPinDialog({ staffId, onClose, onSaved }: { staffId: string; onClose: () => void; onSaved: () => void }) {
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPut(`/api/users/${staffId}/attendance-pin`, { pin });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حفظ الرقم السري');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>تعيين/تغيير الرقم السري لجهاز الحضور</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">الرقم السري (4 أرقام)</span>
+            <input
+              required
+              autoFocus
+              type="password"
+              inputMode="numeric"
+              maxLength={4}
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-center text-lg tracking-[0.5em]"
+            />
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+            <Button type="submit" disabled={submitting || pin.length !== 4}>
+              {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AssignLocationDialog({
+  staffId,
+  branchId,
+  onClose,
+  onCreated,
+}: {
+  staffId: string;
+  branchId: string;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [locationLabel, setLocationLabel] = useState('');
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting || latitude === null || longitude === null) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPost('/api/attendance/field-assignments', {
+        staffId,
+        branchId,
+        date,
+        locationLabel,
+        targetLatitude: latitude,
+        targetLongitude: longitude,
+      });
+      onCreated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حفظ التكليف');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>تكليف بمكان</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">التاريخ</span>
+            <input
+              required
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">وصف المكان</span>
+            <input
+              required
+              value={locationLabel}
+              onChange={(e) => setLocationLabel(e.target.value)}
+              placeholder="مثال: مكتب شركة كذا - وسط البلد"
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="space-y-1">
+            <span className="text-muted-foreground text-sm">حدد المكان على الخريطة</span>
+            <LocationPickerMap latitude={latitude} longitude={longitude} onChange={(lat, lng) => { setLatitude(lat); setLongitude(lng); }} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+            <Button type="submit" disabled={submitting || latitude === null || longitude === null}>
+              {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

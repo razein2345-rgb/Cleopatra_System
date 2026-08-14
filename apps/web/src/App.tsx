@@ -24,6 +24,7 @@ import { TreasuryPage } from '@/pages/treasury/TreasuryPage';
 import { InventoryPage } from '@/pages/inventory/InventoryPage';
 import { ProductionBoardPage } from '@/pages/production-board/ProductionBoardPage';
 import { WorkOrderTimelinePage } from '@/pages/production-board/WorkOrderTimelinePage';
+import { KioskPage } from '@/pages/attendance/KioskPage';
 
 function App() {
   return (
@@ -104,6 +105,13 @@ function App() {
                 <Route path="/permissions" element={<PermissionsPage />} />
               </Route>
             </Route>
+          </Route>
+
+          {/* FEATURE-013 (2026-08-14) — لوحة الكشك: standalone, no AppShell
+              sidebar/nav — the shared tablet stays on this one screen all
+              day, logged into a dedicated Kiosk account. */}
+          <Route element={<ProtectedRoute permission="attendance.kiosk" />}>
+            <Route path="/attendance/kiosk" element={<KioskPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

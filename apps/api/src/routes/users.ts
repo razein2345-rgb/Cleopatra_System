@@ -7,6 +7,7 @@ import {
   getUser,
   listUsers,
   resetUserPassword,
+  setAttendancePinHandler,
   setUserBranchAccess,
   setUserRoles,
   updateUser,
@@ -24,3 +25,4 @@ usersRouter.delete('/:id', requirePermission('employees.delete'), deleteUser);
 usersRouter.put('/:id/roles', requirePermission('employees.edit'), setUserRoles);
 usersRouter.put('/:id/branch-access', requirePermission('employees.edit'), setUserBranchAccess);
 usersRouter.post('/:id/reset-password', requirePermission('employees.edit'), resetUserPassword);
+usersRouter.put('/:id/attendance-pin', requirePermission('employees.edit'), setAttendancePinHandler);

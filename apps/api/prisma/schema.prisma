@@ -339,6 +339,7 @@ model Branch {
   auditLogs         AuditLog[]
   employeeAdvances  EmployeeAdvance[]
   attendanceEntries AttendanceEntry[]
+  fieldAssignments  FieldAssignment[]
 
   @@index([isDeleted])
 }
@@ -650,6 +651,13 @@ model StaffProfile {
   /// — payroll-by-hours simply doesn't apply until it is.
   workingDays    Int[]
 
+  /// FEATURE-013 (2026-08-14, owner: "الموظف يكتب اسمه ورقمه السري") — the
+  /// Kiosk attendance PIN, hashed (`crypto.scryptSync` + a per-user salt,
+  /// stored together as one string — no new hashing dependency). Null for
+  /// every staff member who doesn't use the Kiosk (e.g. برينتنج هاوس's
+  /// single employee, who keeps checking in via their own login).
+  attendancePinHash String?
+
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
@@ -673,6 +681,8 @@ model StaffProfile {
   advanceRepaymentsRecorded  EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
   attendanceEntries          AttendanceEntry[]          @relation("AttendanceStaff")
   attendanceEntriesRecorded  AttendanceEntry[]          @relation("AttendanceRecordedBy")
+  fieldAssignments           FieldAssignment[]          @relation("FieldAssignmentStaff")
+  fieldAssignmentsCreated    FieldAssignment[]          @relation("FieldAssignmentCreatedBy")
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -1957,6 +1967,18 @@ model EmployeeAdvanceRepayment {
 // from an imported export), never a rewrite of this shape.
 // ---------------------------------------------------------------------------
 
+/// FEATURE-013 (2026-08-14) — how a check-in/check-out actually happened.
+/// SELF_SERVICE is the original (and still default) behavior; KIOSK is the
+/// shared-device+PIN flow for a multi-employee branch; GPS is a location-
+/// confirmed check-in for staff sent to an external site before the office;
+/// MANUAL is an admin correction (`upsertAttendanceEntry`, unchanged).
+enum AttendanceSource {
+  SELF_SERVICE
+  KIOSK
+  GPS
+  MANUAL
+}
+
 model AttendanceEntry {
   id String @id @default(uuid()) @db.Uuid
 
@@ -1972,6 +1994,18 @@ model AttendanceEntry {
   checkOutAt DateTime?
   note       String?
 
+  /// FEATURE-013 — defaults to the original self-service behavior; every
+  /// existing/future row is compatible with `employeePayrollService.ts`
+  /// unchanged, since payroll only ever reads checkInAt/checkOutAt.
+  source AttendanceSource @default(SELF_SERVICE)
+
+  /// FEATURE-013 — populated only when `source = GPS` (the coordinates the
+  /// employee's browser reported at the moment their field-assignment
+  /// location was confirmed). Float, not Decimal — same convention as
+  /// PartnerAddress.latitude/longitude (geographic precision, not currency).
+  checkInLatitude  Float?
+  checkInLongitude Float?
+
   recordedById String       @db.Uuid
   recordedBy   StaffProfile @relation("AttendanceRecordedBy", fields: [recordedById], references: [id])
 
@@ -1985,6 +2019,57 @@ model AttendanceEntry {
   @@unique([staffId, date])
   @@index([staffId])
   @@index([branchId])
+}
+
+/// FEATURE-013 (2026-08-14, owner: "بيكون في حد انا مكلفه يروح مكان معين
+/// قبل ما يجي") — a staff member assigned to visit a specific location
+/// before coming to the office. The owner creates one of these (with a
+/// target location picked on a map) for a given staff member and day;
+/// the employee's own "تأكيد وصولي" action (see AttendanceEntry.source
+/// GPS) confirms it by proximity and, on success, writes today's
+/// AttendanceEntry — see `confirmFieldAssignmentLocation`.
+enum FieldAssignmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+}
+
+model FieldAssignment {
+  id String @id @default(uuid()) @db.Uuid
+
+  staffId String       @db.Uuid
+  staff   StaffProfile @relation("FieldAssignmentStaff", fields: [staffId], references: [id])
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  /// Calendar day this assignment is for (midnight-anchored, same convention as AttendanceEntry.date).
+  date DateTime
+
+  locationLabel   String
+  targetLatitude  Float
+  targetLongitude Float
+  /// Acceptable proximity radius for `confirmFieldAssignmentLocation` — a
+  /// flat default (150m), not a configurable setting, same "flat constant"
+  /// discipline as GRACE_MINUTES in employeePayrollService.ts.
+  radiusMeters    Int    @default(150)
+
+  status      FieldAssignmentStatus @default(PENDING)
+  confirmedAt DateTime?
+
+  createdById String       @db.Uuid
+  createdBy   StaffProfile @relation("FieldAssignmentCreatedBy", fields: [createdById], references: [id])
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([staffId])
+  @@index([branchId])
+  @@index([date])
 }
 
 // ---------------------------------------------------------------------------

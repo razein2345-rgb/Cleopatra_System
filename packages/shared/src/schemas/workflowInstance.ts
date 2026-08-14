@@ -119,6 +119,10 @@ export const workflowQueueItemSchema = stageInstanceSchema.extend({
 export const workflowInstanceListItemSchema = workflowInstanceSchema.extend({
   workOrderNumber: z.string().nullable(),
   customerName: z.string().nullable(),
+  // FEATURE-010 (2026-08-14, owner: "محتاج في تاب الطلبات الكبيرة يكون
+  // ظاهر إسم الطلب") — the order's item names/kinds, for display under the
+  // customer name on each card.
+  itemNames: z.array(z.string()),
 });
 
 /**

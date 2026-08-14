@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Clock } from 'lucide-react';
-import type { AttendanceEntry } from '@cleopatra/shared';
+import { Clock, MapPin } from 'lucide-react';
+import type { AttendanceEntry, FieldAssignment } from '@cleopatra/shared';
 import { apiGet, apiPost } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,6 +8,55 @@ import type { DashboardWidgetDefinition } from '../types';
 
 function time(iso: string) {
   return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * FEATURE-013 (2026-08-14, owner: "لما يفتح اللوكيشن ويأكد انه في المكان
+ * ساعتها اسجله حضوره") — shown only when the employee has a PENDING field
+ * assignment for today. Success/failure both come back from the same
+ * `confirm` call — a `TOO_FAR` error carries the actual distance so the
+ * message is concrete, not just "rejected".
+ */
+function FieldAssignmentCard({ assignment, onConfirmed }: { assignment: FieldAssignment; onConfirmed: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const confirm = () => {
+    setError(null);
+    if (!navigator.geolocation) {
+      setError('المتصفح لا يدعم تحديد الموقع');
+      return;
+    }
+    setConfirming(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        apiPost(`/api/attendance/field-assignments/${assignment.id}/confirm`, {
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        })
+          .then(onConfirmed)
+          .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تأكيد الموقع'))
+          .finally(() => setConfirming(false));
+      },
+      () => {
+        setError('لازم تسمح بمشاركة الموقع عشان تأكد وصولك');
+        setConfirming(false);
+      },
+    );
+  };
+
+  return (
+    <div className="border-border bg-muted/30 space-y-2 rounded-md border p-3 text-sm">
+      <div className="flex items-center gap-1.5 font-medium">
+        <MapPin className="size-4" />
+        <span>عندك مهمة النهارده: {assignment.locationLabel}</span>
+      </div>
+      {error && <p className="text-destructive text-xs">{error}</p>}
+      <Button size="sm" disabled={confirming} onClick={confirm}>
+        {confirming ? 'جارٍ التأكيد…' : 'تأكيد وصولي'}
+      </Button>
+    </div>
+  );
 }
 
 /**
@@ -22,11 +71,15 @@ function AttendanceWidgetComponent() {
   const [entry, setEntry] = useState<AttendanceEntry | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [assignments, setAssignments] = useState<FieldAssignment[]>([]);
 
   const load = () => {
     apiGet<AttendanceEntry | null>('/api/attendance/my-today')
       .then(setEntry)
       .catch(() => setEntry(null));
+    apiGet<FieldAssignment[]>('/api/attendance/field-assignments/my-today')
+      .then(setAssignments)
+      .catch(() => undefined);
   };
 
   useEffect(load, []);
@@ -63,6 +116,13 @@ function AttendanceWidgetComponent() {
         <Clock className="text-muted-foreground size-4" />
         <span className="text-sm font-bold">الحضور والانصراف</span>
       </div>
+      {assignments.length > 0 && (
+        <div className="mb-3 space-y-2">
+          {assignments.map((a) => (
+            <FieldAssignmentCard key={a.id} assignment={a} onConfirmed={load} />
+          ))}
+        </div>
+      )}
       {entry === undefined ? (
         <p className="text-muted-foreground text-sm">جارٍ التحميل…</p>
       ) : (

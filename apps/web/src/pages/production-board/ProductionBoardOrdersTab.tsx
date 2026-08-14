@@ -103,6 +103,9 @@ export function ProductionBoardOrdersTab() {
                   <p className="text-muted-foreground text-xs">
                     {instance.customerName ?? '—'} · {instance.templateName}
                   </p>
+                  {instance.itemNames.length > 0 && (
+                    <p className="text-muted-foreground text-xs">{instance.itemNames.join('، ')}</p>
+                  )}
                 </div>
                 <Link
                   to={`/production-board/timeline/${instance.id}?workOrderNumber=${encodeURIComponent(instance.workOrderNumber ?? '')}&customerName=${encodeURIComponent(instance.customerName ?? '')}`}

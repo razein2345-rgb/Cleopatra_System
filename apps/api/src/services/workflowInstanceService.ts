@@ -1,6 +1,7 @@
 import type { Prisma } from '../generated/prisma/client.js';
 import type {
   AdvanceWorkflowInstanceInput,
+  ProductionTrack,
   StageInstance,
   StageInstanceStatus,
   UpdateStageInstanceInput,
@@ -438,12 +439,15 @@ export async function advanceWorkflowInstance(
 }
 
 /**
- * The Queue View capability (FEATURE-004 00_REQUIREMENTS.md §8/§12) —
- * open `StageInstance` rows for one department, ordered by priority then
- * due date. Always internal (production-floor only; no customer caller
- * ever requests a department queue).
+ * The Queue View capability (FEATURE-004 00_REQUIREMENTS.md §8/§12) — open
+ * `StageInstance` rows for one or more departments, ordered by priority
+ * then due date. Always internal (production-floor only; no customer
+ * caller ever requests a department queue). Shared by `getDepartmentQueue`
+ * (single department, the original per-department view) and
+ * `getTrackQueue` (FEATURE-010, 2026-08-14 — لوحة الإنتاج's "الأقسام" sub-
+ * tabs, one request per production track instead of per department).
  */
-export async function getDepartmentQueue(departmentId: string): Promise<WorkflowQueueItem[]> {
+async function queryWorkflowQueue(departmentId: string | { in: string[] }): Promise<WorkflowQueueItem[]> {
   const rows = await prisma.stageInstance.findMany({
     where: { departmentId, status: { in: ['WAITING', 'IN_PROGRESS'] } },
     include: {
@@ -468,10 +472,54 @@ export async function getDepartmentQueue(departmentId: string): Promise<Workflow
   }));
 }
 
+export async function getDepartmentQueue(departmentId: string): Promise<WorkflowQueueItem[]> {
+  return queryWorkflowQueue(departmentId);
+}
+
+/**
+ * FEATURE-010 (2026-08-14) — one queue for every department belonging to a
+ * production track at once (e.g. أوفست = تجهيز زنك + طباعة + ترقيم + تقفيل
+ * combined), instead of the frontend firing one request per department and
+ * merging client-side. `accessibleDepartmentIds` is the same
+ * `accessibleDepartmentScope(auth)` result `getWorkflowDashboardSummary`
+ * already uses — `'all'` means no filtering (Super Admin / `work-orders.*`),
+ * otherwise the track's departments are narrowed to only the ones this
+ * caller may see (an empty intersection is simply an empty queue, not an
+ * error — same precedent as `canAccessDepartment`'s own doc comment).
+ */
+export async function getTrackQueue(
+  productionTrack: ProductionTrack,
+  accessibleDepartmentIds: string[] | 'all',
+): Promise<WorkflowQueueItem[]> {
+  const departments = await prisma.department.findMany({
+    where: { productionTrack },
+    select: { id: true },
+  });
+  let departmentIds = departments.map((d) => d.id);
+  if (accessibleDepartmentIds !== 'all') {
+    const allowed = new Set(accessibleDepartmentIds);
+    departmentIds = departmentIds.filter((id) => allowed.has(id));
+  }
+  if (departmentIds.length === 0) return [];
+  return queryWorkflowQueue({ in: departmentIds });
+}
+
 const WORKFLOW_INSTANCE_LIST_INCLUDE = {
   ...WORKFLOW_INSTANCE_INCLUDE,
   workOrder: {
-    select: { workOrderNumber: true, order: { select: { partner: { select: { nameAr: true } } } } },
+    select: {
+      workOrderNumber: true,
+      order: {
+        select: {
+          partner: { select: { nameAr: true } },
+          // FEATURE-010 (2026-08-14, owner: "محتاج في تاب الطلبات... يكون
+          // ظاهر... اسم الصنف") — item.modelName is the human-entered
+          // product name; kind (loose/notebook/product/service/…) is the
+          // fallback for items that never got one.
+          items: { select: { modelName: true, kind: true } },
+        },
+      },
+    },
   },
 } satisfies Prisma.WorkflowInstanceInclude;
 
@@ -497,6 +545,7 @@ export async function listWorkflowInstances(status: WorkflowInstanceStatus): Pro
     ...mapWorkflowInstanceToDto(row, true),
     workOrderNumber: row.workOrder?.workOrderNumber ?? null,
     customerName: row.workOrder?.order.partner.nameAr ?? null,
+    itemNames: row.workOrder?.order.items.map((i) => i.modelName || i.kind || 'صنف') ?? [],
   }));
 }
 
