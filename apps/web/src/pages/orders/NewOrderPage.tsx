@@ -26,21 +26,21 @@ import type {
 } from '@cleopatra/shared';
 import {
   calculateBoardsCost,
-  calculateDigitalCost,
+  calculateDigitalMultiComponentCost,
   calculateEnvelopeCost,
   calculateFolderCost,
   calculateLoosePaperCost,
-  calculateNotebookCost,
+  calculateNotebookMultiMaterialCost,
   calculateProductOrServiceCost,
   suggestYield,
 } from '@cleopatra/shared';
+import { ORDER_ITEM_CATEGORIES, PRODUCTION_TRACK_LABELS, resolveProductionTrackForTab } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { PartnerCombobox } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
-import { ORDER_ITEM_CATEGORIES } from '@/lib/orders/itemCategories';
 
 type PricingKind = OrderItemPricingInput['kind'];
 /** Which document the unified الطلبات والمستندات screen saves the same item set as (owner, 2026-08-10 — one creation flow, two destinations). Work Order generation is a follow-on action on an already-created Invoice, not a third save target — a WorkOrder always wraps an existing Order (see `createWorkOrder`'s own doc comment). */
@@ -63,20 +63,22 @@ const KIND_LABELS: Record<PricingKind, string> = {
   INVENTORY_RETAIL: 'بضاعة من المخزون',
 };
 
-/** FEATURE-007 WF-B — matches `WorkflowTemplate.code` for the 4 tracks seeded by WF-A; the customer's chosen track routes the eventual Work Order, never inferred from item kind (owner, 2026-08-12). */
-const PRODUCTION_TRACK_LABELS: Record<ProductionTrack, string> = {
-  OFFSET: 'أوفست',
-  DIGITAL: 'ديجيتال',
-  BOARDS_SIGNAGE: 'لوحات وإعلانات',
-  OTHER_PRODUCTS: 'منتجات أخرى',
-  // FEATURE-009 (2026-08-13) — reserved tracks, no WorkflowTemplate exists
-  // for either yet; createWorkOrder already handles that gracefully
-  // (400 NO_PUBLISHED_TEMPLATE) if picked before one is defined.
-  SERVICES: 'خدمات',
-  READY_PRODUCTS: 'منتجات جاهزة',
-  SUBLIMATION_GIFTS: 'طباعة حرارية وهدايا',
+/**
+ * "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — which tracks' seeded
+ * WorkflowTemplate starts with a skippable Design stage, i.e. which
+ * tracks the "يحتاج تصميم؟" toggle is even meaningful for. Hardcoded here
+ * rather than fetched (would need an extra API round-trip just for this
+ * one UI toggle) — must be kept in sync with `seed.ts`'s stage `canSkip`
+ * flags if a track's template changes later.
+ */
+const SKIPPABLE_DESIGN_TRACKS: ReadonlySet<ProductionTrack> = new Set(['OFFSET', 'DIGITAL', 'SUBLIMATION_GIFTS']);
+
+/** Multi-material notebooks (2026-08-17) — Arabic labels for the fixed NOTEBOOK material roles, shown on the live preview and (via WorkOrderDocumentPage) the printed job-card. */
+const NOTEBOOK_MATERIAL_ROLE_LABELS: Record<string, string> = {
+  ORIGINAL: 'الأصل',
+  COPY_1: 'الصورة',
+  COPY_2: 'الصورة التانية',
 };
-const PRODUCTION_TRACK_OPTIONS = Object.keys(PRODUCTION_TRACK_LABELS) as ProductionTrack[];
 
 const BOARD_MATERIAL_LABELS: Record<BoardMaterial, string> = {
   BANNER: 'بنر',
@@ -112,6 +114,35 @@ const EXTRA_SERVICE_DEFS = [
   { enabledKey: 'sampleEnabled', amountKey: 'sampleAmount', label: 'عينة / نموذج' },
 ] as const;
 
+/** One DIGITAL component's own draft fields (2026-08-17) — a magazine's cover/interior each get their own size/Yield/paper, computed fully independently then summed. */
+interface DraftDigitalComponent {
+  key: string;
+  label: string;
+  inventoryItemId: string;
+  widthCm: string;
+  heightCm: string;
+  quantity: string;
+  yieldPerQuarter: string;
+  sellophaneEnabled: boolean;
+  boshrPricePerPiece: string;
+}
+
+let digitalComponentKeySeq = 0;
+function emptyDigitalComponent(label = ''): DraftDigitalComponent {
+  digitalComponentKeySeq += 1;
+  return {
+    key: `digital-component-${digitalComponentKeySeq}`,
+    label,
+    inventoryItemId: '',
+    widthCm: '',
+    heightCm: '',
+    quantity: '1',
+    yieldPerQuarter: '',
+    sellophaneEnabled: false,
+    boshrPricePerPiece: '0',
+  };
+}
+
 /**
  * One flat draft shape covering every pricing kind's fields — simpler to
  * bind form inputs against than a discriminated union while the user is
@@ -146,6 +177,15 @@ interface DraftItem {
   contentType: 'ORIGINAL_ONLY' | 'ORIGINAL_PLUS_COPIES';
   copies: string;
   bindingPricePerNotebook: string;
+  /**
+   * Multi-material notebooks (2026-08-17, owner: "الاصل خامة والصورة خامة
+   * والصورة التالته خامة تالتة") — empty means "same paper as the
+   * original" (`inventoryItemId` above), matching today's single-material
+   * behavior exactly. Only shown/used when `contentType ===
+   * 'ORIGINAL_PLUS_COPIES'` and `copies` is high enough for that role to exist.
+   */
+  copy1InventoryItemId: string;
+  copy2InventoryItemId: string;
   // ENVELOPE
   readyEnvelopePricePerPiece: string;
   // FOLDER
@@ -160,9 +200,10 @@ interface DraftItem {
   heightCm: string;
   hasDesign: boolean;
   hasSellophane: boolean;
-  // DIGITAL — reuses inventoryItemId (paper)/widthCm+heightCm (piece size)/sellophaneEnabled above.
-  yieldPerQuarter: string;
-  boshrPricePerPiece: string;
+  // DIGITAL — multi-component (2026-08-17, owner: "الغلاف بتاعها خامة
+  // والداخلي خامة تانية"). Always at least one component; each is priced
+  // fully independently and summed (see `calculateDigitalMultiComponentCost`).
+  digitalComponents: DraftDigitalComponent[];
   // نسبة الربح — تعديل يدوي اختياري بدل النسبة الافتراضية من الإعدادات (LOOSE_PAPER/NOTEBOOK/ENVELOPE/FOLDER فقط — BOARDS/PRODUCT/SERVICE لا هامش ربح فيهم أصلًا).
   profitPercentEnabled: boolean;
   profitPercentOverride: string;
@@ -209,6 +250,8 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     contentType: 'ORIGINAL_ONLY',
     copies: '0',
     bindingPricePerNotebook: '0',
+    copy1InventoryItemId: '',
+    copy2InventoryItemId: '',
     readyEnvelopePricePerPiece: '0',
     sellophaneEnabled: false,
     riza: '',
@@ -220,8 +263,7 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     heightCm: '',
     hasDesign: false,
     hasSellophane: false,
-    yieldPerQuarter: '',
-    boshrPricePerPiece: '0',
+    digitalComponents: [emptyDigitalComponent()],
     profitPercentEnabled: false,
     profitPercentOverride: '0',
     baggingEnabled: false,
@@ -287,8 +329,18 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...extra,
         ...margin,
       };
-    case 'NOTEBOOK':
+    case 'NOTEBOOK': {
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.notebookQuantity || !d.colorCount) return null;
+      const copies = d.contentType === 'ORIGINAL_PLUS_COPIES' ? toNum(d.copies) : undefined;
+      // Multi-material (2026-08-17) — empty picker = "same paper as the
+      // original", so it's simply omitted rather than sent as an override.
+      const materials: { role: 'COPY_1' | 'COPY_2'; inventoryItemId: string }[] = [];
+      if (d.contentType === 'ORIGINAL_PLUS_COPIES' && (copies ?? 0) >= 1 && d.copy1InventoryItemId) {
+        materials.push({ role: 'COPY_1', inventoryItemId: d.copy1InventoryItemId });
+      }
+      if (d.contentType === 'ORIGINAL_PLUS_COPIES' && (copies ?? 0) >= 2 && d.copy2InventoryItemId) {
+        materials.push({ role: 'COPY_2', inventoryItemId: d.copy2InventoryItemId });
+      }
       return {
         kind: 'NOTEBOOK',
         sizeFamilyKey: d.sizeFamilyKey,
@@ -299,11 +351,13 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         numberingStartNumber: toOptionalNum(d.numberingStartNumber),
         notebookQuantity: toNum(d.notebookQuantity),
         contentType: d.contentType,
-        copies: d.contentType === 'ORIGINAL_PLUS_COPIES' ? toNum(d.copies) : undefined,
+        copies,
         bindingPricePerNotebook: toNum(d.bindingPricePerNotebook),
+        materials: materials.length ? materials : undefined,
         ...extra,
         ...margin,
       };
+    }
     case 'ENVELOPE':
       if (!d.quantity || !d.colorCount) return null;
       return {
@@ -346,20 +400,27 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         hasSellophane: d.material === 'VINYL_NORMAL' || d.material === 'VINYL_PRINT_CUT' ? d.hasSellophane : undefined,
         ...extra,
       };
-    case 'DIGITAL':
-      if (!d.inventoryItemId || !d.widthCm || !d.heightCm || !d.quantity || !d.yieldPerQuarter) return null;
+    case 'DIGITAL': {
+      const components = d.digitalComponents
+        .filter((c) => c.inventoryItemId && c.widthCm && c.heightCm && c.quantity && c.yieldPerQuarter)
+        .map((c, idx) => ({
+          label: c.label.trim() || `المكوّن ${idx + 1}`,
+          inventoryItemId: c.inventoryItemId,
+          pieceWidthCm: toNum(c.widthCm),
+          pieceHeightCm: toNum(c.heightCm),
+          quantity: toNum(c.quantity),
+          yieldPerQuarter: toNum(c.yieldPerQuarter),
+          sellophaneEnabled: c.sellophaneEnabled,
+          boshrPricePerPiece: toOptionalNum(c.boshrPricePerPiece),
+        }));
+      if (components.length === 0 || components.length !== d.digitalComponents.length) return null;
       return {
         kind: 'DIGITAL',
-        inventoryItemId: d.inventoryItemId,
-        pieceWidthCm: toNum(d.widthCm),
-        pieceHeightCm: toNum(d.heightCm),
-        quantity: toNum(d.quantity),
-        yieldPerQuarter: toNum(d.yieldPerQuarter),
-        sellophaneEnabled: d.sellophaneEnabled,
-        boshrPricePerPiece: toOptionalNum(d.boshrPricePerPiece),
+        components,
         ...extra,
         ...margin,
       };
+    }
     case 'PRODUCT':
     case 'SERVICE':
       if (!d.quantity) return null;
@@ -406,6 +467,13 @@ interface PricingPreviewResult {
   // في المتر"). No pricing-formula change, purely display.
   piecesPerMeter?: number;
   metersNeeded?: number;
+  // Multi-material NOTEBOOK (2026-08-17) — one entry per material actually
+  // in use (just ORIGINAL when no copy overrides are set).
+  materials?: { role: string; sheetsNeeded: number; sheetPrice: number; paperCost: number }[];
+  // Multi-component DIGITAL (2026-08-17) — `calculateDigitalMultiComponentCost`'s
+  // result has no single `costPerPiece`/`fitsInQuarter` any more (each
+  // component has its own); this list replaces those single-value fields.
+  components?: { label: string; fitsInQuarter: boolean; unitsNeeded: number | null; costPerPiece: number; sheetsNeeded: number }[];
 }
 
 /** Client-side mirror of `orderService.ts`'s `computeItemPricing` dispatch — same pure functions, used only for the live preview; the server always recomputes authoritatively on submit. */
@@ -447,22 +515,32 @@ function previewItemTotal(
       case 'NOTEBOOK': {
         const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
         if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق', result: null };
-        const r = calculateNotebookCost({
-          familyKey: pricing.sizeFamilyKey,
-          realLabel: pricing.realSizeLabel,
-          notebookQuantity: pricing.notebookQuantity,
-          contentType: pricing.contentType,
-          copies: pricing.copies,
-          colorCount: pricing.colorCount,
-          isNewDesign: pricing.isNewDesign,
-          numbering: pricing.numberingStartNumber ? { startNumber: pricing.numberingStartNumber } : undefined,
-          bindingPricePerNotebook: pricing.bindingPricePerNotebook,
-          sheetPrice,
-          families,
-          settings: ctx.pricingConstants,
-          extraCosts,
-          profitPercentOverride: pricing.profitPercentOverride,
+        // Multi-material (2026-08-17) — same orchestration the server uses,
+        // for a live preview that matches what submitting will actually price.
+        const materialOverrides = (pricing.materials ?? []).map((m) => {
+          const overridePrice = ctx.sheetPriceByInventoryItemId.get(m.inventoryItemId);
+          if (overridePrice === undefined) throw new Error('الورق المختار للصورة غير مرتبط بسعر');
+          return { role: m.role, sheetPrice: overridePrice };
         });
+        const r = calculateNotebookMultiMaterialCost(
+          {
+            familyKey: pricing.sizeFamilyKey,
+            realLabel: pricing.realSizeLabel,
+            notebookQuantity: pricing.notebookQuantity,
+            contentType: pricing.contentType,
+            copies: pricing.copies,
+            colorCount: pricing.colorCount,
+            isNewDesign: pricing.isNewDesign,
+            numbering: pricing.numberingStartNumber ? { startNumber: pricing.numberingStartNumber } : undefined,
+            bindingPricePerNotebook: pricing.bindingPricePerNotebook,
+            sheetPrice,
+            families,
+            settings: ctx.pricingConstants,
+            extraCosts,
+            profitPercentOverride: pricing.profitPercentOverride,
+          },
+          materialOverrides.length ? materialOverrides : undefined,
+        );
         return { total: r.total, error: null, result: r };
       }
       case 'ENVELOPE': {
@@ -514,20 +592,31 @@ function previewItemTotal(
         return { total: r.total, error: null, result: r };
       }
       case 'DIGITAL': {
-        const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
-        if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق', result: null };
-        const r = calculateDigitalCost({
-          pieceWidthCm: pricing.pieceWidthCm,
-          pieceHeightCm: pricing.pieceHeightCm,
-          quantity: pricing.quantity,
-          yieldPerQuarter: pricing.yieldPerQuarter,
-          sheetPrice,
-          sellophaneEnabled: pricing.sellophaneEnabled,
-          boshrPricePerPiece: pricing.boshrPricePerPiece,
-          settings: ctx.digitalConstants,
-          extraCosts,
-          profitPercentOverride: pricing.profitPercentOverride,
+        // Multi-component (2026-08-17) — each component priced fully
+        // independently then summed, same orchestration the server uses.
+        const componentInputs = pricing.components.map((c) => {
+          const sheetPrice = ctx.sheetPriceByInventoryItemId.get(c.inventoryItemId);
+          if (sheetPrice === undefined) throw new Error('أحد المكونات غير مرتبط بسعر ورق');
+          return {
+            label: c.label,
+            inventoryItemId: c.inventoryItemId,
+            pieceWidthCm: c.pieceWidthCm,
+            pieceHeightCm: c.pieceHeightCm,
+            quantity: c.quantity,
+            yieldPerQuarter: c.yieldPerQuarter,
+            sheetPrice,
+            sellophaneEnabled: c.sellophaneEnabled,
+            boshrPricePerPiece: c.boshrPricePerPiece,
+            settings: ctx.digitalConstants,
+            // extraCosts/profitPercentOverride apply once at the whole-item
+            // level (see `calculateDigitalMultiComponentCost`'s own doc
+            // comment) — only the first component carries them here.
+            extraCosts: 0,
+            profitPercentOverride: pricing.profitPercentOverride,
+          };
         });
+        if (componentInputs[0]) componentInputs[0].extraCosts = extraCosts;
+        const r = calculateDigitalMultiComponentCost(componentInputs);
         return { total: r.total, error: null, result: r };
       }
       case 'PRODUCT':
@@ -565,7 +654,9 @@ function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Se
     case 'BOARDS':
       return `${d.itemType || BOARD_MATERIAL_LABELS[d.material]} — ${d.widthCm}×${d.heightCm} سم — ${d.quantity} قطعة`;
     case 'DIGITAL':
-      return `${d.itemType || KIND_LABELS.DIGITAL} — ${d.widthCm}×${d.heightCm} سم — ${d.quantity} قطعة`;
+      return `${d.itemType || KIND_LABELS.DIGITAL} — ${d.digitalComponents
+        .map((c) => `${c.label || 'مكوّن'} ${c.widthCm}×${c.heightCm} سم × ${c.quantity}`)
+        .join(' + ')}`;
     case 'PRODUCT':
       return `${readyProducts.find((p) => p.id === d.readyProductId)?.name ?? d.itemType} × ${d.quantity}`;
     case 'SERVICE':
@@ -606,6 +697,23 @@ interface StoredBreakdown {
   costPerPiece?: number;
   boshrCostPerPiece?: number;
   extraCosts?: number;
+  // Multi-material NOTEBOOK (2026-08-17) — COPY_1/COPY_2 overrides (and
+  // ORIGINAL itself) frozen by `pricingEngineService.ts`'s NOTEBOOK case.
+  materials?: { role: string; inventoryItemId: string; sheetsNeeded: number; sheetPrice: number; paperName: string | null }[];
+  // Multi-component DIGITAL (2026-08-17) — replaces the single
+  // pieceWidthCm/pieceHeightCm/yieldPerQuarter/... fields above for DIGITAL
+  // specifically; `inferStoredKind` checks for this array's presence
+  // instead of the old singular `fitsInQuarter` marker.
+  components?: {
+    label: string;
+    inventoryItemId: string;
+    pieceWidthCm: number;
+    pieceHeightCm: number;
+    quantity: number;
+    yieldPerQuarter: number;
+    sellophaneEnabled?: boolean | null;
+    boshrPricePerPiece?: number | null;
+  }[];
   notes?: string | null;
   /** SERVICE-kind only — "نطاق العمل", frozen into the breakdown by `orderService.ts`/`convertQuotation` (OrderItem has no dedicated column, unlike QuotationItem). */
   description?: string | null;
@@ -639,8 +747,10 @@ interface StoredBreakdown {
 function inferStoredKind(sizeFamilyKey: string | null, breakdown: StoredBreakdown): PricingKind | null {
   if (breakdown.kind === 'PRODUCT' || breakdown.kind === 'SERVICE' || breakdown.kind === 'INVENTORY_RETAIL') return breakdown.kind;
   if ('material' in breakdown) return 'BOARDS';
-  // Checked before FOLDER — both freeze `sellophaneEnabled`, but only DIGITAL freezes `fitsInQuarter`.
-  if ('fitsInQuarter' in breakdown) return 'DIGITAL';
+  // Checked before FOLDER — both freeze `sellophaneEnabled`, but only
+  // DIGITAL freezes a `components` array (2026-08-17, multi-component —
+  // was `'fitsInQuarter' in breakdown`, which moved inside each component).
+  if (Array.isArray(breakdown.components)) return 'DIGITAL';
   if ('readyEnvelopePricePerPiece' in breakdown) return 'ENVELOPE';
   if ('contentType' in breakdown) return 'NOTEBOOK';
   if ('sellophaneEnabled' in breakdown) return 'FOLDER';
@@ -671,8 +781,13 @@ function reconstructPricingInput(
         sides: b.sides === 2 ? 2 : 1,
         ...extra,
       };
-    case 'NOTEBOOK':
+    case 'NOTEBOOK': {
       if (!sizeFamilyKey || !realSizeLabel || !inventoryItemId) return null;
+      // Multi-material (2026-08-17) — only COPY_1/COPY_2 become an
+      // override; ORIGINAL's own material is already `inventoryItemId` above.
+      const materials = (b.materials ?? [])
+        .filter((m): m is typeof m & { role: 'COPY_1' | 'COPY_2' } => m.role === 'COPY_1' || m.role === 'COPY_2')
+        .map((m) => ({ role: m.role, inventoryItemId: m.inventoryItemId }));
       return {
         kind: 'NOTEBOOK',
         sizeFamilyKey,
@@ -685,8 +800,10 @@ function reconstructPricingInput(
         contentType: b.contentType ?? 'ORIGINAL_ONLY',
         copies: b.copies ?? undefined,
         bindingPricePerNotebook: b.quantity ? (b.bindingCost ?? 0) / b.quantity : 0,
+        materials: materials.length ? materials : undefined,
         ...extra,
       };
+    }
     case 'ENVELOPE':
       return {
         kind: 'ENVELOPE',
@@ -721,19 +838,28 @@ function reconstructPricingInput(
         hasSellophane: b.hasSellophane ?? undefined,
         ...extra,
       };
-    case 'DIGITAL':
-      if (!inventoryItemId) return null;
+    case 'DIGITAL': {
+      // Multi-component (2026-08-17) — each component's full pricing input
+      // was echoed back into `breakdown.components` by
+      // `pricingEngineService.ts`, so it's read straight from there rather
+      // than through the single `inventoryItemId` param (meaningless here —
+      // DIGITAL items can reference several materials, one per component).
+      if (!b.components?.length) return null;
       return {
         kind: 'DIGITAL',
-        inventoryItemId,
-        pieceWidthCm: b.pieceWidthCm ?? 1,
-        pieceHeightCm: b.pieceHeightCm ?? 1,
-        quantity: b.quantity ?? 1,
-        yieldPerQuarter: b.yieldPerQuarter ?? 1,
-        sellophaneEnabled: b.sellophaneEnabled ?? false,
-        boshrPricePerPiece: b.boshrCostPerPiece ?? undefined,
+        components: b.components.map((c) => ({
+          label: c.label,
+          inventoryItemId: c.inventoryItemId,
+          pieceWidthCm: c.pieceWidthCm,
+          pieceHeightCm: c.pieceHeightCm,
+          quantity: c.quantity,
+          yieldPerQuarter: c.yieldPerQuarter,
+          sellophaneEnabled: c.sellophaneEnabled ?? false,
+          boshrPricePerPiece: c.boshrPricePerPiece ?? undefined,
+        })),
         ...extra,
       };
+    }
     case 'PRODUCT':
     case 'SERVICE':
       return { kind, quantity: b.quantity ?? 1, ...extra };
@@ -768,7 +894,7 @@ interface ReconstructedLine {
 
 /** Shared by both edit-Order and edit-Quotation modes — the two item shapes carry the same fields relevant here. */
 function reconstructCartLine(
-  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null },
+  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; productionTrack?: ProductionTrack | null },
   readyProducts: ReadyProduct[],
   services: Service[],
   inventoryItems: InventoryItem[],
@@ -811,6 +937,7 @@ function reconstructCartLine(
       attachmentUrl: b.referenceImageUrl ?? undefined,
       pricing,
       total: item.itemTotal ?? 0,
+      productionTrack: item.productionTrack ?? null,
     },
     warning: null,
   };
@@ -904,18 +1031,21 @@ export function NewOrderPage() {
             مستند جديد آخر
           </Button>
         </div>
-        {/* FEATURE-016 (2026-08-16) — an invoice with a published-template
-            production track now enters production automatically (see
-            orderService.createOrder), so `order.workOrderId` is usually
-            already set here; only fall back to the manual panel when it
-            isn't (no track, or no published template yet for it). */}
-        {order.workOrderId ? (
-          <Button type="button" variant="secondary" onClick={() => navigate(`/work-orders/${order.workOrderId}`)}>
-            طباعة أمر الشغل
-          </Button>
-        ) : (
-          <GenerateWorkOrderPanel orderId={order.id} productionTrack={order.productionTrack} />
+        {/* "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — an order can now
+            auto-create several Work Orders, one per distinct track present
+            among its items (see orderService.createOrder) — one print
+            button per Work Order, plus the manual panel below for any
+            track still missing one (no published template yet). */}
+        {order.workOrders.length > 0 && (
+          <div className="flex flex-wrap justify-center gap-2">
+            {order.workOrders.map((wo) => (
+              <Button key={wo.id} type="button" variant="secondary" onClick={() => navigate(`/work-orders/${wo.id}`)}>
+                طباعة أمر شغل {PRODUCTION_TRACK_LABELS[wo.productionTrack]}
+              </Button>
+            ))}
+          </div>
         )}
+        <GenerateWorkOrderPanel order={order} />
       </div>
     );
   }
@@ -972,20 +1102,20 @@ export function NewOrderPage() {
  * reference video's "طباعة كل أوامر الشغل" footer button now that a
  * WorkflowTemplate always exists (WF-A shipped 2026-08-12).
  */
-function GenerateWorkOrderPanel({
-  orderId,
-  productionTrack,
-}: {
-  orderId: string;
-  productionTrack: ProductionTrack | null;
-}) {
+/**
+ * "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was a single dropdown +
+ * "إنشاء" button for the whole order; now one row per track that has
+ * items resolving to it but no linked Work Order yet (its template wasn't
+ * published at save time — `READY_PRODUCTS` is the current example).
+ * Renders nothing at all once every resolvable track has a Work Order.
+ */
+function GenerateWorkOrderPanel({ order }: { order: Order }) {
   const navigate = useNavigate();
   const { can } = useAuth();
   const [templates, setTemplates] = useState<WorkflowTemplate[] | null>(null);
-  const [templateCode, setTemplateCode] = useState('');
-  const [created, setCreated] = useState<WorkOrder | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [createdByTrack, setCreatedByTrack] = useState<Partial<Record<ProductionTrack, WorkOrder>>>({});
+  const [errorByTrack, setErrorByTrack] = useState<Partial<Record<ProductionTrack, string>>>({});
+  const [submittingTrack, setSubmittingTrack] = useState<ProductionTrack | null>(null);
 
   useEffect(() => {
     if (!can('work-orders.edit')) return;
@@ -993,82 +1123,80 @@ function GenerateWorkOrderPanel({
       .then((all) => {
         // Latest *published* version per code — `createWorkOrder` resolves
         // `templateCode` to `getLatestPublishedTemplate`, so a draft-only
-        // code (never published) or an older published version isn't a
-        // valid choice here.
+        // code (never published) or an older published version doesn't
+        // count as "has a template" here.
         const latestPublishedByCode = new Map<string, WorkflowTemplate>();
         for (const t of all) {
           if (!t.publishedAt) continue;
           const existing = latestPublishedByCode.get(t.code);
           if (!existing || t.version > existing.version) latestPublishedByCode.set(t.code, t);
         }
-        const list = [...latestPublishedByCode.values()];
-        setTemplates(list);
-        // FEATURE-007 WF-B — pre-select the track chosen at order creation
-        // (still overridable below) instead of just whichever came first.
-        const preferred = productionTrack && latestPublishedByCode.has(productionTrack)
-          ? productionTrack
-          : (list[0]?.code ?? '');
-        setTemplateCode(preferred);
+        setTemplates([...latestPublishedByCode.values()]);
       })
       .catch(() => setTemplates([]));
-  }, [can, productionTrack]);
+  }, [can]);
 
   if (!can('work-orders.edit')) return null;
 
-  const generate = async () => {
-    if (!templateCode || submitting) return;
-    setError(null);
-    setSubmitting(true);
+  const linkedTracks = new Set(order.workOrders.map((w) => w.productionTrack));
+  const missingTracks = [
+    ...new Set(
+      order.items
+        .map((i) => i.productionTrack)
+        .filter((t): t is ProductionTrack => Boolean(t) && !linkedTracks.has(t as ProductionTrack)),
+    ),
+  ];
+  if (missingTracks.length === 0) return null;
+
+  const generate = async (track: ProductionTrack) => {
+    setSubmittingTrack(track);
+    setErrorByTrack((prev) => ({ ...prev, [track]: undefined }));
     try {
-      const workOrder = await apiPost<WorkOrder>('/api/work-orders', { orderId, templateCode });
-      setCreated(workOrder);
+      const workOrder = await apiPost<WorkOrder>('/api/work-orders', { orderId: order.id, templateCode: track });
+      setCreatedByTrack((prev) => ({ ...prev, [track]: workOrder }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر إنشاء أمر الشغل');
+      setErrorByTrack((prev) => ({ ...prev, [track]: err instanceof Error ? err.message : 'تعذر إنشاء أمر الشغل' }));
     } finally {
-      setSubmitting(false);
+      setSubmittingTrack(null);
     }
   };
 
-  if (created) {
-    return (
-      <div className="border-border bg-muted/30 space-y-2 rounded-xl border p-3 text-sm">
-        <p className="font-medium">تم إنشاء أمر الشغل</p>
-        <p className="text-muted-foreground">{created.workOrderNumber}</p>
-        <Button type="button" size="sm" onClick={() => navigate(`/work-orders/${created.id}`)}>
-          طباعة كل أوامر الشغل 🖶
-        </Button>
-      </div>
-    );
-  }
-
   return (
-    <div className="border-border space-y-2 rounded-xl border border-dashed p-3 text-start">
-      <p className="text-sm font-medium">إنشاء أمر شغل</p>
-      {templates === null ? (
-        <p className="text-muted-foreground text-sm">جارٍ التحميل…</p>
-      ) : templates.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          لا يوجد نموذج تدفق عمل منشور بعد — لازم يتم إعداد نماذج التدفق أولاً من إعدادات النظام.
-        </p>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={templateCode}
-            onChange={(e) => setTemplateCode(e.target.value)}
-            className="border-input bg-background rounded-md border px-3 py-2 text-sm"
-          >
-            {templates.map((t) => (
-              <option key={t.code} value={t.code}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-          <Button type="button" size="sm" disabled={submitting} onClick={() => void generate()}>
-            {submitting ? 'جارٍ الإنشاء…' : 'إنشاء أمر شغل'}
-          </Button>
-        </div>
-      )}
-      {error && <p className="text-destructive text-sm">{error}</p>}
+    <div className="space-y-2">
+      {missingTracks.map((track) => {
+        const created = createdByTrack[track];
+        if (created) {
+          return (
+            <div key={track} className="border-border bg-muted/30 space-y-2 rounded-xl border p-3 text-sm">
+              <p className="font-medium">تم إنشاء أمر شغل {PRODUCTION_TRACK_LABELS[track]}</p>
+              <p className="text-muted-foreground">{created.workOrderNumber}</p>
+              <Button type="button" size="sm" onClick={() => navigate(`/work-orders/${created.id}`)}>
+                طباعة 🖶
+              </Button>
+            </div>
+          );
+        }
+        const hasTemplate = templates?.some((t) => t.code === track);
+        return (
+          <div key={track} className="border-border space-y-2 rounded-xl border border-dashed p-3 text-start">
+            {templates === null ? (
+              <p className="text-muted-foreground text-sm">جارٍ التحميل…</p>
+            ) : !hasTemplate ? (
+              <p className="text-muted-foreground text-sm">
+                لا يوجد قالب منشور لمسار "{PRODUCTION_TRACK_LABELS[track]}" بعد — لازم يتم إعداده أولاً من إعدادات النظام.
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium">أصناف {PRODUCTION_TRACK_LABELS[track]} محتاجة أمر شغل</span>
+                <Button type="button" size="sm" disabled={submittingTrack === track} onClick={() => void generate(track)}>
+                  {submittingTrack === track ? 'جارٍ الإنشاء…' : 'إنشاء أمر شغل'}
+                </Button>
+              </div>
+            )}
+            {errorByTrack[track] && <p className="text-destructive text-sm">{errorByTrack[track]}</p>}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1090,6 +1218,8 @@ interface CartLine {
   attachmentUrl?: string;
   pricing: OrderItemPricingInput;
   total: number;
+  /** "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — stamped from the composer tab at add-time (see `addToCart`), never manually picked. Null = this item never enters production (INVENTORY_RETAIL). */
+  productionTrack: ProductionTrack | null;
 }
 
 interface PaymentRow {
@@ -1144,13 +1274,14 @@ function NewOrderForm({
     editOrder?.partnerId ?? editQuotation?.partnerId ?? presetPartnerId ?? partners[0]?.id ?? '',
   );
   const [branchId, setBranchId] = useState(editOrder?.branchId ?? editQuotation?.branchId ?? branches[0]?.id ?? '');
-  const [productionTrack, setProductionTrack] = useState<ProductionTrack | ''>(editOrder?.productionTrack ?? '');
-  // FEATURE-010 (2026-08-14, owner: "عند إنشاء الطلب يجب أن يكون واضحًا هل:
-  // Requires Design = نعم / لا") — only meaningful for Offset/Digital today
-  // (the only tracks with a published v2 template whose first stage is a
-  // skippable design stage); defaults true (existing behavior: every order
-  // goes through design unless told otherwise).
-  const [requiresDesign, setRequiresDesign] = useState(editOrder?.requiresDesign ?? true);
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16, owner: "الغيها خالص —
+  // النظام يحدد لوحده") — supersedes the old single order-level
+  // productionTrack dropdown + one global requiresDesign toggle. Each cart
+  // item now stamps its own track automatically (see `addToCart`); this
+  // state is just "needs design?" per resolved track present in the cart,
+  // defaulting to `true` (unchanged behavior) for any track not explicitly
+  // toggled off — see the dynamic toggle group in the JSX below.
+  const [requiresDesignByTrack, setRequiresDesignByTrack] = useState<Partial<Record<ProductionTrack, boolean>>>({});
   const [deliveryDate, setDeliveryDate] = useState(editOrder?.deliveryDate?.slice(0, 10) ?? '');
   const [validUntil, setValidUntil] = useState(() => {
     if (editQuotation) return editQuotation.validUntil?.slice(0, 10) ?? '';
@@ -1201,7 +1332,7 @@ function NewOrderForm({
   // therefore doesn't warn either — only a real, human-made edit does.
   // Native `beforeunload` only fires on real page unload, not in-app
   // `navigate()` calls, so a successful save never triggers it.
-  const trackedFields = { cart, payments, partnerId, branchId, productionTrack, deliveryDate, discountPercent, vatOn, customerNotes, internalNotes };
+  const trackedFields = { cart, payments, partnerId, branchId, requiresDesignByTrack, deliveryDate, discountPercent, vatOn, customerNotes, internalNotes };
   const initialSnapshot = useRef<string | undefined>(undefined);
   if (initialSnapshot.current === undefined) {
     initialSnapshot.current = JSON.stringify(trackedFields);
@@ -1210,7 +1341,7 @@ function NewOrderForm({
   useEffect(() => {
     setHasUnsavedChanges(JSON.stringify(trackedFields) !== initialSnapshot.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, payments, partnerId, branchId, productionTrack, deliveryDate, discountPercent, vatOn, customerNotes, internalNotes]);
+  }, [cart, payments, partnerId, branchId, requiresDesignByTrack, deliveryDate, discountPercent, vatOn, customerNotes, internalNotes]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return;
@@ -1245,6 +1376,10 @@ function NewOrderForm({
   );
 
   const draftPreview = useMemo(() => previewItemTotal(draft, ctx), [draft, ctx]);
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — the resolved tracks
+  // actually present in the cart right now, used to render one "يحتاج
+  // تصميم؟" toggle per track instead of the old single global one.
+  const tracksInCart = [...new Set(cart.map((l) => l.productionTrack).filter((t): t is ProductionTrack => Boolean(t)))];
   const subtotal = cart.reduce((sum, line) => sum + line.total, 0);
   const discountNum = toNum(discountPercent);
   const afterDiscount = subtotal * (1 - discountNum / 100);
@@ -1332,6 +1467,7 @@ function NewOrderForm({
       attachmentUrl: draft.attachmentUrl || undefined,
       pricing,
       total: preview.total,
+      productionTrack: resolveProductionTrackForTab(activeParentId),
     };
     setCart((prev) => [...prev, line]);
     setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER'));
@@ -1377,6 +1513,7 @@ function NewOrderForm({
           summary: `${item.name} × 1`,
           pricing,
           total: calculateProductOrServiceCost(salePrice, 1, 0),
+          productionTrack: null,
         };
         return [...prev, newLine];
       });
@@ -1428,6 +1565,7 @@ function NewOrderForm({
       serviceId: line.serviceId,
       attachmentId: line.attachmentId,
       pricing: line.pricing,
+      productionTrack: line.productionTrack,
     }));
 
     setSubmitting(intent);
@@ -1467,8 +1605,7 @@ function NewOrderForm({
           deliveryDate: deliveryDate ? new Date(deliveryDate).toISOString() : null,
           customerNotes: customerNotes || null,
           internalNotes: internalNotes || null,
-          productionTrack: productionTrack || null,
-          requiresDesign,
+          requiresDesignByTrack,
           items: outputItems,
         };
         const order = await apiPut<Order>(`/api/orders/${editOrder.id}`, input);
@@ -1485,8 +1622,7 @@ function NewOrderForm({
           deliveryDate: deliveryDate ? new Date(deliveryDate).toISOString() : undefined,
           customerNotes: customerNotes || undefined,
           internalNotes: internalNotes || undefined,
-          productionTrack: productionTrack || undefined,
-          requiresDesign,
+          requiresDesignByTrack,
           items: outputItems,
           payments: paymentInputs.length ? paymentInputs : undefined,
         };
@@ -1797,31 +1933,23 @@ function NewOrderForm({
                     className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                   />
                 </label>
-                <label className="space-y-1 text-sm">
-                  <span className="text-muted-foreground">المسار الإنتاجي (اختياري)</span>
-                  <select
-                    value={productionTrack}
-                    onChange={(e) => setProductionTrack(e.target.value as ProductionTrack | '')}
-                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                  >
-                    <option value="">— بدون —</option>
-                    {PRODUCTION_TRACK_OPTIONS.map((t) => (
-                      <option key={t} value={t}>
-                        {PRODUCTION_TRACK_LABELS[t]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {(productionTrack === 'OFFSET' || productionTrack === 'DIGITAL') && (
-                  <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={requiresDesign}
-                      onChange={(e) => setRequiresDesign(e.target.checked)}
-                    />
-                    <span>يحتاج تصميم؟</span>
-                  </label>
-                )}
+                {/* "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16, owner: "الغيها
+                    خالص — النظام يحدد لوحده") — لا يوجد اختيار يدوي للمسار
+                    الإنتاجي بعد اليوم؛ كل صنف بيحدد مساره أوتوماتيك حسب التاب
+                    اللي اتضاف منه. التوجل ده بس لتحديد هل المسارات دي
+                    محتاجة تصميم، ولو موجودة فعليًا في السلة. */}
+                {tracksInCart
+                  .filter((t) => SKIPPABLE_DESIGN_TRACKS.has(t))
+                  .map((t) => (
+                    <label key={t} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={requiresDesignByTrack[t] ?? true}
+                        onChange={(e) => setRequiresDesignByTrack((prev) => ({ ...prev, [t]: e.target.checked }))}
+                      />
+                      <span>يحتاج تصميم؟ — {PRODUCTION_TRACK_LABELS[t]}</span>
+                    </label>
+                  ))}
               </>
             )}
           </div>
@@ -2036,7 +2164,53 @@ function NewOrderForm({
                   className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 />
               </label>
+              {/* تعدد المواد الخام (2026-08-17، صاحب المشروع: "الاصل خامة
+                  والصورة خامة والصورة التالته خامة تالتة") — فاضي = نفس ورق
+                  الأصل، بالظبط زي السلوك القديم. */}
+              {draft.contentType === 'ORIGINAL_PLUS_COPIES' && toNum(draft.copies) >= 1 && (
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">ورق الصورة (لو مختلف عن الأصل)</span>
+                  <select
+                    value={draft.copy1InventoryItemId}
+                    onChange={(e) => updateDraft({ copy1InventoryItemId: e.target.value })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  >
+                    <option value="">— زي ورق الأصل —</option>
+                    {paperInventoryItems.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {draft.contentType === 'ORIGINAL_PLUS_COPIES' && toNum(draft.copies) >= 2 && (
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">ورق الصورة التانية (لو مختلف)</span>
+                  <select
+                    value={draft.copy2InventoryItemId}
+                    onChange={(e) => updateDraft({ copy2InventoryItemId: e.target.value })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  >
+                    <option value="">— زي ورق الأصل —</option>
+                    {paperInventoryItems.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
+          )}
+
+          {/* توزيع تكلفة الورق على المواد (2026-08-17) — يظهر بس لو فيه أكتر من مادة فعليًا مستخدمة. */}
+          {draft.kind === 'NOTEBOOK' && result?.materials && result.materials.length > 1 && (
+            <p className="bg-muted/40 rounded-md p-2 text-xs" dir="rtl">
+              {result.materials
+                .map((m) => `${NOTEBOOK_MATERIAL_ROLE_LABELS[m.role] ?? m.role}: ${m.sheetsNeeded} فرخ × ${m.sheetPrice.toFixed(2)} = ${money(m.paperCost)} ج.م`)
+                .join(' — ')}
+            </p>
           )}
 
           {draft.kind === 'ENVELOPE' && (
@@ -2220,129 +2394,180 @@ function NewOrderForm({
             </div>
           )}
 
-          {draft.kind === 'DIGITAL' && (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <label className="space-y-1 text-sm sm:col-span-2">
-                <span className="text-muted-foreground">نوع الورق (يُسحب من المخزن)</span>
-                <select
-                  value={draft.inventoryItemId}
-                  onChange={(e) => updateDraft({ inventoryItemId: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                >
-                  <option value="">— اختر —</option>
-                  {paperInventoryItems.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">عرض القطعة (سم)</span>
-                <input
-                  type="number"
-                  min={0.1}
-                  step="0.1"
-                  value={draft.widthCm}
-                  onChange={(e) => {
-                    const widthCm = e.target.value;
-                    const w = Number(widthCm);
-                    const h = Number(draft.heightCm);
-                    const suggested =
-                      w > 0 && h > 0
-                        ? suggestYield(
-                            w,
-                            h,
-                            pricingReference.digitalConstants.digitalQuarterWidthCm,
-                            pricingReference.digitalConstants.digitalQuarterHeightCm,
-                          )
-                        : 0;
-                    updateDraft({ widthCm, yieldPerQuarter: suggested > 0 ? String(suggested) : draft.yieldPerQuarter });
-                  }}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">ارتفاع القطعة (سم)</span>
-                <input
-                  type="number"
-                  min={0.1}
-                  step="0.1"
-                  value={draft.heightCm}
-                  onChange={(e) => {
-                    const heightCm = e.target.value;
-                    const w = Number(draft.widthCm);
-                    const h = Number(heightCm);
-                    const suggested =
-                      w > 0 && h > 0
-                        ? suggestYield(
-                            w,
-                            h,
-                            pricingReference.digitalConstants.digitalQuarterWidthCm,
-                            pricingReference.digitalConstants.digitalQuarterHeightCm,
-                          )
-                        : 0;
-                    updateDraft({ heightCm, yieldPerQuarter: suggested > 0 ? String(suggested) : draft.yieldPerQuarter });
-                  }}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">الكمية</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.quantity}
-                  onChange={(e) => updateDraft({ quantity: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">التنزيلة (Yield) — عدد القطع في الربع</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.yieldPerQuarter}
-                  onChange={(e) => updateDraft({ yieldPerQuarter: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="flex items-center gap-2 self-end text-sm">
-                <input
-                  type="checkbox"
-                  checked={draft.sellophaneEnabled}
-                  onChange={(e) => updateDraft({ sellophaneEnabled: e.target.checked })}
-                />
-                سلوفان
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">سعر البشر للقطعة (اختياري)</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={draft.boshrPricePerPiece}
-                  onChange={(e) => updateDraft({ boshrPricePerPiece: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
-            </div>
-          )}
+          {/* تعدد المكونات (2026-08-17، صاحب المشروع: "الغلاف بتاعها خامة
+              والداخلي خامة تانية") — كل مكوّن بيتحسب بمعادلة التنزيلة
+              الخاصة بيه بالكامل ومستقل تمامًا، وبعدين المجاميع تتجمع. صنف
+              ديجيتال بسيط (مكوّن واحد) هو نفس الحالة القديمة بمكوّن واحد بس. */}
+          {draft.kind === 'DIGITAL' &&
+            draft.digitalComponents.map((component, index) => {
+              const componentResult = result?.components?.[index];
+              const updateComponent = (patch: Partial<DraftDigitalComponent>) =>
+                updateDraft({
+                  digitalComponents: draft.digitalComponents.map((c, i) => (i === index ? { ...c, ...patch } : c)),
+                });
+              return (
+                <div key={component.key} className="space-y-2 rounded-md border p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex-1 space-y-1 text-sm">
+                      <span className="text-muted-foreground">اسم المكوّن (مثلاً: الغلاف/الداخلي)</span>
+                      <input
+                        type="text"
+                        value={component.label}
+                        placeholder={draft.digitalComponents.length > 1 ? `المكوّن ${index + 1}` : 'اسم اختياري'}
+                        onChange={(e) => updateComponent({ label: e.target.value })}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      />
+                    </label>
+                    {draft.digitalComponents.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => updateDraft({ digitalComponents: draft.digitalComponents.filter((_, i) => i !== index) })}
+                      >
+                        حذف المكوّن
+                      </Button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <label className="space-y-1 text-sm sm:col-span-2">
+                      <span className="text-muted-foreground">نوع الورق (يُسحب من المخزن)</span>
+                      <select
+                        value={component.inventoryItemId}
+                        onChange={(e) => updateComponent({ inventoryItemId: e.target.value })}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      >
+                        <option value="">— اختر —</option>
+                        {paperInventoryItems.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">عرض القطعة (سم)</span>
+                      <input
+                        type="number"
+                        min={0.1}
+                        step="0.1"
+                        value={component.widthCm}
+                        onChange={(e) => {
+                          const widthCm = e.target.value;
+                          const w = Number(widthCm);
+                          const h = Number(component.heightCm);
+                          const suggested =
+                            w > 0 && h > 0
+                              ? suggestYield(
+                                  w,
+                                  h,
+                                  pricingReference.digitalConstants.digitalQuarterWidthCm,
+                                  pricingReference.digitalConstants.digitalQuarterHeightCm,
+                                )
+                              : 0;
+                          updateComponent({ widthCm, yieldPerQuarter: suggested > 0 ? String(suggested) : component.yieldPerQuarter });
+                        }}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">ارتفاع القطعة (سم)</span>
+                      <input
+                        type="number"
+                        min={0.1}
+                        step="0.1"
+                        value={component.heightCm}
+                        onChange={(e) => {
+                          const heightCm = e.target.value;
+                          const w = Number(component.widthCm);
+                          const h = Number(heightCm);
+                          const suggested =
+                            w > 0 && h > 0
+                              ? suggestYield(
+                                  w,
+                                  h,
+                                  pricingReference.digitalConstants.digitalQuarterWidthCm,
+                                  pricingReference.digitalConstants.digitalQuarterHeightCm,
+                                )
+                              : 0;
+                          updateComponent({ heightCm, yieldPerQuarter: suggested > 0 ? String(suggested) : component.yieldPerQuarter });
+                        }}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">الكمية</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={component.quantity}
+                        onChange={(e) => updateComponent({ quantity: e.target.value })}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">التنزيلة (Yield) — عدد القطع في الربع</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={component.yieldPerQuarter}
+                        onChange={(e) => updateComponent({ yieldPerQuarter: e.target.value })}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 self-end text-sm">
+                      <input
+                        type="checkbox"
+                        checked={component.sellophaneEnabled}
+                        onChange={(e) => updateComponent({ sellophaneEnabled: e.target.checked })}
+                      />
+                      سلوفان
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">سعر البشر للقطعة (اختياري)</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={component.boshrPricePerPiece}
+                        onChange={(e) => updateComponent({ boshrPricePerPiece: e.target.value })}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      />
+                    </label>
+                  </div>
+                  {/* صيغة تكلفة المكوّن الحية — نظام التنزيلة، system_specifications_v2.md §13.3 */}
+                  {componentResult && (
+                    <p className="bg-muted/40 rounded-md p-2 text-xs" dir="rtl">
+                      {componentResult.fitsInQuarter === false && componentResult.unitsNeeded
+                        ? `القطعة أكبر من الربع — محتاجة ${componentResult.unitsNeeded} ربع/قطعة`
+                        : `التنزيلة: ${component.yieldPerQuarter} قطعة في الربع`}
+                      {' — '}تكلفة القطعة {money(componentResult.costPerPiece)} ج.م × الكمية ({component.quantity})
+                      {typeof componentResult.sheetsNeeded === 'number' && (
+                        <>
+                          {' — '}
+                          محتاجين ≈ {componentResult.sheetsNeeded} فرخ (بيتخصم من المخزون)
+                        </>
+                      )}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
 
-          {/* صيغة تكلفة الديجيتال الحية — نظام التنزيلة، system_specifications_v2.md §13.3 */}
-          {draft.kind === 'DIGITAL' && result && typeof result.costPerPiece === 'number' && (
-            <p className="bg-muted/40 rounded-md p-2 text-xs" dir="rtl">
-              {result.fitsInQuarter === false && result.unitsNeeded
-                ? `القطعة أكبر من الربع — محتاجة ${result.unitsNeeded} ربع/قطعة`
-                : `التنزيلة: ${draft.yieldPerQuarter} قطعة في الربع`}
-              {' — '}تكلفة القطعة {money(result.costPerPiece)} ج.م × الكمية ({draft.quantity}) = {money(result.subtotal ?? 0)} ج.م
-              {typeof result.quartersNeeded === 'number' && typeof result.sheetsNeeded === 'number' && (
-                <>
-                  {' — '}
-                  محتاجين {result.quartersNeeded} ربع ≈ {result.sheetsNeeded} فرخ (بيتخصم من المخزون)
-                </>
+          {draft.kind === 'DIGITAL' && (
+            <div className="flex items-center justify-between">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => updateDraft({ digitalComponents: [...draft.digitalComponents, emptyDigitalComponent()] })}
+              >
+                + أضف مكوّن (زي الغلاف/الداخلي)
+              </Button>
+              {draft.digitalComponents.length > 1 && typeof result?.total === 'number' && (
+                <p className="text-muted-foreground text-xs">إجمالي كل المكونات: {money(result.total)} ج.م</p>
               )}
-            </p>
+            </div>
           )}
 
           {draft.kind === 'PRODUCT' && (

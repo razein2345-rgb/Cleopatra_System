@@ -2,11 +2,49 @@ import type { Prisma } from '../generated/prisma/client.js';
 import type { CreateOrderItemInput, CreatePaymentInput, Order, OrderItem, Payment, ProductionTrack } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { deductStockForOrderItem, restockForOrderItem } from './inventoryService.js';
-import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
+import { buildPricingContext, computeItemPricing, type ItemPricingResult } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
-import { tryAutoCreateWorkOrder } from './workOrderService.js';
+import { createWorkOrderForTrack, softDeleteWorkOrderTx, tryAutoCreateWorkOrders } from './workOrderService.js';
 
 export { PricingInputError } from './pricingEngineService.js';
+
+/**
+ * "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — `productionTrack` is
+ * stamped client-side from the composer tab (see
+ * `packages/shared/src/orders/itemCategories.ts`), trusted the same way
+ * `itemType`/`inkColor` already are — not the same trust tier as
+ * `pricing`, which the server always recomputes. This is a cheap defense,
+ * not full re-derivation: for the kinds where the tab→track mapping is
+ * unambiguous, a mismatched track is almost certainly an integration bug
+ * worth rejecting early; PRODUCT (shared by READY_PRODUCTS and
+ * SUBLIMATION_GIFTS) and SERVICE have no single correct answer from `kind`
+ * alone, so anything the client sent for those is accepted as-is.
+ */
+export class InconsistentProductionTrackError extends Error {
+  constructor(kind: string, productionTrack: string) {
+    super(`Item kind "${kind}" cannot resolve to production track "${productionTrack}"`);
+    this.name = 'InconsistentProductionTrackError';
+  }
+}
+
+const UNAMBIGUOUS_TRACK_BY_KIND: Partial<Record<string, ProductionTrack>> = {
+  LOOSE_PAPER: 'OFFSET',
+  NOTEBOOK: 'OFFSET',
+  FOLDER: 'OFFSET',
+  ENVELOPE: 'OFFSET',
+  DIGITAL: 'DIGITAL',
+  BOARDS: 'BOARDS_SIGNAGE',
+  SERVICE: 'SERVICES',
+  INVENTORY_RETAIL: undefined, // must resolve to no track at all
+};
+
+function assertProductionTrackConsistentWithKind(kind: string, productionTrack: ProductionTrack | null | undefined): void {
+  if (!(kind in UNAMBIGUOUS_TRACK_BY_KIND)) return; // PRODUCT — genuinely ambiguous, no check possible
+  const expected = UNAMBIGUOUS_TRACK_BY_KIND[kind];
+  if ((productionTrack ?? undefined) !== expected) {
+    throw new InconsistentProductionTrackError(kind, productionTrack ?? 'null');
+  }
+}
 
 /**
  * Centralized here (not duplicated per controller) — `orders.ts` and
@@ -15,19 +53,19 @@ export { PricingInputError } from './pricingEngineService.js';
  * so `mapOrderToDto` can always compute `paidTotal`/`remainingBalance`.
  */
 export const ORDER_INCLUDE = {
-  items: true,
+  items: { include: { materials: { orderBy: { sortOrder: 'asc' } } } },
   quotationOrigin: { select: { id: true } },
-  // FEATURE-011 (2026-08-14) — Prisma doesn't support a `where` filter on a
-  // to-one relation include, so `isDeleted` is selected here and checked in
-  // `mapOrderToDto` instead: a soft-deleted WorkOrder (FEATURE-012, "أقدر
-  // أحذف أمر الشغل") must not leave a dangling "طباعة أمر الشغل" link on
-  // its former Order.
-  workOrder: { select: { id: true, isDeleted: true } },
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was a to-one
+  // `workOrder` select; now a filtered list (Prisma supports `where` on a
+  // to-many include, unlike the old to-one relation) — only non-deleted
+  // Work Orders, one per resolved track actually present among the
+  // order's items.
+  workOrders: { where: { isDeleted: false }, select: { id: true, workOrderNumber: true, productionTrack: true } },
   payments: true,
 } satisfies Prisma.OrderInclude;
 
 type OrderRecord = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
-type OrderItemRecord = Prisma.OrderItemGetPayload<object>;
+type OrderItemRecord = Prisma.OrderItemGetPayload<{ include: { materials: true } }>;
 type PaymentRecord = Prisma.PaymentGetPayload<object>;
 
 export function mapOrderItemToDto(item: OrderItemRecord): OrderItem {
@@ -42,8 +80,53 @@ export function mapOrderItemToDto(item: OrderItemRecord): OrderItem {
     realSizeLabel: item.realSizeLabel,
     inventoryItemId: item.inventoryItemId,
     sheetsConsumed: item.sheetsConsumed?.toNumber() ?? null,
+    productionTrack: item.productionTrack,
+    workOrderId: item.workOrderId,
+    materials: item.materials.map((m) => ({
+      id: m.id,
+      role: m.role,
+      sortOrder: m.sortOrder,
+      inventoryItemId: m.inventoryItemId,
+      paperName: m.paperName,
+      sheetPrice: m.sheetPrice.toNumber(),
+      sheetsConsumed: m.sheetsConsumed.toNumber(),
+    })),
     createdAt: item.createdAt.toISOString(),
   };
+}
+
+/**
+ * Multi-material pricing (2026-08-17) — the single place that decides which
+ * (material, quantity) pairs to deduct/restock for a priced item, shared by
+ * `createOrder`/`updateOrder`. Prefers `result.materials` (NOTEBOOK/DIGITAL)
+ * when present; every other kind falls back to the singular
+ * `inventoryItemId`/`sheetsNeeded` fields, untouched — same one call to
+ * `deductStockForOrderItem` it always made, just reached through one shared
+ * function instead of an inline `if`.
+ */
+function materialsToDeduct(result: ItemPricingResult): { inventoryItemId: string; sheetsNeeded: number }[] {
+  if (result.materials?.length) {
+    return result.materials.map((m) => ({ inventoryItemId: m.inventoryItemId, sheetsNeeded: m.sheetsNeeded }));
+  }
+  if (result.inventoryItemId && result.sheetsNeeded) {
+    return [{ inventoryItemId: result.inventoryItemId, sheetsNeeded: result.sheetsNeeded }];
+  }
+  return [];
+}
+
+/** The restock-on-edit/delete counterpart to `materialsToDeduct` above, reading from an already-persisted `OrderItem` row (with its `materials` relation) instead of a fresh `ItemPricingResult`. */
+function materialsToRestock(item: {
+  inventoryItemId: string | null;
+  sheetsConsumed: Prisma.Decimal | null;
+  materials: { inventoryItemId: string; sheetsConsumed: Prisma.Decimal }[];
+}): { inventoryItemId: string; sheetsNeeded: number }[] {
+  if (item.materials.length) {
+    return item.materials.map((m) => ({ inventoryItemId: m.inventoryItemId, sheetsNeeded: m.sheetsConsumed.toNumber() }));
+  }
+  if (item.inventoryItemId && item.sheetsConsumed) {
+    return [{ inventoryItemId: item.inventoryItemId, sheetsNeeded: item.sheetsConsumed.toNumber() }];
+  }
+  return [];
 }
 
 export function mapPaymentToDto(payment: PaymentRecord): Payment {
@@ -83,10 +166,8 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
     customerNotes: order.customerNotes,
     internalNotes: canSeeInternal ? order.internalNotes : null,
     status: order.status,
-    productionTrack: order.productionTrack,
-    requiresDesign: order.requiresDesign,
     quotationOriginId: order.quotationOrigin?.id ?? null,
-    workOrderId: order.workOrder && !order.workOrder.isDeleted ? order.workOrder.id : null,
+    workOrders: order.workOrders.map((w) => ({ id: w.id, workOrderNumber: w.workOrderNumber, productionTrack: w.productionTrack })),
     items: order.items.map(mapOrderItemToDto),
     // FEATURE-006 M3 — computed from `payments` at read time, never
     // stored (same discipline as computeIsDelayed).
@@ -164,6 +245,10 @@ export function buildOrderItemCreate(item: {
   realSizeLabel?: string | null;
   inventoryItemId?: string | null;
   sheetsConsumed?: number | null;
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — frozen straight
+  // through, no ad-hoc breakdown involvement (it's a real OrderItem
+  // column, not a `breakdown` field).
+  productionTrack?: ProductionTrack | null;
 }): {
   kind: string;
   modelName: string | null;
@@ -173,6 +258,7 @@ export function buildOrderItemCreate(item: {
   realSizeLabel: string | null;
   inventoryItemId: string | null;
   sheetsConsumed: number | null;
+  productionTrack: ProductionTrack | null;
 } {
   return {
     kind: item.itemType,
@@ -182,6 +268,7 @@ export function buildOrderItemCreate(item: {
     realSizeLabel: item.realSizeLabel ?? null,
     inventoryItemId: item.inventoryItemId ?? null,
     sheetsConsumed: item.sheetsConsumed ?? null,
+    productionTrack: item.productionTrack ?? null,
     breakdown:
       item.breakdownOverride ??
       {
@@ -256,14 +343,17 @@ export async function createOrder(
     deliveryDate?: string;
     customerNotes?: string;
     internalNotes?: string;
-    productionTrack?: ProductionTrack;
-    requiresDesign?: boolean;
+    requiresDesignByTrack?: Record<string, boolean>;
     items: CreateOrderItemInput[];
     payments?: CreatePaymentInput[];
   },
   itemNames: Map<string, string>,
 ): Promise<{ id: string; branchId: string; partnerId: string; invoiceNumber: string; itemCount: number }> {
   assertDeliveryDateNotBeforeOrderDate(input.deliveryDate, new Date());
+
+  for (const item of input.items) {
+    assertProductionTrackConsistentWithKind(item.pricing.kind, item.productionTrack);
+  }
 
   // Read-only reference data — safe outside the write transaction; the
   // actual order + stock deduction writes below run inside it.
@@ -311,68 +401,94 @@ export async function createOrder(
         deliveryDate: input.deliveryDate ? new Date(input.deliveryDate) : null,
         customerNotes: input.customerNotes ?? null,
         internalNotes: input.internalNotes ?? null,
-        productionTrack: input.productionTrack ?? null,
-        requiresDesign: input.requiresDesign ?? true,
         status: 'CONFIRMED',
         // quotationOriginId is intentionally never set here — this is the
         // reverse relation from Quotation.convertedOrderId; a directly
         // created Order simply has no Quotation pointing at it.
-        items: {
-          create: input.items.map((item, index) => {
-            const result = priced[index]!;
-            return buildOrderItemCreate({
-              itemType: item.itemType,
-              notes: item.notes,
-              description: item.description,
-              readyProductId: item.readyProductId,
-              readyProductName: item.readyProductId ? (itemNames.get(item.readyProductId) ?? null) : null,
-              serviceId: item.serviceId,
-              serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
-              itemTotal: result.total,
-              // `computeItemPricing`'s breakdown is pricing-only — it has
-              // no access to `notes` (not part of `PricingLineItem`). Merge
-              // it in here, the one place both the frozen pricing result
-              // and the caller's free-text note are both in scope, or it's
-              // silently lost: `buildOrderItemCreate`'s own `notes` param
-              // only feeds its ad-hoc fallback shape, which this
-              // `breakdownOverride` always bypasses.
-              breakdownOverride: {
-                ...(result.breakdown as Record<string, unknown>),
-                notes: item.notes ?? null,
-                // ERP-navigation research (2026-08-16, "نطاق العمل" for
-                // SERVICE items) — was accepted by the schema but silently
-                // dropped here before now: `buildOrderItemCreate`'s own
-                // `description` param only feeds its ad-hoc fallback shape,
-                // which this `breakdownOverride` always bypasses, same as
-                // `notes` above.
-                description: item.description ?? null,
-                referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
-                // FEATURE-009 (2026-08-13) — printed on the Offset Work
-                // Order job-card only, no pricing effect.
-                inkColor: item.inkColor ?? null,
-                bindingType: item.bindingType ?? null,
-                sellophaneType: item.sellophaneType ?? null,
-              },
-              sizeFamilyKey: result.sizeFamilyKey,
-              realSizeLabel: result.realSizeLabel,
-              inventoryItemId: result.inventoryItemId,
-              sheetsConsumed: result.sheetsNeeded,
-            });
-          }),
-        },
       },
-      select: { id: true, branchId: true, partnerId: true, invoiceNumber: true, _count: { select: { items: true } } },
+      select: { id: true, branchId: true, partnerId: true, invoiceNumber: true },
     });
 
-    // FEATURE-016 (2026-08-16, owner: "لما اعمل فاتورة دايركت يدخل في عملية
-    // التشغيل") — best-effort, never blocks order creation (see the
-    // function's own doc comment): silently skipped when the order has no
-    // production track yet or no template is published for it.
-    await tryAutoCreateWorkOrder(
-      tx,
-      { id: created.id, branchId: created.branchId, productionTrack: input.productionTrack ?? null, requiresDesign: input.requiresDesign ?? true },
-      input.staffId,
-    );
+    // Multi-material pricing (2026-08-17) — items are created one at a time
+    // (not via a single nested `items: { create: [...] }`) so each item's
+    // real id is known immediately, letting its `OrderItemMaterial` rows
+    // (when `result.materials` is populated) be linked correctly. A bulk
+    // nested create gives back no per-item ids to correlate against
+    // `priced[index]`, which the old single-material path never needed.
+    const createdItemRows: { id: string; productionTrack: ProductionTrack | null }[] = [];
+    for (let index = 0; index < input.items.length; index++) {
+      const item = input.items[index]!;
+      const result = priced[index]!;
+      const createdItem = await tx.orderItem.create({
+        data: {
+          orderId: created.id,
+          ...buildOrderItemCreate({
+            itemType: item.itemType,
+            notes: item.notes,
+            description: item.description,
+            readyProductId: item.readyProductId,
+            readyProductName: item.readyProductId ? (itemNames.get(item.readyProductId) ?? null) : null,
+            serviceId: item.serviceId,
+            serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
+            itemTotal: result.total,
+            // `computeItemPricing`'s breakdown is pricing-only — it has
+            // no access to `notes` (not part of `PricingLineItem`). Merge
+            // it in here, the one place both the frozen pricing result
+            // and the caller's free-text note are both in scope, or it's
+            // silently lost: `buildOrderItemCreate`'s own `notes` param
+            // only feeds its ad-hoc fallback shape, which this
+            // `breakdownOverride` always bypasses.
+            breakdownOverride: {
+              ...(result.breakdown as Record<string, unknown>),
+              notes: item.notes ?? null,
+              // ERP-navigation research (2026-08-16, "نطاق العمل" for
+              // SERVICE items) — was accepted by the schema but silently
+              // dropped here before now: `buildOrderItemCreate`'s own
+              // `description` param only feeds its ad-hoc fallback shape,
+              // which this `breakdownOverride` always bypasses, same as
+              // `notes` above.
+              description: item.description ?? null,
+              referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
+              // FEATURE-009 (2026-08-13) — printed on the Offset Work
+              // Order job-card only, no pricing effect.
+              inkColor: item.inkColor ?? null,
+              bindingType: item.bindingType ?? null,
+              sellophaneType: item.sellophaneType ?? null,
+            },
+            sizeFamilyKey: result.sizeFamilyKey,
+            realSizeLabel: result.realSizeLabel,
+            inventoryItemId: result.inventoryItemId,
+            sheetsConsumed: result.sheetsNeeded,
+            productionTrack: item.productionTrack,
+          }),
+        },
+        select: { id: true, productionTrack: true },
+      });
+
+      if (result.materials?.length) {
+        await tx.orderItemMaterial.createMany({
+          data: result.materials.map((m, materialIndex) => ({
+            orderItemId: createdItem.id,
+            role: m.role,
+            sortOrder: materialIndex,
+            inventoryItemId: m.inventoryItemId,
+            paperName: m.paperName ?? '',
+            sheetPrice: m.sheetPrice,
+            sheetsConsumed: m.sheetsNeeded,
+          })),
+        });
+      }
+
+      createdItemRows.push(createdItem);
+    }
+
+    // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16, owner: "لما اعمل
+    // فاتورة دايركت يدخل في عملية التشغيل") — best-effort, never blocks
+    // order creation: one Work Order per distinct track actually present
+    // among this order's items; items whose track has no published
+    // template yet simply stay unlinked (see `tryAutoCreateWorkOrders`'s
+    // own doc comment).
+    await tryAutoCreateWorkOrders(tx, { id: created.id, branchId: created.branchId }, createdItemRows, input.requiresDesignByTrack, input.staffId);
 
     // Link each uploaded Attachment to this Order now that it exists —
     // mirrors the Payment+TreasuryEntry atomicity below, same transaction.
@@ -384,9 +500,13 @@ export async function createOrder(
     // order, mirroring the Payment+Treasury atomicity pattern. Locked
     // decision: never blocks order creation, even if this drives
     // `quantityOnHand` negative — see inventoryService's own doc comment.
+    // Multi-material pricing (2026-08-17) — `materialsToDeduct` returns
+    // every (material, quantity) pair to deduct for the item, one call per
+    // pair; for every non-NOTEBOOK/DIGITAL kind this is still exactly the
+    // single old pair, unchanged.
     for (const result of priced) {
-      if (result.inventoryItemId && result.sheetsNeeded) {
-        await deductStockForOrderItem(tx, result.inventoryItemId, input.branchId, result.sheetsNeeded);
+      for (const m of materialsToDeduct(result)) {
+        await deductStockForOrderItem(tx, m.inventoryItemId, input.branchId, m.sheetsNeeded);
       }
     }
 
@@ -415,7 +535,7 @@ export async function createOrder(
       });
     }
 
-    return { ...created, itemCount: created._count.items };
+    return { ...created, itemCount: input.items.length };
   });
 }
 
@@ -479,13 +599,31 @@ export async function updateOrder(
     deliveryDate?: string | null;
     customerNotes?: string | null;
     internalNotes?: string | null;
-    productionTrack?: ProductionTrack | null;
-    requiresDesign?: boolean;
+    requiresDesignByTrack?: Record<string, boolean>;
     items: CreateOrderItemInput[];
   },
   itemNames: Map<string, string>,
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — the staff performing
+  // *this* edit, not the order's original creator (`existing.staffId`,
+  // which this function previously had no other identity to fall back on
+  // for the new Work Order reconciliation's `deletedBy`/`performedById`).
+  performedById: string,
 ): Promise<{ id: string; invoiceNumber: string; branchId: string; partnerId: string }> {
-  const existing = await prisma.order.findUnique({ where: { id: orderId }, include: { items: true } });
+  const existing = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      // Multi-material pricing (2026-08-17) — `materials` needed for the
+      // restock-on-edit loop below (`materialsToRestock`).
+      items: { include: { materials: true } },
+      // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — needed to
+      // reconcile Work Orders per track after the item set changes (see
+      // the reconciliation block below): which tracks already have an
+      // active Work Order, and each one's WorkflowInstance/StageInstances
+      // in case that track's items disappear entirely and it needs
+      // soft-deleting via `softDeleteWorkOrderTx`.
+      workOrders: { where: { isDeleted: false }, include: { workflowInstance: { include: { stageInstances: true } } } },
+    },
+  });
   if (!existing || existing.isDeleted) {
     throw new OrderNotFoundError();
   }
@@ -494,6 +632,10 @@ export async function updateOrder(
     input.deliveryDate !== undefined ? input.deliveryDate : existing.deliveryDate?.toISOString(),
     existing.date,
   );
+
+  for (const item of input.items) {
+    assertProductionTrackConsistentWithKind(item.pricing.kind, item.productionTrack);
+  }
 
   const ctx = await buildPricingContext(input.items);
   const priced = input.items.map((item) => computeItemPricing(item, ctx));
@@ -518,12 +660,16 @@ export async function updateOrder(
 
   await prisma.$transaction(async (tx) => {
     // Reverse the old items' stock consumption before removing them —
-    // "يرجع للمخزن تلقائيًا" (owner, 2026-08-12).
+    // "يرجع للمخزن تلقائيًا" (owner, 2026-08-12). Multi-material pricing
+    // (2026-08-17) — `materialsToRestock` restocks every material row an
+    // old NOTEBOOK/DIGITAL item had, not just a single pair.
     for (const oldItem of existing.items) {
-      if (oldItem.inventoryItemId && oldItem.sheetsConsumed) {
-        await restockForOrderItem(tx, oldItem.inventoryItemId, existing.branchId, oldItem.sheetsConsumed.toNumber());
+      for (const m of materialsToRestock(oldItem)) {
+        await restockForOrderItem(tx, m.inventoryItemId, existing.branchId, m.sheetsNeeded);
       }
     }
+    // `OrderItemMaterial` rows cascade-delete with their parent `OrderItem`
+    // (schema's `onDelete: Cascade`) — no separate cleanup needed here.
     await tx.orderItem.deleteMany({ where: { orderId } });
 
     await tx.order.update({
@@ -543,52 +689,123 @@ export async function updateOrder(
             : existing.deliveryDate,
         customerNotes: input.customerNotes !== undefined ? input.customerNotes : existing.customerNotes,
         internalNotes: input.internalNotes !== undefined ? input.internalNotes : existing.internalNotes,
-        productionTrack: input.productionTrack !== undefined ? input.productionTrack : existing.productionTrack,
-        requiresDesign: input.requiresDesign !== undefined ? input.requiresDesign : existing.requiresDesign,
-        items: {
-          create: input.items.map((item, index) => {
-            const result = priced[index]!;
-            return buildOrderItemCreate({
-              itemType: item.itemType,
-              notes: item.notes,
-              description: item.description,
-              readyProductId: item.readyProductId,
-              readyProductName: item.readyProductId ? (itemNames.get(item.readyProductId) ?? null) : null,
-              serviceId: item.serviceId,
-              serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
-              itemTotal: result.total,
-              breakdownOverride: {
-                ...(result.breakdown as Record<string, unknown>),
-                notes: item.notes ?? null,
-                // ERP-navigation research (2026-08-16, "نطاق العمل" for
-                // SERVICE items) — was accepted by the schema but silently
-                // dropped here before now: `buildOrderItemCreate`'s own
-                // `description` param only feeds its ad-hoc fallback shape,
-                // which this `breakdownOverride` always bypasses, same as
-                // `notes` above.
-                description: item.description ?? null,
-                referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
-                inkColor: item.inkColor ?? null,
-                bindingType: item.bindingType ?? null,
-                sellophaneType: item.sellophaneType ?? null,
-              },
-              sizeFamilyKey: result.sizeFamilyKey,
-              realSizeLabel: result.realSizeLabel,
-              inventoryItemId: result.inventoryItemId,
-              sheetsConsumed: result.sheetsNeeded,
-            });
-          }),
-        },
       },
     });
+
+    // Multi-material pricing (2026-08-17) — items created one at a time
+    // (not a nested bulk `items: { create: [...] }`), same reasoning as
+    // `createOrder`: each item's real id must be known immediately to link
+    // its own `OrderItemMaterial` rows correctly.
+    const newItemRows: { id: string; productionTrack: ProductionTrack | null }[] = [];
+    for (let index = 0; index < input.items.length; index++) {
+      const item = input.items[index]!;
+      const result = priced[index]!;
+      const createdItem = await tx.orderItem.create({
+        data: {
+          orderId,
+          ...buildOrderItemCreate({
+            itemType: item.itemType,
+            notes: item.notes,
+            description: item.description,
+            readyProductId: item.readyProductId,
+            readyProductName: item.readyProductId ? (itemNames.get(item.readyProductId) ?? null) : null,
+            serviceId: item.serviceId,
+            serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
+            itemTotal: result.total,
+            breakdownOverride: {
+              ...(result.breakdown as Record<string, unknown>),
+              notes: item.notes ?? null,
+              // ERP-navigation research (2026-08-16, "نطاق العمل" for
+              // SERVICE items) — was accepted by the schema but silently
+              // dropped here before now: `buildOrderItemCreate`'s own
+              // `description` param only feeds its ad-hoc fallback shape,
+              // which this `breakdownOverride` always bypasses, same as
+              // `notes` above.
+              description: item.description ?? null,
+              referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
+              inkColor: item.inkColor ?? null,
+              bindingType: item.bindingType ?? null,
+              sellophaneType: item.sellophaneType ?? null,
+            },
+            sizeFamilyKey: result.sizeFamilyKey,
+            realSizeLabel: result.realSizeLabel,
+            inventoryItemId: result.inventoryItemId,
+            sheetsConsumed: result.sheetsNeeded,
+            productionTrack: item.productionTrack,
+          }),
+        },
+        select: { id: true, productionTrack: true },
+      });
+
+      if (result.materials?.length) {
+        await tx.orderItemMaterial.createMany({
+          data: result.materials.map((m, materialIndex) => ({
+            orderItemId: createdItem.id,
+            role: m.role,
+            sortOrder: materialIndex,
+            inventoryItemId: m.inventoryItemId,
+            paperName: m.paperName ?? '',
+            sheetPrice: m.sheetPrice,
+            sheetsConsumed: m.sheetsNeeded,
+          })),
+        });
+      }
+
+      newItemRows.push(createdItem);
+    }
 
     if (attachmentIds.length) {
       await tx.attachment.updateMany({ where: { id: { in: attachmentIds } }, data: { orderId } });
     }
 
+    // Multi-material pricing (2026-08-17) — same shared helper `createOrder`
+    // uses; deducts every material pair for the freshly-created items.
     for (const result of priced) {
-      if (result.inventoryItemId && result.sheetsNeeded) {
-        await deductStockForOrderItem(tx, result.inventoryItemId, existing.branchId, result.sheetsNeeded);
+      for (const m of materialsToDeduct(result)) {
+        await deductStockForOrderItem(tx, m.inventoryItemId, existing.branchId, m.sheetsNeeded);
+      }
+    }
+
+    // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — reconcile Work
+    // Orders against the new item set. `updateOrder` never touched Work
+    // Orders at all before this change (a pre-existing gap, not a
+    // regression) — now it has to, since a track can be added or removed
+    // entirely by an edit. Three cases per track:
+    //   1. Existed before AND still has items → keep the same WorkOrder
+    //      (its WorkflowInstance/stage progress is untouched), just
+    //      re-link the freshly-recreated items to it.
+    //   2. Existed before, has zero items now → soft-delete it, same as
+    //      the manual "حذف أمر الشغل" flow.
+    //   3. Didn't exist before, has items now → create it fresh.
+    const newItemIdsByTrack = new Map<ProductionTrack, string[]>();
+    for (const item of newItemRows) {
+      if (!item.productionTrack) continue;
+      const list = newItemIdsByTrack.get(item.productionTrack) ?? [];
+      list.push(item.id);
+      newItemIdsByTrack.set(item.productionTrack, list);
+    }
+
+    const existingWorkOrderByTrack = new Map(existing.workOrders.map((wo) => [wo.productionTrack, wo]));
+
+    for (const workOrder of existing.workOrders) {
+      if (!newItemIdsByTrack.has(workOrder.productionTrack)) {
+        await softDeleteWorkOrderTx(tx, workOrder.id, workOrder.workflowInstance, performedById);
+      }
+    }
+
+    for (const [track, itemIds] of newItemIdsByTrack) {
+      const existingWorkOrder = existingWorkOrderByTrack.get(track);
+      if (existingWorkOrder) {
+        await tx.orderItem.updateMany({ where: { id: { in: itemIds } }, data: { workOrderId: existingWorkOrder.id } });
+      } else {
+        await createWorkOrderForTrack(tx, {
+          orderId,
+          branchId: existing.branchId,
+          track,
+          itemIds,
+          requiresDesign: input.requiresDesignByTrack?.[track] ?? true,
+          performedById,
+        });
       }
     }
   });
@@ -611,7 +828,9 @@ export async function deleteOrder(
 ): Promise<{ branchId: string; partnerId: string }> {
   const existing = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { items: true, payments: true, workOrder: true },
+    // Multi-material pricing (2026-08-17) — `materials` needed for the
+    // restock loop below (`materialsToRestock`).
+    include: { items: { include: { materials: true } }, payments: true, workOrders: true },
   });
   if (!existing || existing.isDeleted) {
     throw new OrderNotFoundError();
@@ -620,16 +839,18 @@ export async function deleteOrder(
     throw new OrderHasPaymentsError();
   }
   // FEATURE-012 (2026-08-14) — a soft-deleted WorkOrder (deleted via the
-  // new "حذف أمر الشغل" flow) must not keep blocking its parent invoice
-  // from being deleted — same isDeleted check as ORDER_INCLUDE's workOrder.
-  if (existing.workOrder && !existing.workOrder.isDeleted) {
+  // "حذف أمر الشغل" flow) must not keep blocking its parent invoice from
+  // being deleted — same isDeleted check as ORDER_INCLUDE's workOrders.
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — pluralized: any
+  // active Work Order (of any track) still blocks the whole Order's delete.
+  if (existing.workOrders.some((wo) => !wo.isDeleted)) {
     throw new OrderHasWorkOrderError();
   }
 
   await prisma.$transaction(async (tx) => {
     for (const item of existing.items) {
-      if (item.inventoryItemId && item.sheetsConsumed) {
-        await restockForOrderItem(tx, item.inventoryItemId, existing.branchId, item.sheetsConsumed.toNumber());
+      for (const m of materialsToRestock(item)) {
+        await restockForOrderItem(tx, m.inventoryItemId, existing.branchId, m.sheetsNeeded);
       }
     }
     await tx.order.update({

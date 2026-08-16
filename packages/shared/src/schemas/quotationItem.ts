@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { orderItemPricingInputSchema } from './orderItemPricing.js';
+import { productionTrackSchema } from './order.js';
 
 /**
  * Known item types offered as UI presets — NOT an enforced enum.
@@ -40,6 +41,10 @@ export const quotationItemSchema = z.object({
   itemTotal: z.number().nullable(),
   sizeFamilyKey: z.string().nullable(),
   realSizeLabel: z.string().nullable(),
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — mirrors
+  // OrderItem.productionTrack so `convertQuotation` can carry each item's
+  // own track into the new Order's items instead of losing it.
+  productionTrack: productionTrackSchema.nullable(),
   createdAt: z.string(),
 });
 
@@ -60,6 +65,9 @@ export const createQuotationItemSchema = z.object({
   // (order.ts) — see its doc comment.
   attachmentId: z.string().uuid().optional(),
   pricing: orderItemPricingInputSchema,
+  // Same stamped-from-composer-tab field as createOrderItemSchema — see
+  // its doc comment (order.ts).
+  productionTrack: productionTrackSchema.nullable().optional(),
 });
 
 export type QuotationItem = z.infer<typeof quotationItemSchema>;

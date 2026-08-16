@@ -2,13 +2,15 @@ import type { Prisma } from '../generated/prisma/client.js';
 import type { BoardsPricingConstants, OrderItemPricingInput, PricingConstants } from '@cleopatra/shared';
 import {
   calculateBoardsCost,
-  calculateDigitalCost,
+  calculateDigitalMultiComponentCost,
   calculateEnvelopeCost,
   calculateFolderCost,
   calculateLoosePaperCost,
-  calculateNotebookCost,
+  calculateNotebookMultiMaterialCost,
   calculateProductOrServiceCost,
+  type DigitalComponentInput,
   type DigitalPricingConstants,
+  type NotebookMaterialOverride,
   type SizeFamilyInput,
 } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
@@ -123,9 +125,12 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
 
   const inventoryItemIds = [
     ...new Set(
-      items
-        .map((i) => ('inventoryItemId' in i.pricing ? i.pricing.inventoryItemId : null))
-        .filter((id): id is string => Boolean(id)),
+      items.flatMap((i) => {
+        const ids: (string | null | undefined)[] = ['inventoryItemId' in i.pricing ? i.pricing.inventoryItemId : null];
+        if (i.pricing.kind === 'NOTEBOOK') ids.push(...(i.pricing.materials ?? []).map((m) => m.inventoryItemId));
+        if (i.pricing.kind === 'DIGITAL') ids.push(...i.pricing.components.map((c) => c.inventoryItemId));
+        return ids.filter((id): id is string => Boolean(id));
+      }),
     ),
   ];
   const catalogIds = [
@@ -179,6 +184,14 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
   };
 }
 
+export interface ItemPricingMaterial {
+  role: string;
+  inventoryItemId: string;
+  sheetsNeeded: number;
+  sheetPrice: number;
+  paperName: string | null;
+}
+
 export interface ItemPricingResult {
   total: number;
   breakdown: Prisma.InputJsonValue;
@@ -186,6 +199,15 @@ export interface ItemPricingResult {
   inventoryItemId: string | null;
   sizeFamilyKey: string | null;
   realSizeLabel: string | null;
+  /**
+   * Multi-material pricing (2026-08-17) — NOTEBOOK/DIGITAL only. When
+   * present, this is the authoritative list of (material, quantity) pairs
+   * to deduct/restock — `orderService.ts`'s `materialsToDeduct` helper
+   * prefers this over `inventoryItemId`/`sheetsNeeded` above (which stay
+   * `null` for these two kinds). Every other kind leaves this `undefined`
+   * and keeps using the singular fields, untouched.
+   */
+  materials?: ItemPricingMaterial[];
 }
 
 /** Sums the four manual "خدمات إضافية" amounts (bagging/adhesive/sample) — see orderItemPricing.ts's own doc comment. Never a fixed price, always caller-entered. */
@@ -272,24 +294,53 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       if (sheetPrice === undefined) {
         throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no linked sheet price`);
       }
-      const result = calculateNotebookCost({
-        familyKey: pricing.sizeFamilyKey,
-        realLabel: pricing.realSizeLabel,
-        notebookQuantity: pricing.notebookQuantity,
-        contentType: pricing.contentType,
-        copies: pricing.copies,
-        colorCount: pricing.colorCount,
-        isNewDesign: pricing.isNewDesign,
-        numbering: pricing.numberingStartNumber ? { startNumber: pricing.numberingStartNumber } : undefined,
-        bindingPricePerNotebook: pricing.bindingPricePerNotebook,
-        sheetPrice,
-        families: ctx.families,
-        settings: ctx.pricingConstants,
-        zincCostOverride: pricing.zincCostOverride,
-        printCostOverride: pricing.printCostOverride,
-        profitPercentOverride: pricing.profitPercentOverride,
-        extraCosts: sumExtraCosts(pricing),
+      // Multi-material (2026-08-17) — resolves COPY_1/COPY_2's own sheet
+      // price when overridden; the original's `sheetPrice` above is what
+      // `calculateNotebookMultiMaterialCost` falls back to for any role
+      // without an override, exactly matching its single-material behavior.
+      const inventoryItemIdByRole: Record<string, string> = { ORIGINAL: pricing.inventoryItemId };
+      const materialOverrides: NotebookMaterialOverride[] = (pricing.materials ?? []).map((m) => {
+        const overridePrice = ctx.sheetPriceByInventoryItemId.get(m.inventoryItemId);
+        if (overridePrice === undefined) {
+          throw new PricingInputError(`Inventory item "${m.inventoryItemId}" has no linked sheet price`);
+        }
+        inventoryItemIdByRole[m.role] = m.inventoryItemId;
+        return { role: m.role, sheetPrice: overridePrice };
       });
+
+      const result = calculateNotebookMultiMaterialCost(
+        {
+          familyKey: pricing.sizeFamilyKey,
+          realLabel: pricing.realSizeLabel,
+          notebookQuantity: pricing.notebookQuantity,
+          contentType: pricing.contentType,
+          copies: pricing.copies,
+          colorCount: pricing.colorCount,
+          isNewDesign: pricing.isNewDesign,
+          numbering: pricing.numberingStartNumber ? { startNumber: pricing.numberingStartNumber } : undefined,
+          bindingPricePerNotebook: pricing.bindingPricePerNotebook,
+          sheetPrice,
+          families: ctx.families,
+          settings: ctx.pricingConstants,
+          zincCostOverride: pricing.zincCostOverride,
+          printCostOverride: pricing.printCostOverride,
+          profitPercentOverride: pricing.profitPercentOverride,
+          extraCosts: sumExtraCosts(pricing),
+        },
+        materialOverrides.length ? materialOverrides : undefined,
+      );
+
+      const materials: ItemPricingMaterial[] = result.materials.map((m) => {
+        const invId = inventoryItemIdByRole[m.role] ?? pricing.inventoryItemId;
+        return {
+          role: m.role,
+          inventoryItemId: invId,
+          sheetsNeeded: m.sheetsNeeded,
+          sheetPrice: m.sheetPrice,
+          paperName: ctx.paperNameByInventoryItemId.get(invId) ?? null,
+        };
+      });
+
       return {
         total: result.total,
         breakdown: {
@@ -301,11 +352,13 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           contentType: pricing.contentType,
           copies: pricing.copies ?? null,
           paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+          materials,
         } as unknown as Prisma.InputJsonValue,
-        sheetsNeeded: result.sheetsNeeded,
-        inventoryItemId: pricing.inventoryItemId,
+        sheetsNeeded: null,
+        inventoryItemId: null,
         sizeFamilyKey: pricing.sizeFamilyKey,
         realSizeLabel: pricing.realSizeLabel,
+        materials,
       };
     }
     case 'ENVELOPE': {
@@ -378,40 +431,72 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       };
     }
     case 'DIGITAL': {
-      const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
-      if (sheetPrice === undefined) {
-        throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no linked sheet price`);
-      }
-      const result = calculateDigitalCost({
-        pieceWidthCm: pricing.pieceWidthCm,
-        pieceHeightCm: pricing.pieceHeightCm,
-        quantity: pricing.quantity,
-        yieldPerQuarter: pricing.yieldPerQuarter,
-        sheetPrice,
-        sellophaneEnabled: pricing.sellophaneEnabled,
-        boshrPricePerPiece: pricing.boshrPricePerPiece,
-        settings: ctx.digitalConstants,
-        profitPercentOverride: pricing.profitPercentOverride,
-        extraCosts: sumExtraCosts(pricing),
+      // Multi-component (2026-08-17) — each component (cover/interior/...)
+      // is priced fully independently, then summed. A plain single-item
+      // digital job is just `components.length === 1`, which
+      // `calculateDigitalMultiComponentCost` returns byte-identical to a
+      // direct `calculateDigitalCost` call (see that function's doc comment
+      // for the algebraic proof).
+      const componentInputs: DigitalComponentInput[] = pricing.components.map((c) => {
+        const sheetPrice = ctx.sheetPriceByInventoryItemId.get(c.inventoryItemId);
+        if (sheetPrice === undefined) {
+          throw new PricingInputError(`Inventory item "${c.inventoryItemId}" has no linked sheet price`);
+        }
+        return {
+          label: c.label,
+          inventoryItemId: c.inventoryItemId,
+          pieceWidthCm: c.pieceWidthCm,
+          pieceHeightCm: c.pieceHeightCm,
+          quantity: c.quantity,
+          yieldPerQuarter: c.yieldPerQuarter,
+          sheetPrice,
+          sellophaneEnabled: c.sellophaneEnabled,
+          boshrPricePerPiece: c.boshrPricePerPiece,
+          settings: ctx.digitalConstants,
+          profitPercentOverride: pricing.profitPercentOverride,
+          extraCosts: sumExtraCosts(pricing),
+        };
       });
+
+      const result = calculateDigitalMultiComponentCost(componentInputs);
+
+      // Echoes each component's own input fields back alongside its result
+      // (same "input fields aren't part of the pure function's own result,
+      // merge them in for printing/reconstruction" pattern every other kind
+      // above already uses) — `NewOrderPage.tsx`'s edit-reconstruction path
+      // reads this full `components` list, not just `materials` below.
+      const componentsBreakdown = result.components.map((rc, idx) => ({
+        ...rc,
+        pieceWidthCm: componentInputs[idx].pieceWidthCm,
+        pieceHeightCm: componentInputs[idx].pieceHeightCm,
+        yieldPerQuarter: componentInputs[idx].yieldPerQuarter,
+        sellophaneEnabled: componentInputs[idx].sellophaneEnabled ?? null,
+        boshrPricePerPiece: componentInputs[idx].boshrPricePerPiece ?? null,
+        paperName: ctx.paperNameByInventoryItemId.get(rc.inventoryItemId) ?? null,
+      }));
+
+      const materials: ItemPricingMaterial[] = componentsBreakdown.map((c, idx) => ({
+        role: c.label,
+        inventoryItemId: c.inventoryItemId,
+        sheetsNeeded: c.sheetsNeeded,
+        sheetPrice: componentInputs[idx].sheetPrice,
+        paperName: c.paperName,
+      }));
+
       return {
         total: result.total,
         breakdown: {
-          ...result,
-          pieceWidthCm: pricing.pieceWidthCm,
-          pieceHeightCm: pricing.pieceHeightCm,
-          yieldPerQuarter: pricing.yieldPerQuarter,
-          sellophaneEnabled: pricing.sellophaneEnabled ?? null,
-          paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+          total: result.total,
+          subtotal: result.subtotal,
+          extraCosts: result.extraCosts,
+          profitPercentUsed: result.profitPercentUsed,
+          components: componentsBreakdown,
         } as unknown as Prisma.InputJsonValue,
-        // Same generic path LOOSE_PAPER/NOTEBOOK/FOLDER already use
-        // (orderService.ts checks `result.inventoryItemId && result.sheetsNeeded`
-        // to deduct/restock Inventory) — no new deduction code needed, just
-        // feeding it a real sheet count instead of `null`.
-        sheetsNeeded: result.sheetsNeeded,
-        inventoryItemId: pricing.inventoryItemId,
+        sheetsNeeded: null,
+        inventoryItemId: null,
         sizeFamilyKey: null,
         realSizeLabel: null,
+        materials,
       };
     }
     case 'BOARDS': {

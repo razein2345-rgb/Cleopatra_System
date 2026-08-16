@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, User } from '@cleopatra/shared';
+import { PRODUCTION_TRACK_LABELS } from '@cleopatra/shared';
 import { apiDelete, apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
@@ -124,11 +125,14 @@ export function OrderDocumentPage() {
               {deleting ? 'جارٍ الحذف…' : 'حذف الفاتورة'}
             </Button>
           )}
-          {order.workOrderId && (
-            <Button type="button" variant="secondary" onClick={() => navigate(`/work-orders/${order.workOrderId}`)}>
-              طباعة أمر الشغل
+          {/* "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — an order can now
+              have several Work Orders (one per resolved track); one print
+              button per Work Order instead of the old singular button. */}
+          {order.workOrders.map((wo) => (
+            <Button key={wo.id} type="button" variant="secondary" onClick={() => navigate(`/work-orders/${wo.id}`)}>
+              طباعة أمر شغل {PRODUCTION_TRACK_LABELS[wo.productionTrack]}
             </Button>
-          )}
+          ))}
           <Button type="button" onClick={() => window.print()}>
             طباعة الفاتورة
           </Button>

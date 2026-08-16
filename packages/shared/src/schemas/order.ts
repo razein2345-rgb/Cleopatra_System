@@ -13,17 +13,20 @@ export const orderStatusSchema = z.enum([
 ]);
 
 /**
- * FEATURE-007 WF-B — matches `WorkflowTemplate.code` for the 4 tracks
- * seeded by WF-A. Chosen explicitly by staff at order-creation time
- * (owner decision, 2026-08-12: "بنفرق على حسب الطلب من الأول") — never
- * inferred from item kind, since e.g. loose paper can legitimately go
- * either Offset or Digital and only the person taking the order knows
- * which. `createWorkOrder` reads this to auto-resolve `templateCode`.
+ * "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16, owner: "الغيها خالص —
+ * النظام يحدد لوحده") — SUPERSEDES the previous doc comment here (which
+ * described a manual, staff-picked, order-level track). That decision is
+ * now explicitly reversed: track is resolved automatically per OrderItem
+ * from the composer tab it was built under (see
+ * `packages/shared/src/orders/itemCategories.ts`'s `productionTrack` on
+ * each tab) — never a manual dropdown, never one value for a whole order.
+ * `SERVICES` gained its WorkflowTemplate 2026-08-16; `READY_PRODUCTS`
+ * still has none (ready-made/purchased items need a distinct, not-yet-built
+ * "Procurement Job" workflow per CLAUDE.md, not this Design→Print style
+ * engine) — an item resolving to a templateless track simply never gets a
+ * Work Order, same "best-effort, never blocks the Order" behavior as
+ * every other track.
  */
-// FEATURE-009 (2026-08-13) — SERVICES/READY_PRODUCTS reserved so a
-// services-only or ready-products-only order can eventually get its own
-// dedicated WorkflowTemplate; no template exists for either yet (owner:
-// "جهز الـarchitecture فقط... لا تخترع لها قواعد من عندك").
 export const productionTrackSchema = z.enum([
   'OFFSET',
   'DIGITAL',
@@ -34,6 +37,22 @@ export const productionTrackSchema = z.enum([
   // system_specifications_v2.md §2.4/§7-A.6 "Sublimation & Gifts" (2026-08-16).
   'SUBLIMATION_GIFTS',
 ]);
+
+/**
+ * One shared Arabic label source for `ProductionTrack` — used by every
+ * screen that displays a track name (order composer, printed documents,
+ * Production Board) so they can never drift into showing two different
+ * names for the same track.
+ */
+export const PRODUCTION_TRACK_LABELS: Record<z.infer<typeof productionTrackSchema>, string> = {
+  OFFSET: 'أوفست',
+  DIGITAL: 'ديجيتال',
+  BOARDS_SIGNAGE: 'لوحات وإعلانات',
+  OTHER_PRODUCTS: 'منتجات أخرى',
+  SERVICES: 'خدمات',
+  READY_PRODUCTS: 'منتجات جاهزة',
+  SUBLIMATION_GIFTS: 'طباعة حرارية وهدايا',
+};
 
 /**
  * A historical line item snapshot — `kind`/`modelName`/`breakdown` are
@@ -62,6 +81,31 @@ export const orderItemSchema = z.object({
   realSizeLabel: z.string().nullable(),
   inventoryItemId: z.string().uuid().nullable(),
   sheetsConsumed: z.number().nullable(),
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — frozen at creation
+  // from the composer tab; null = never enters production (INVENTORY_RETAIL,
+  // or a track with no published template). `workOrderId` is set once this
+  // item's own Work Order exists.
+  productionTrack: productionTrackSchema.nullable(),
+  workOrderId: z.string().uuid().nullable(),
+  /**
+   * Multi-material pricing (2026-08-17) — NOTEBOOK/DIGITAL items only.
+   * Populated in creation order (`sortOrder`) when this item consumes more
+   * than one material; empty/absent for every other kind (they still use
+   * `inventoryItemId`/`sheetsConsumed` above, untouched).
+   */
+  materials: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        role: z.string(),
+        sortOrder: z.number(),
+        inventoryItemId: z.string().uuid(),
+        paperName: z.string(),
+        sheetPrice: z.number(),
+        sheetsConsumed: z.number(),
+      }),
+    )
+    .optional(),
   createdAt: z.string(),
 });
 
@@ -88,17 +132,21 @@ export const orderSchema = z.object({
   customerNotes: z.string().nullable(),
   internalNotes: z.string().nullable(),
   status: orderStatusSchema,
-  productionTrack: productionTrackSchema.nullable(),
-  // FEATURE-010 (2026-08-14, owner: "عند إنشاء الطلب يجب أن يكون واضحًا
-  // هل: Requires Design = نعم / لا") — read once at Work Order creation
-  // to decide whether the chosen track's design stage gets auto-skipped.
-  requiresDesign: z.boolean(),
   quotationOriginId: z.string().uuid().nullable(),
-  // FEATURE-011 (2026-08-14, owner: "اقدر اطبع أمر الشغل من صفحة الطلبات")
-  // — lets OrderDocumentPage offer a "طباعة أمر الشغل" link straight to
-  // /work-orders/:id without a second fetch. Null until a WorkOrder is
-  // generated for this Order (see createWorkOrder in workOrders.ts).
-  workOrderId: z.string().uuid().nullable(),
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was a singular
+  // `workOrderId` (one order = one order-level track = one Work Order).
+  // Now a list: one Work Order per distinct `ProductionTrack` actually
+  // present among this order's items (see `OrderItem.productionTrack`).
+  // Empty array = no item resolved to a track with a published template
+  // yet. Lets OrderDocumentPage/NewOrderPage's success screen render one
+  // "طباعة أمر الشغل" link per Work Order without a second fetch.
+  workOrders: z.array(
+    z.object({
+      id: z.string().uuid(),
+      workOrderNumber: z.string(),
+      productionTrack: productionTrackSchema,
+    }),
+  ),
   items: z.array(orderItemSchema),
   // FEATURE-006 M3 — deposits/remaining balance (Approved Addition,
   // "Deposit / Payment Flow"). `paidTotal`/`remainingBalance` are
@@ -141,6 +189,14 @@ export const createOrderItemSchema = z.object({
   // the Order exists.
   attachmentId: z.string().uuid().optional(),
   pricing: orderItemPricingInputSchema,
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — stamped client-side
+  // from the composer tab (`resolveProductionTrackForTab` in
+  // itemCategories.ts), NOT a manual pick. Trusted the same way
+  // `itemType`/`inkColor` already are (a descriptive/routing field, not a
+  // money figure the pricing engine computes) — the server still runs a
+  // cheap consistency check against `pricing.kind` for the unambiguous
+  // kinds (see `orderService.ts`'s `assertProductionTrackConsistentWithKind`).
+  productionTrack: productionTrackSchema.nullable().optional(),
 });
 
 /**
@@ -160,8 +216,15 @@ export const createOrderSchema = z.object({
   deliveryDate: z.string().optional(),
   customerNotes: z.string().trim().min(1).max(2000).optional(),
   internalNotes: z.string().trim().min(1).max(2000).optional(),
-  productionTrack: productionTrackSchema.optional(),
-  requiresDesign: z.boolean().optional(),
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was a single
+  // order-level `productionTrack`/`requiresDesign`; superseded by each
+  // item's own `productionTrack` (above). `requiresDesignByTrack` is
+  // transient — read once at Work-Order-creation time to decide whether
+  // that track's design stage auto-skips, never stored on Order or
+  // OrderItem (a track only "needs design" at the moment its Work Order
+  // is born). Missing a track's key defaults to `true` (unchanged
+  // behavior: every track goes through design unless told not to).
+  requiresDesignByTrack: z.record(z.string(), z.boolean()).optional(),
   items: z.array(createOrderItemSchema).min(1),
   // FEATURE-007 — PRICING_ENGINE_SPEC.md §4's multi-payment array,
   // collected at creation time (e.g. cash + bank transfer for the same
@@ -186,8 +249,7 @@ export const updateOrderSchema = z.object({
   deliveryDate: z.string().nullable().optional(),
   customerNotes: z.string().trim().min(1).max(2000).nullable().optional(),
   internalNotes: z.string().trim().min(1).max(2000).nullable().optional(),
-  productionTrack: productionTrackSchema.nullable().optional(),
-  requiresDesign: z.boolean().optional(),
+  requiresDesignByTrack: z.record(z.string(), z.boolean()).optional(),
   items: z.array(createOrderItemSchema).min(1),
 });
 

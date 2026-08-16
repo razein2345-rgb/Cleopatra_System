@@ -512,13 +512,18 @@ const WORKFLOW_INSTANCE_LIST_INCLUDE = {
       order: {
         select: {
           partner: { select: { nameAr: true } },
-          // FEATURE-010 (2026-08-14, owner: "محتاج في تاب الطلبات... يكون
-          // ظاهر... اسم الصنف") — item.modelName is the human-entered
-          // product name; kind (loose/notebook/product/service/…) is the
-          // fallback for items that never got one.
-          items: { select: { modelName: true, kind: true } },
         },
       },
+      // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was
+      // `order.items` (every item on the whole Order, wrong once one
+      // Order can have several Work Orders each covering only some of
+      // them). Now the Work Order's own `items` reverse relation —
+      // exactly what this specific job covers.
+      // FEATURE-010 (2026-08-14, owner: "محتاج في تاب الطلبات... يكون
+      // ظاهر... اسم الصنف") — item.modelName is the human-entered
+      // product name; kind (loose/notebook/product/service/…) is the
+      // fallback for items that never got one.
+      items: { select: { modelName: true, kind: true } },
     },
   },
 } satisfies Prisma.WorkflowInstanceInclude;
@@ -545,7 +550,7 @@ export async function listWorkflowInstances(status: WorkflowInstanceStatus): Pro
     ...mapWorkflowInstanceToDto(row, true),
     workOrderNumber: row.workOrder?.workOrderNumber ?? null,
     customerName: row.workOrder?.order.partner.nameAr ?? null,
-    itemNames: row.workOrder?.order.items.map((i) => i.modelName || i.kind || 'صنف') ?? [],
+    itemNames: row.workOrder?.items.map((i) => i.modelName || i.kind || 'صنف') ?? [],
   }));
 }
 

@@ -42,3 +42,4 @@ export * from './schemas/inventoryItem.js';
 export * from './schemas/employeeAdvance.js';
 export * from './schemas/employeePayroll.js';
 export * from './schemas/attendance.js';
+export * from './orders/itemCategories.js';

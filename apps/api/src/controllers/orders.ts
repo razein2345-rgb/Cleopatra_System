@@ -137,7 +137,7 @@ export async function updateOrderHandler(req: Request<{ id: string }>, res: Resp
 
   let updated;
   try {
-    updated = await updateOrder(req.params.id, input, itemNames);
+    updated = await updateOrder(req.params.id, input, itemNames, auth.staffId);
   } catch (err) {
     if (err instanceof OrderNotFoundError) {
       res.status(404).json({ success: false, error: { message: err.message } });

@@ -324,6 +324,91 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
   };
 }
 
+/**
+ * Multi-material notebooks (2026-08-17, owner-approved formula — see
+ * CLAUDE.md rule 4). `calculateNotebookCost` above is never touched by this
+ * function — it's called exactly once, unmodified, and its `sheetsNeeded`/
+ * `zincCost`/`printCost`/`numberingCost`/`bindingCost`/`designCost` are used
+ * as-is. Only `paperCost` is redistributed across up to 3 materials
+ * (original/copy/second copy), each getting its exact proportional share of
+ * the SAME total `sheetsNeeded` (a notebook is built of equal "sets" — one
+ * original page + one page per copy — so each present role gets exactly
+ * `1/(1+copies)` of the pages). The last present role absorbs the rounding
+ * remainder so the three shares always sum to `sheetsNeeded` exactly, never
+ * drifting from the unmodified total.
+ */
+export type NotebookMaterialRole = 'ORIGINAL' | 'COPY_1' | 'COPY_2';
+
+export interface NotebookMaterialOverride {
+  role: 'COPY_1' | 'COPY_2';
+  sheetPrice: number;
+}
+
+export interface NotebookMaterialBreakdown {
+  role: NotebookMaterialRole;
+  sheetsNeeded: number;
+  sheetPrice: number;
+  paperCost: number;
+}
+
+export interface NotebookMultiMaterialCostResult extends NotebookCostResult {
+  materials: NotebookMaterialBreakdown[];
+}
+
+/**
+ * `materialOverrides` supplies COPY_1/COPY_2's own sheet price when they
+ * differ from the original's `input.sheetPrice`. Omitted entirely (the
+ * common case today — one paper for the whole notebook) returns `base`
+ * untouched, wrapped in a single-role `materials` array — byte-identical to
+ * calling `calculateNotebookCost` directly.
+ */
+export function calculateNotebookMultiMaterialCost(
+  input: NotebookCostInput,
+  materialOverrides?: NotebookMaterialOverride[],
+): NotebookMultiMaterialCostResult {
+  const base = calculateNotebookCost(input);
+
+  if (!materialOverrides || materialOverrides.length === 0) {
+    return {
+      ...base,
+      materials: [{ role: 'ORIGINAL', sheetsNeeded: base.sheetsNeeded, sheetPrice: input.sheetPrice, paperCost: base.paperCost }],
+    };
+  }
+
+  const copies = input.copies ?? 0;
+  const roles: NotebookMaterialRole[] = ['ORIGINAL'];
+  if (copies >= 1) roles.push('COPY_1');
+  if (copies >= 2) roles.push('COPY_2');
+
+  const weights: Record<NotebookMaterialRole, number> = {
+    ORIGINAL: 1,
+    COPY_1: copies >= 1 ? 1 : 0,
+    COPY_2: copies >= 2 ? copies - 1 : 0,
+  };
+  const totalWeight = roles.reduce((sum, role) => sum + weights[role], 0);
+
+  const priceByRole: Record<NotebookMaterialRole, number> = {
+    ORIGINAL: input.sheetPrice,
+    COPY_1: materialOverrides.find((m) => m.role === 'COPY_1')?.sheetPrice ?? input.sheetPrice,
+    COPY_2: materialOverrides.find((m) => m.role === 'COPY_2')?.sheetPrice ?? input.sheetPrice,
+  };
+
+  let allocated = 0;
+  const materials: NotebookMaterialBreakdown[] = roles.map((role, idx) => {
+    const isLast = idx === roles.length - 1;
+    const sheetsNeeded = isLast ? base.sheetsNeeded - allocated : Math.floor((base.sheetsNeeded * weights[role]) / totalWeight);
+    allocated += sheetsNeeded;
+    const sheetPrice = priceByRole[role];
+    return { role, sheetsNeeded, sheetPrice, paperCost: sheetsNeeded * sheetPrice };
+  });
+
+  const paperCost = materials.reduce((sum, m) => sum + m.paperCost, 0);
+  const subtotal = base.designCost + base.zincCost + base.printCost + base.numberingCost + paperCost + base.bindingCost + base.extraCosts;
+  const total = subtotal * (1 + base.profitPercentUsed / 100);
+
+  return { ...base, paperCost, subtotal, total, materials };
+}
+
 export interface EnvelopeCostInput {
   quantity: number;
   colorCount: number;

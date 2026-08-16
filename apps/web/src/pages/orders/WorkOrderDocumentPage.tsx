@@ -45,7 +45,24 @@ interface OffsetItemBreakdown {
   bindingType?: string | null;
   sellophaneType?: string | null;
   referenceImageUrl?: string | null;
+  /**
+   * Multi-material NOTEBOOK (2026-08-17, owner: "الاصل خامة والصورة خامة
+   * والصورة التالته خامة تالتة") — one entry per material actually in use,
+   * frozen by `pricingEngineService.ts`'s NOTEBOOK case straight into
+   * `breakdown` (not read from the `OrderItemMaterial` DB relation — this
+   * page already reads everything from the frozen `breakdown` JSON). Absent
+   * or a single entry ⇒ render the same single "نوع الورق"/"عدد الأفرخ"
+   * rows every other kind already gets, unchanged.
+   */
+  materials?: { role: string; paperName: string | null; sheetsNeeded: number }[];
 }
+
+/** Multi-material NOTEBOOK (2026-08-17) — Arabic labels for the fixed material roles, same mapping `NewOrderPage.tsx` uses for its live preview. */
+const NOTEBOOK_MATERIAL_ROLE_LABELS: Record<string, string> = {
+  ORIGINAL: 'الأصل',
+  COPY_1: 'الصورة',
+  COPY_2: 'الصورة التانية',
+};
 
 function offsetBreakdown(item: OrderItem): OffsetItemBreakdown {
   return (item.breakdown as OffsetItemBreakdown | null) ?? {};
@@ -111,8 +128,24 @@ function OffsetItemCard({
       <Field label="العميل" value={partnerName} />
       <Field label="إسم الصنف" value={item.modelName ?? item.kind ?? '—'} />
       <Field label={offsetQuantityLabel(b)} value={quantityValue} />
-      <Field label="نوع الورق" value={b.paperName ?? '—'} />
-      <Field label="عدد الأفرخ" value={<span dir="ltr">{b.sheetsNeeded ?? '—'}</span>} />
+      {b.materials && b.materials.length > 1 ? (
+        b.materials.map((m, i) => (
+          <div key={`${m.role}-${i}`} className="border-border flex flex-wrap gap-4 border-b py-1.5">
+            <span>
+              <span className="text-muted-foreground">نوع ورق {NOTEBOOK_MATERIAL_ROLE_LABELS[m.role] ?? m.role} :</span>{' '}
+              <span className="font-medium">{m.paperName ?? '—'}</span>
+            </span>
+            <span>
+              <span className="text-muted-foreground">عدد الأفرخ :</span> <span dir="ltr">{m.sheetsNeeded}</span>
+            </span>
+          </div>
+        ))
+      ) : (
+        <>
+          <Field label="نوع الورق" value={b.paperName ?? '—'} />
+          <Field label="عدد الأفرخ" value={<span dir="ltr">{b.sheetsNeeded ?? '—'}</span>} />
+        </>
+      )}
       <div className="border-border flex flex-wrap gap-4 border-b py-1.5">
         <span>
           <span className="text-muted-foreground">الترقيم من :</span> <span dir="ltr">{b.numberingStartNumber ?? '—'}</span>
@@ -255,9 +288,18 @@ export function WorkOrderDocumentPage() {
   const effectiveLogoUrl = branch?.logoUrl || business.logoUrl;
   const effectiveName = branch?.name || business.businessNameAr;
 
-  const trackRenderer = order.productionTrack ? WORK_ORDER_TRACK_RENDERERS[order.productionTrack] : 'GENERIC';
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was
+  // `order.productionTrack` (one value for the whole order, now removed);
+  // every Work Order carries its own frozen track directly, always
+  // non-null, no fallback needed.
+  const trackRenderer = WORK_ORDER_TRACK_RENDERERS[workOrder.productionTrack];
   if (trackRenderer !== 'OFFSET_DETAILED') {
-    const items: DocumentRendererItem[] = order.items.map((item) => {
+    // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was `order.items`
+    // (every item on the whole Order); now `workOrder.items`, the items
+    // belonging to *this* Work Order only — printing two Work Orders for
+    // the same mixed-track Order used to print the same full item list
+    // twice, this is exactly the bug that fixes.
+    const items: DocumentRendererItem[] = workOrder.items.map((item) => {
       const breakdown = item.breakdown as { quantity?: number; notes?: string | null } | null;
       return {
         itemType: item.kind ?? '—',
@@ -374,7 +416,7 @@ export function WorkOrderDocumentPage() {
         </section>
 
         <OffsetItemCards
-          items={order.items}
+          items={workOrder.items}
           partnerName={partner.nameAr}
           sizeFamilyLabelByKey={new Map((pricingReference?.sizeFamilies ?? []).map((f) => [f.key, f.label]))}
         />

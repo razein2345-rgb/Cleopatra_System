@@ -28,7 +28,7 @@ import {
 import { buildPricingContext, computeItemPricing, PricingInputError } from '../services/pricingEngineService.js';
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
-import { tryAutoCreateWorkOrder } from '../services/workOrderService.js';
+import { tryAutoCreateWorkOrders } from '../services/workOrderService.js';
 
 /**
  * All current callers are internal staff (this route is gated on
@@ -199,6 +199,7 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
             itemTotal: result.total,
             sizeFamilyKey: result.sizeFamilyKey,
             realSizeLabel: result.realSizeLabel,
+            productionTrack: item.productionTrack ?? null,
           };
         }),
       });
@@ -402,6 +403,7 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
               },
               sizeFamilyKey: item.sizeFamilyKey,
               realSizeLabel: item.realSizeLabel,
+              productionTrack: item.productionTrack,
             }),
           ),
         },
@@ -415,15 +417,17 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
       include: QUOTATION_INCLUDE,
     });
 
-    // FEATURE-016 (2026-08-16) — same best-effort auto-entry-into-production
-    // as the direct-invoice path (`orderService.createOrder`). A Quotation
-    // carries no `productionTrack` of its own, so this only actually creates
-    // a WorkOrder once quotations gain that field; harmless no-op until then.
-    await tryAutoCreateWorkOrder(
-      tx,
-      { id: createdOrder.id, branchId: createdOrder.branchId, productionTrack: createdOrder.productionTrack, requiresDesign: createdOrder.requiresDesign },
-      auth.staffId,
-    );
+    // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — same best-effort
+    // auto-entry-into-production as the direct-invoice path
+    // (`orderService.createOrder`), now per distinct track present among
+    // the converted items (`QuotationItem.productionTrack`, carried
+    // through `buildOrderItemCreate` above) — no longer a guaranteed
+    // no-op, since Quotations now carry each item's track.
+    const createdItemRows = await tx.orderItem.findMany({
+      where: { orderId: createdOrder.id },
+      select: { id: true, productionTrack: true },
+    });
+    await tryAutoCreateWorkOrders(tx, { id: createdOrder.id, branchId: createdOrder.branchId }, createdItemRows, undefined, auth.staffId);
 
     // Re-fetch with ORDER_INCLUDE now that the Quotation's `convertedOrderId`
     // FK is committed — `createdOrder`'s own include ran before that FK
@@ -509,6 +513,7 @@ export async function createQuotationVersion(req: Request<{ id: string }>, res: 
             itemTotal: item.itemTotal,
             sizeFamilyKey: item.sizeFamilyKey,
             realSizeLabel: item.realSizeLabel,
+            productionTrack: item.productionTrack,
           })),
         },
       },

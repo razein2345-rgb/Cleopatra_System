@@ -57,6 +57,19 @@ export const loosePaperPricingInputSchema = z.object({
   ...extraServiceFields,
 });
 
+/**
+ * Multi-material notebooks (2026-08-17, owner-approved — CLAUDE.md rule 4).
+ * `inventoryItemId` (from `sheetJobFields` above) stays required and is
+ * always the "original" page's material, exactly as before. `materials` is
+ * an optional override supplying a different material for the copy pages —
+ * omitted entirely (the common case) means "same paper as the original",
+ * byte-identical to today's single-material behavior.
+ */
+const notebookMaterialOverrideSchema = z.object({
+  role: z.enum(['COPY_1', 'COPY_2']),
+  inventoryItemId: z.string().uuid(),
+});
+
 export const notebookPricingInputSchema = z.object({
   kind: z.literal('NOTEBOOK'),
   ...sheetJobFields,
@@ -64,6 +77,7 @@ export const notebookPricingInputSchema = z.object({
   contentType: z.enum(['ORIGINAL_ONLY', 'ORIGINAL_PLUS_COPIES']),
   copies: z.number().int().nonnegative().optional(),
   bindingPricePerNotebook: z.number().nonnegative(),
+  materials: z.array(notebookMaterialOverrideSchema).max(2).optional(),
   ...marginOverrideFields,
   ...zincPrintOverrideFields,
   ...extraServiceFields,
@@ -113,9 +127,19 @@ export const boardsPricingInputSchema = z.object({
   ...extraServiceFields,
 });
 
-/** system_specifications_v2.md §13.3 — Digital printing, Yield-based. No zinc/plate cost (no plates in digital printing), so no `zincPrintOverrideFields` here — that's an Offset-only concept. */
-export const digitalPricingInputSchema = z.object({
-  kind: z.literal('DIGITAL'),
+/**
+ * Multi-component digital items (2026-08-17, owner-approved — CLAUDE.md
+ * rule 3). Every digital item is a list of one or more named components
+ * (`label`, e.g. "الغلاف"/"الداخلي" for a magazine, or just one entry for a
+ * plain digital item), each priced fully independently (own size/Yield/
+ * material). Replacing the old single-material fields outright (not kept
+ * alongside them) is safe here specifically because no live Order data
+ * exists yet in this shape (verified empty at implementation time) — see
+ * NOTEBOOK above for the pattern used where backward compatibility with
+ * existing rows actually mattered.
+ */
+const digitalComponentSchema = z.object({
+  label: z.string().trim().min(1).max(100),
   inventoryItemId: z.string().uuid(),
   pieceWidthCm: z.number().positive(),
   pieceHeightCm: z.number().positive(),
@@ -125,6 +149,12 @@ export const digitalPricingInputSchema = z.object({
   sellophaneEnabled: z.boolean().optional(),
   /** "سعر البشر" — optional, always caller-entered per piece. */
   boshrPricePerPiece: z.number().nonnegative().optional(),
+});
+
+/** system_specifications_v2.md §13.3 — Digital printing, Yield-based. No zinc/plate cost (no plates in digital printing), so no `zincPrintOverrideFields` here — that's an Offset-only concept. */
+export const digitalPricingInputSchema = z.object({
+  kind: z.literal('DIGITAL'),
+  components: z.array(digitalComponentSchema).min(1).max(6),
   ...marginOverrideFields,
   ...extraServiceFields,
 });
@@ -168,10 +198,12 @@ export const orderItemPricingInputSchema = z.discriminatedUnion('kind', [
 // a duplicate-name collision at the package's `index.ts` barrel.
 export type LoosePaperPricingInput = z.infer<typeof loosePaperPricingInputSchema>;
 export type NotebookPricingInput = z.infer<typeof notebookPricingInputSchema>;
+export type NotebookMaterialOverrideInput = z.infer<typeof notebookMaterialOverrideSchema>;
 export type EnvelopePricingInput = z.infer<typeof envelopePricingInputSchema>;
 export type FolderPricingInput = z.infer<typeof folderPricingInputSchema>;
 export type BoardsPricingInput = z.infer<typeof boardsPricingInputSchema>;
 export type DigitalPricingInput = z.infer<typeof digitalPricingInputSchema>;
+export type DigitalComponentPricingInput = z.infer<typeof digitalComponentSchema>;
 export type ProductOrServicePricingInput = z.infer<typeof productOrServicePricingInputSchema>;
 export type InventoryRetailPricingInput = z.infer<typeof inventoryRetailPricingInputSchema>;
 export type OrderItemPricingInput = z.infer<typeof orderItemPricingInputSchema>;

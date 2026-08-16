@@ -158,3 +158,59 @@ export function calculateDigitalCost(input: DigitalCostInput): DigitalCostResult
     sheetsNeeded,
   };
 }
+
+/**
+ * Multi-component digital items (2026-08-17, owner-approved formula — see
+ * CLAUDE.md rule 3). A magazine-style item (cover on one material, interior
+ * on another) is priced as a list of arbitrary named components, each
+ * computed via a fully independent, unmodified call to `calculateDigitalCost`
+ * above (own size/Yield/material — exactly as if it were its own separate
+ * Digital item), then summed.
+ *
+ * `extraCosts` (the manual "خدمات إضافية" amount) is applied to the first
+ * component only so it isn't double-counted across components; every
+ * component shares one `profitPercentOverride` (one margin per order item,
+ * not per component). Since `total_i = subtotal_i * (1 + p/100)` with the
+ * same `p` for every component, `sum(total_i) = sum(subtotal_i) * (1+p/100)`
+ * algebraically — for a single component this is byte-identical to calling
+ * `calculateDigitalCost` directly, not an approximation.
+ */
+export interface DigitalComponentInput extends DigitalCostInput {
+  label: string;
+  inventoryItemId: string;
+}
+
+export interface DigitalComponentBreakdown extends DigitalCostResult {
+  label: string;
+  inventoryItemId: string;
+}
+
+export interface DigitalMultiComponentCostResult {
+  total: number;
+  subtotal: number;
+  extraCosts: number;
+  profitPercentUsed: number;
+  components: DigitalComponentBreakdown[];
+}
+
+export function calculateDigitalMultiComponentCost(components: DigitalComponentInput[]): DigitalMultiComponentCostResult {
+  if (components.length === 0) {
+    throw new DigitalCalculationError('At least one digital component is required');
+  }
+
+  const results: DigitalComponentBreakdown[] = components.map((component, idx) => {
+    const result = calculateDigitalCost({ ...component, extraCosts: idx === 0 ? (component.extraCosts ?? 0) : 0 });
+    return { ...result, label: component.label, inventoryItemId: component.inventoryItemId };
+  });
+
+  const total = results.reduce((sum, r) => sum + r.total, 0);
+  const subtotal = results.reduce((sum, r) => sum + r.subtotal, 0);
+
+  return {
+    total,
+    subtotal,
+    extraCosts: results[0].extraCosts,
+    profitPercentUsed: results[0].profitPercentUsed,
+    components: results,
+  };
+}

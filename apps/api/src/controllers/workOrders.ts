@@ -1,15 +1,15 @@
 import type { Request, Response } from 'express';
+import type { ProductionTrack } from '@cleopatra/shared';
 import { createWorkOrderSchema, hasPermission } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
   WORK_ORDER_INCLUDE,
+  createWorkOrderForTrack,
   deleteWorkOrder as deleteWorkOrderService,
   mapWorkOrderToDto,
-  nextWorkOrderNumber,
   WorkOrderNotFoundError,
 } from '../services/workOrderService.js';
 import { getLatestPublishedTemplate } from '../services/workflowTemplateService.js';
-import { createWorkflowInstance, WorkflowNoStagesError } from '../services/workflowInstanceService.js';
 import { recordAudit } from '../services/auditService.js';
 
 /**
@@ -22,17 +22,17 @@ function canSeeInternal(req: Request): boolean {
 }
 
 /**
- * Creates a `WorkOrder` for an `Order` plus its `WorkflowInstance` on the
- * requested template's latest published version, in one transaction —
- * mirrors quotation-conversion's create-plus-link transaction shape
- * (FEATURE-003 M2).
- *
- * FEATURE-007 WF-B — `templateCode` is optional: when omitted, resolved
- * from `order.productionTrack` (the track chosen at order-creation time,
- * per the owner's "differentiate from the start" decision, 2026-08-12)
- * instead of requiring a manual pick every time. An explicit
- * `templateCode` still wins if supplied — e.g. an older order created
- * before `productionTrack` existed.
+ * "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — the manual fallback
+ * behind `GenerateWorkOrderPanel`, for whichever tracks didn't get an
+ * automatic Work Order at order-creation time (their template wasn't
+ * published yet). `templateCode` now doubles as the track selector —
+ * scoped to exactly this order's items whose own `productionTrack`
+ * matches `templateCode` and have no `workOrderId` yet, mirroring
+ * `createWorkOrderForTrack` (the exact function `orderService.ts`'s
+ * automatic per-track loop already uses, so the two paths can never
+ * drift). A 400 with no matching items also naturally replaces the old
+ * latent bug where calling this twice for the same order threw an
+ * uncaught unique-constraint error.
  */
 export async function createWorkOrder(req: Request, res: Response) {
   const auth = req.auth!;
@@ -44,19 +44,8 @@ export async function createWorkOrder(req: Request, res: Response) {
     return;
   }
 
-  const templateCode = input.templateCode ?? order.productionTrack;
-  if (!templateCode) {
-    res.status(400).json({
-      success: false,
-      error: {
-        message: 'This order has no production track set — pass templateCode explicitly or set one on the order',
-        code: 'NO_PRODUCTION_TRACK',
-      },
-    });
-    return;
-  }
-
-  const template = await getLatestPublishedTemplate(templateCode);
+  const track = input.templateCode as ProductionTrack;
+  const template = await getLatestPublishedTemplate(track);
   if (!template) {
     res.status(400).json({
       success: false,
@@ -65,28 +54,37 @@ export async function createWorkOrder(req: Request, res: Response) {
     return;
   }
 
-  let created;
-  try {
-    created = await prisma.$transaction(async (tx) => {
-      const workOrderNumber = await nextWorkOrderNumber(tx);
-      const workOrder = await tx.workOrder.create({
-        data: { workOrderNumber, orderId: order.id, branchId: order.branchId },
-      });
-      await createWorkflowInstance(tx, {
-        templateId: template.id,
-        workOrderId: workOrder.id,
-        performedById: auth.staffId,
-        requiresDesign: order.requiresDesign,
-      });
-      return tx.workOrder.findUniqueOrThrow({ where: { id: workOrder.id }, include: WORK_ORDER_INCLUDE });
+  const unlinkedItems = await prisma.orderItem.findMany({
+    where: { orderId: order.id, productionTrack: track, workOrderId: null },
+    select: { id: true },
+  });
+  if (unlinkedItems.length === 0) {
+    res.status(400).json({
+      success: false,
+      error: {
+        message: 'No unlinked items on this order resolve to this track — a Work Order may already exist for it',
+        code: 'NO_UNLINKED_ITEMS_FOR_TRACK',
+      },
     });
-  } catch (err) {
-    if (err instanceof WorkflowNoStagesError) {
-      res.status(400).json({ success: false, error: { message: err.message, code: 'NO_STAGES' } });
-      return;
-    }
-    throw err;
+    return;
   }
+
+  const result = await prisma.$transaction(async (tx) =>
+    createWorkOrderForTrack(tx, {
+      orderId: order.id,
+      branchId: order.branchId,
+      track,
+      itemIds: unlinkedItems.map((i) => i.id),
+      requiresDesign: input.requiresDesign ?? true,
+      performedById: auth.staffId,
+    }),
+  );
+  if (!result) {
+    res.status(400).json({ success: false, error: { message: 'This template has no stages', code: 'NO_STAGES' } });
+    return;
+  }
+
+  const created = await prisma.workOrder.findUniqueOrThrow({ where: { id: result.workOrderId }, include: WORK_ORDER_INCLUDE });
 
   await recordAudit({
     entityType: 'WorkOrder',

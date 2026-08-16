@@ -31,6 +31,7 @@ export function mapQuotationItemToDto(item: QuotationItemRecord): QuotationItem 
     itemTotal: item.itemTotal?.toNumber() ?? null,
     sizeFamilyKey: item.sizeFamilyKey,
     realSizeLabel: item.realSizeLabel,
+    productionTrack: item.productionTrack,
     createdAt: item.createdAt.toISOString(),
   };
 }
@@ -249,6 +250,7 @@ export async function createQuotation(
               itemTotal: result.total,
               sizeFamilyKey: result.sizeFamilyKey,
               realSizeLabel: result.realSizeLabel,
+              productionTrack: item.productionTrack ?? null,
             };
           }),
         },
