@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { BranchSummary, BusinessIdentity, BusinessPartner, Quotation } from '@cleopatra/shared';
-import { apiGet } from '@/lib/api';
+import { apiDelete, apiGet } from '@/lib/api';
+import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
@@ -15,11 +16,15 @@ import { partnerSalutation } from '@/lib/documents/partnerSalutation';
  */
 export function QuotationDocumentPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { can } = useAuth();
   const [quotation, setQuotation] = useState<Quotation | null>(null);
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -42,6 +47,20 @@ export function QuotationDocumentPage() {
 
   if (error) return <div className="text-destructive">{error}</div>;
   if (!quotation || !partner || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+
+  // Mirrors WorkOrderDocumentPage.tsx's removeWorkOrder exactly (confirm → delete → leave).
+  const removeQuotation = async () => {
+    if (!confirm(`حذف عرض السعر ${quotation.quotationNumber}؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      await apiDelete(`/api/quotations/${quotation.id}`);
+      navigate('/quotations');
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'تعذر حذف عرض السعر');
+      setDeleting(false);
+    }
+  };
 
   const items: DocumentRendererItem[] = quotation.items.map((item) => {
     const breakdown = item.breakdown as { quantity?: number; notes?: string | null } | null;
@@ -68,10 +87,23 @@ export function QuotationDocumentPage() {
             العودة إلى المستندات
           </Link>
         </div>
-        <Button type="button" onClick={() => window.print()}>
-          طباعة عرض السعر
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {can('quotations.edit') && (
+            <Button type="button" variant="secondary" onClick={() => navigate(`/orders/new?editQuotation=${quotation.id}`)}>
+              تعديل
+            </Button>
+          )}
+          {can('quotations.delete') && (
+            <Button type="button" variant="destructive" disabled={deleting} onClick={() => void removeQuotation()}>
+              {deleting ? 'جارٍ الحذف…' : 'حذف عرض السعر'}
+            </Button>
+          )}
+          <Button type="button" onClick={() => window.print()}>
+            طباعة عرض السعر
+          </Button>
+        </div>
       </div>
+      {deleteError && <p className="text-destructive text-sm print:hidden">{deleteError}</p>}
 
       <DocumentRenderer
         snapshot={snapshot}

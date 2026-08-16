@@ -5,7 +5,7 @@ import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { AppShell } from '@/components/AppShell';
 import { LoginPage } from '@/pages/login/LoginPage';
 import { AcceptInvitePage } from '@/pages/accept-invite/AcceptInvitePage';
-import { DashboardPage } from '@/pages/dashboard/DashboardPage';
+import { RoleHome } from '@/pages/dashboard/RoleHome';
 import { SettingsPage } from '@/pages/settings/SettingsPage';
 import { UsersPage } from '@/pages/users/UsersPage';
 import { EmployeeProfilePage } from '@/pages/users/EmployeeProfilePage';
@@ -37,7 +37,7 @@ function App() {
 
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
-              <Route path="/" element={<DashboardPage />} />
+              <Route path="/" element={<RoleHome />} />
 
               <Route element={<ProtectedRoute permission="settings.view" />}>
                 <Route path="/settings" element={<SettingsPage />} />

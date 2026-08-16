@@ -132,6 +132,12 @@ const DEFAULT_DEPARTMENTS = [
   { code: 'EXTERNAL_SUPPLIER', name: 'مورّد خارجي' },
   { code: 'DELIVERY', name: 'التسليم' },
   { code: 'CUSTOMER_SERVICE', name: 'خدمة العملاء' },
+  // ERP-navigation research (2026-08-16) — activates assignee/deadline/
+  // status tracking for SERVICE-kind order items (system_specifications_v2.md
+  // §17.7) by reusing the existing Workflow Engine, exactly like every
+  // other track — not a new schema, just the missing template/department
+  // for the `SERVICES` track that already existed as a reserved enum value.
+  { code: 'AGENCY_SERVICES', name: 'خدمات الوكالة', productionTrack: 'SERVICES' },
 ] as const;
 
 /**
@@ -224,6 +230,24 @@ const DEFAULT_WORKFLOW_TEMPLATES: Array<{
       },
       { tempKey: 'delivery', order: 3, name: 'التسليم', departmentCode: 'DELIVERY', nextStageTempKey: 'service' },
       { tempKey: 'service', order: 4, name: 'خدمة العملاء', departmentCode: 'CUSTOMER_SERVICE' },
+    ],
+  },
+  {
+    // ERP-navigation research (2026-08-16) — a minimal, generic 2-stage
+    // flow (execution ← delivery) so every `SERVICE`-kind order item gets
+    // a real WorkOrder + trackable stage instance (assignee/dueDate/
+    // priority/status — all existing WorkflowInstance/StageInstance
+    // fields, nothing new). Deliberately not one stage per service
+    // sub-type (تصميم/مونتاج/مواقع/تصوير/تسويق) — those differ too much in
+    // practice to force into one shared template; splitting into
+    // per-category tracks is future work if it's ever actually needed,
+    // never invented ahead of a real requirement.
+    code: 'SERVICES',
+    name: 'مسار خدمات الوكالة',
+    description: 'تنفيذ الخدمة ← التسليم للعميل.',
+    stages: [
+      { tempKey: 'execute', order: 1, name: 'تنفيذ الخدمة', departmentCode: 'AGENCY_SERVICES', nextStageTempKey: 'delivery' },
+      { tempKey: 'delivery', order: 2, name: 'التسليم للعميل', departmentCode: 'DELIVERY' },
     ],
   },
 ];

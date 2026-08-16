@@ -44,6 +44,7 @@ export const digitalPricingConstantsSchema = z.object({
   digitalQuarterWidthCm: z.number(),
   digitalQuarterHeightCm: z.number(),
   profitPercent: z.number(),
+  wasteSheetsDefault: z.number().int(),
 });
 
 export const pricingReferenceSchema = z.object({

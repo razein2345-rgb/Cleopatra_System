@@ -393,6 +393,7 @@ interface PricingPreviewResult {
   fitsInQuarter?: boolean;
   unitsNeeded?: number | null;
   costPerPiece?: number;
+  quartersNeeded?: number;
 }
 
 /** Client-side mirror of `orderService.ts`'s `computeItemPricing` dispatch — same pure functions, used only for the live preview; the server always recomputes authoritatively on submit. */
@@ -2244,6 +2245,12 @@ function NewOrderForm({
                 ? `القطعة أكبر من الربع — محتاجة ${result.unitsNeeded} ربع/قطعة`
                 : `التنزيلة: ${draft.yieldPerQuarter} قطعة في الربع`}
               {' — '}تكلفة القطعة {money(result.costPerPiece)} ج.م × الكمية ({draft.quantity}) = {money(result.subtotal ?? 0)} ج.م
+              {typeof result.quartersNeeded === 'number' && typeof result.sheetsNeeded === 'number' && (
+                <>
+                  {' — '}
+                  محتاجين {result.quartersNeeded} ربع ≈ {result.sheetsNeeded} فرخ (بيتخصم من المخزون)
+                </>
+              )}
             </p>
           )}
 

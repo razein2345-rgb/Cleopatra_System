@@ -24,6 +24,8 @@ export interface DigitalPricingConstants {
   digitalQuarterWidthCm: number;
   digitalQuarterHeightCm: number;
   profitPercent: number;
+  /** "أفرخ التهدير الافتراضية" — same Setting already used by `sizeCalculation.ts`'s sheet-count math (rule 5: reused, not duplicated), applied here too since Digital consumes full sheets (quartered) the same way Offset paper jobs do. */
+  wasteSheetsDefault: number;
 }
 
 export interface DigitalCostInput {
@@ -63,6 +65,10 @@ export interface DigitalCostResult {
   subtotal: number;
   profitPercentUsed: number;
   total: number;
+  /** Total quarter-sheets needed for the whole quantity (before rounding up to full sheets). */
+  quartersNeeded: number;
+  /** Full sheets consumed (quartersNeeded ÷ 4, rounded up, plus waste) — mirrors `sizeCalculation.ts`'s `computeLooseSheetsNeeded`, feeds `OrderItem.sheetsConsumed` for the same generic inventory-deduction path every other paper-based kind already uses. */
+  sheetsNeeded: number;
 }
 
 export class DigitalCalculationError extends Error {
@@ -127,6 +133,14 @@ export function calculateDigitalCost(input: DigitalCostInput): DigitalCostResult
   const profitPercentUsed = input.profitPercentOverride ?? input.settings.profitPercent;
   const total = subtotal * (1 + profitPercentUsed / 100);
 
+  // How much physical paper this job actually consumes — same "quarters
+  // needed" concept whether the piece fits within one quarter (several
+  // pieces share a quarter, per Yield) or needs several quarters each.
+  const quartersNeeded = fitsInQuarter
+    ? Math.ceil(input.quantity / input.yieldPerQuarter)
+    : (unitsNeeded as number) * input.quantity;
+  const sheetsNeeded = Math.ceil(quartersNeeded / 4) + input.settings.wasteSheetsDefault;
+
   return {
     fitsInQuarter,
     unitsNeeded,
@@ -140,5 +154,7 @@ export function calculateDigitalCost(input: DigitalCostInput): DigitalCostResult
     subtotal,
     profitPercentUsed,
     total,
+    quartersNeeded,
+    sheetsNeeded,
   };
 }

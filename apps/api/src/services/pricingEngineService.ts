@@ -88,6 +88,7 @@ export function mapSettingToDigitalPricingConstants(setting: SettingRecord): Dig
     digitalQuarterWidthCm: setting.digitalQuarterWidthCm.toNumber(),
     digitalQuarterHeightCm: setting.digitalQuarterHeightCm.toNumber(),
     profitPercent: setting.profitPercent.toNumber(),
+    wasteSheetsDefault: setting.wasteSheetsDefault,
   };
 }
 
@@ -398,7 +399,11 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           sellophaneEnabled: pricing.sellophaneEnabled ?? null,
           paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
         } as unknown as Prisma.InputJsonValue,
-        sheetsNeeded: null,
+        // Same generic path LOOSE_PAPER/NOTEBOOK/FOLDER already use
+        // (orderService.ts checks `result.inventoryItemId && result.sheetsNeeded`
+        // to deduct/restock Inventory) — no new deduction code needed, just
+        // feeding it a real sheet count instead of `null`.
+        sheetsNeeded: result.sheetsNeeded,
         inventoryItemId: pricing.inventoryItemId,
         sizeFamilyKey: null,
         realSizeLabel: null,

@@ -133,6 +133,11 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
+  // Manufacturing shop-floor dashboards refresh every 30-60s to match how
+  // often someone actually glances at them — a manual refresh button alone
+  // isn't enough for a screen meant to stay open on a shared/wall display.
+  const AUTO_REFRESH_MS = 45_000;
+
   const load = useCallback(() => {
     setError(null);
     apiGet<Department[]>('/api/departments')
@@ -157,6 +162,10 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
   }, []);
 
   useEffect(load, [load]);
+  useEffect(() => {
+    const interval = setInterval(load, AUTO_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [load]);
 
   if (error) return <div className="text-destructive">{error}</div>;
   if (!summaries) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
