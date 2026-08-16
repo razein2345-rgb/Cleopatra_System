@@ -48,6 +48,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     'orders.*',
     'quotations.*',
     'work-orders.*',
+    'machines.*',
     'treasury.*',
     'inventory.*',
     'tenders.*',
@@ -59,14 +60,15 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
   ],
   SALES: ['partners.*', 'orders.*', 'quotations.*', 'reports.view', 'inventory.view'],
   CASHIER: ['treasury.*', 'orders.view', 'partners.view'],
-  PRODUCTION_MANAGER: ['work-orders.*', 'orders.view'],
+  PRODUCTION_MANAGER: ['work-orders.*', 'machines.*', 'orders.view'],
   DESIGNER: ['work-orders.view', 'orders.view'],
-  PRINTING_OPERATOR: ['work-orders.view', 'work-orders.edit'],
+  PRINTING_OPERATOR: ['work-orders.view', 'work-orders.edit', 'machines.view'],
   VIEWER: [
     'partners.view',
     'orders.view',
     'quotations.view',
     'work-orders.view',
+    'machines.view',
     'treasury.view',
     'inventory.view',
     'tenders.view',
@@ -138,6 +140,10 @@ const DEFAULT_DEPARTMENTS = [
   // other track — not a new schema, just the missing template/department
   // for the `SERVICES` track that already existed as a reserved enum value.
   { code: 'AGENCY_SERVICES', name: 'خدمات الوكالة', productionTrack: 'SERVICES' },
+  // system_specifications_v2.md §2.4/§7-A.6 "Sublimation & Gifts" (2026-08-16,
+  // owner: "أضف المسارات المذكورة جميعًا... كطباعة التيشرتات") — its own
+  // dedicated machines, separate from Digital/Boards/Finishing.
+  { code: 'SUBLIMATION_PRINTING', name: 'الطباعة الحرارية (سبليميشن)', productionTrack: 'SUBLIMATION_GIFTS' },
 ] as const;
 
 /**
@@ -248,6 +254,20 @@ const DEFAULT_WORKFLOW_TEMPLATES: Array<{
     stages: [
       { tempKey: 'execute', order: 1, name: 'تنفيذ الخدمة', departmentCode: 'AGENCY_SERVICES', nextStageTempKey: 'delivery' },
       { tempKey: 'delivery', order: 2, name: 'التسليم للعميل', departmentCode: 'DELIVERY' },
+    ],
+  },
+  {
+    // §2.4/§7-A.6 "Sublimation & Gifts" — design is optional/shared like
+    // every other track (a mug/shirt/cap may print a stock design with no
+    // custom artwork needed), then one dedicated production stage, then
+    // the shared delivery stage.
+    code: 'SUBLIMATION_GIFTS',
+    name: 'مسار الطباعة الحرارية (سبليميشن وهدايا)',
+    description: 'التصميم (اختياري) ← الطباعة الحرارية ← التسليم.',
+    stages: [
+      { tempKey: 'design', order: 1, name: 'التصميم', departmentCode: 'DESIGN', requiresFiles: true, isMandatory: false, canSkip: true, nextStageTempKey: 'print' },
+      { tempKey: 'print', order: 2, name: 'الطباعة الحرارية', departmentCode: 'SUBLIMATION_PRINTING', nextStageTempKey: 'delivery' },
+      { tempKey: 'delivery', order: 3, name: 'التسليم', departmentCode: 'DELIVERY' },
     ],
   },
 ];

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Ban, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
-import type { Department, ProductionTrack, User, WorkflowPriority, WorkflowQueueItem } from '@cleopatra/shared';
+import type { Department, Machine, ProductionTrack, User, WorkflowPriority, WorkflowQueueItem } from '@cleopatra/shared';
 import { apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -38,6 +38,7 @@ const TRACK_TAB_ORDER: TrackTabKey[] = [
   'OFFSET',
   'DIGITAL',
   'BOARDS_SIGNAGE',
+  'SUBLIMATION_GIFTS',
   'READY_PRODUCTS',
   'SERVICES',
   'OTHER_PRODUCTS',
@@ -47,6 +48,7 @@ const TRACK_TAB_LABELS: Record<TrackTabKey, string> = {
   OFFSET: 'أوفست',
   DIGITAL: 'ديجيتال',
   BOARDS_SIGNAGE: 'لوحات وإعلانات',
+  SUBLIMATION_GIFTS: 'طباعة حرارية وهدايا',
   READY_PRODUCTS: 'منتجات جاهزة',
   SERVICES: 'خدمات',
   OTHER_PRODUCTS: 'منتجات أخرى',
@@ -112,6 +114,9 @@ interface TrackSummary {
   running: number;
   delayed: number;
   topPriority: WorkflowPriority | null;
+  machinesRunning: number;
+  machinesTotal: number;
+  machinesInMaintenance: number;
 }
 
 const PRIORITY_RANK: Record<WorkflowPriority, number> = { LOW: 0, NORMAL: 1, HIGH: 2, URGENT: 3 };
@@ -125,8 +130,9 @@ const PRIORITY_RANK: Record<WorkflowPriority, number> = { LOW: 0, NORMAL: 1, HIG
  * exact same `/api/workflow-instances/queue` endpoint `DepartmentsTab`
  * already calls per track — no new backend endpoint, no data stored here
  * beyond this component's own render state (rule 5 — no Duplicate Logic /
- * parallel storage). Machine status isn't shown — no Machine/Capacity
- * model exists yet (deferred to a later batch, see gap_analysis_report.md).
+ * parallel storage). Machine status (§6.5.1/§16.1, 2026-08-16) is grouped
+ * client-side from `/api/machines` by each machine's `department.
+ * productionTrack` — no per-track machine endpoint invented either.
  */
 function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) => void }) {
   const [summaries, setSummaries] = useState<TrackSummary[] | null>(null);
@@ -140,19 +146,32 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
 
   const load = useCallback(() => {
     setError(null);
-    apiGet<Department[]>('/api/departments')
-      .then(async (depts) => {
+    Promise.all([
+      apiGet<Department[]>('/api/departments'),
+      apiGet<Machine[]>('/api/machines').catch(() => [] as Machine[]),
+    ])
+      .then(async ([depts, machines]) => {
         const designDeptId = depts.find((d) => d.code === 'DESIGN')?.id;
+        const trackByDeptId = new Map(depts.map((d) => [d.id, d.productionTrack]));
         const results = await Promise.all(
           TRACK_TAB_ORDER.map(async (key): Promise<TrackSummary> => {
+            const trackMachines = machines.filter((m) =>
+              key === 'DESIGN' ? m.departmentId === designDeptId : m.departmentId && trackByDeptId.get(m.departmentId) === key,
+            );
+            const machineCounts = {
+              machinesTotal: trackMachines.length,
+              machinesRunning: trackMachines.filter((m) => m.status === 'RUNNING').length,
+              machinesInMaintenance: trackMachines.filter((m) => m.status === 'MAINTENANCE').length,
+            };
+
             const query = key === 'DESIGN' ? (designDeptId ? `departmentId=${designDeptId}` : null) : `productionTrack=${key}`;
-            if (!query) return { key, running: 0, delayed: 0, topPriority: null };
+            if (!query) return { key, running: 0, delayed: 0, topPriority: null, ...machineCounts };
             const items = await apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?${query}`);
             const topPriority = items.reduce<WorkflowPriority | null>(
               (top, item) => (top === null || PRIORITY_RANK[item.priority] > PRIORITY_RANK[top] ? item.priority : top),
               null,
             );
-            return { key, running: items.length, delayed: items.filter((i) => i.isDelayed).length, topPriority };
+            return { key, running: items.length, delayed: items.filter((i) => i.isDelayed).length, topPriority, ...machineCounts };
           }),
         );
         setSummaries(results);
@@ -204,6 +223,12 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
               <p className="text-danger mt-1 text-sm">⚠ {s.delayed} متأخر</p>
             ) : (
               <p className="text-success mt-1 text-sm">✓ مفيش متأخر</p>
+            )}
+            {s.machinesTotal > 0 && (
+              <p className={cn('mt-1 text-sm', s.machinesInMaintenance > 0 ? 'text-warning' : 'text-muted-foreground')}>
+                🔧 {s.machinesRunning}/{s.machinesTotal} ماكينة شغالة
+                {s.machinesInMaintenance > 0 ? ` — ${s.machinesInMaintenance} تحت الصيانة` : ''}
+              </p>
             )}
             {s.topPriority && (
               <StatusBadge tone={priorityTone(s.topPriority)} className="mt-2">

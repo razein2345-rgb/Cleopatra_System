@@ -24,6 +24,7 @@ import { TreasuryPage } from '@/pages/treasury/TreasuryPage';
 import { InventoryPage } from '@/pages/inventory/InventoryPage';
 import { ProductionBoardPage } from '@/pages/production-board/ProductionBoardPage';
 import { WorkOrderTimelinePage } from '@/pages/production-board/WorkOrderTimelinePage';
+import { MachinesPage } from '@/pages/production-board/MachinesPage';
 import { KioskPage } from '@/pages/attendance/KioskPage';
 
 function App() {
@@ -95,6 +96,10 @@ function App() {
               <Route element={<ProtectedRoute permission="work-orders.view" />}>
                 <Route path="/production-board" element={<ProductionBoardPage />} />
                 <Route path="/production-board/timeline/:workflowInstanceId" element={<WorkOrderTimelinePage />} />
+              </Route>
+
+              <Route element={<ProtectedRoute permission="machines.view" />}>
+                <Route path="/machines" element={<MachinesPage />} />
               </Route>
 
               <Route element={<ProtectedRoute permission="roles.view" />}>

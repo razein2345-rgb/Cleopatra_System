@@ -31,6 +31,8 @@ export const productionTrackSchema = z.enum([
   'OTHER_PRODUCTS',
   'SERVICES',
   'READY_PRODUCTS',
+  // system_specifications_v2.md §2.4/§7-A.6 "Sublimation & Gifts" (2026-08-16).
+  'SUBLIMATION_GIFTS',
 ]);
 
 /**

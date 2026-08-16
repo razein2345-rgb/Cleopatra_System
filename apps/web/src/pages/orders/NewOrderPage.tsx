@@ -73,6 +73,7 @@ const PRODUCTION_TRACK_LABELS: Record<ProductionTrack, string> = {
   // (400 NO_PUBLISHED_TEMPLATE) if picked before one is defined.
   SERVICES: 'خدمات',
   READY_PRODUCTS: 'منتجات جاهزة',
+  SUBLIMATION_GIFTS: 'طباعة حرارية وهدايا',
 };
 const PRODUCTION_TRACK_OPTIONS = Object.keys(PRODUCTION_TRACK_LABELS) as ProductionTrack[];
 

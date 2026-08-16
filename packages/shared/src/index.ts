@@ -25,6 +25,7 @@ export * from './schemas/orderItemPricing.js';
 export * from './schemas/order.js';
 export * from './schemas/pricingReference.js';
 export * from './schemas/department.js';
+export * from './schemas/machine.js';
 export * from './schemas/workflowTemplate.js';
 export * from './schemas/workflowInstance.js';
 export * from './schemas/workOrder.js';

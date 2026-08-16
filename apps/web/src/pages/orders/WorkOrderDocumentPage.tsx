@@ -161,6 +161,7 @@ const WORK_ORDER_TRACK_RENDERERS: Record<ProductionTrack, TrackRenderer> = {
   OTHER_PRODUCTS: 'GENERIC',
   SERVICES: 'GENERIC',
   READY_PRODUCTS: 'GENERIC',
+  SUBLIMATION_GIFTS: 'GENERIC',
 };
 
 function OffsetItemCards({

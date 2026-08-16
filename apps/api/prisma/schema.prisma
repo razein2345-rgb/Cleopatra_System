@@ -95,6 +95,11 @@ enum ProductionTrack {
   /// if one is picked before a template is defined.
   SERVICES
   READY_PRODUCTS
+  /// system_specifications_v2.md §2.4/§7-A.6 "Sublimation & Gifts" — thermal
+  /// printing for mugs/t-shirts/caps, its own dedicated machines separate
+  /// from every other track. Was entirely unrepresented before (owner,
+  /// 2026-08-16: "أضف المسارات المذكورة جميعًا... كطباعة التيشرتات").
+  SUBLIMATION_GIFTS
 }
 
 /// @deprecated FEATURE-004 M1. See `WorkOrder.productionStatus`'s own doc
@@ -341,6 +346,7 @@ model Branch {
   attendanceEntries   AttendanceEntry[]
   fieldAssignments    FieldAssignment[]
   treasuryDayClosures TreasuryDayClosure[]
+  machines            Machine[]
 
   @@index([isDeleted])
 }
@@ -1544,6 +1550,7 @@ model Department {
   userAccess     UserDepartmentAccess[]
   stages         WorkflowStage[]
   stageInstances StageInstance[]
+  machines       Machine[]
 
   @@index([isDeleted])
 }
@@ -1560,6 +1567,44 @@ model UserDepartmentAccess {
   assignedAt   DateTime     @default(now())
 
   @@unique([staffId, departmentId])
+}
+
+/// system_specifications_v2.md §6.5.1/§16.1 (2026-08-16, owner: "ابنيها
+/// دلوقتي") — the "حالة كل ماكينة" piece of the Unified Production
+/// Overview left out when that screen was first built. Deliberately scoped
+/// to just a name/status/department — the full Capacity Rate/Scheduled-
+/// vs-Actual-Hours alerting engine (§16.1's Smart Decision Engine) is a
+/// separate, much larger feature, not part of "لوحة الإنتاج" itself.
+enum MachineStatus {
+  RUNNING
+  STOPPED
+  MAINTENANCE
+}
+
+model Machine {
+  id   String @id @default(uuid()) @db.Uuid
+  name String
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  /// Nullable like WorkflowStage.departmentId — a machine can exist before
+  /// it's assigned to a specific department/track.
+  departmentId String?     @db.Uuid
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  status MachineStatus @default(RUNNING)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([branchId])
+  @@index([departmentId])
 }
 
 enum WorkflowStageType {

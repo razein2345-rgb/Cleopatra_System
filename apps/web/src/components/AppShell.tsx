@@ -12,6 +12,7 @@ import {
   Wallet,
   Package,
   Briefcase,
+  Wrench,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -36,7 +37,10 @@ const NAV_ITEMS: NavEntry[] = [
     kind: 'group',
     label: 'الإنتاج',
     icon: Factory,
-    items: [{ kind: 'link', to: '/production-board', label: 'لوحة الإنتاج', icon: Factory, permission: 'work-orders.view' }],
+    items: [
+      { kind: 'link', to: '/production-board', label: 'لوحة الإنتاج', icon: Factory, permission: 'work-orders.view' },
+      { kind: 'link', to: '/machines', label: 'الماكينات', icon: Wrench, permission: 'machines.view' },
+    ],
   },
   {
     kind: 'group',

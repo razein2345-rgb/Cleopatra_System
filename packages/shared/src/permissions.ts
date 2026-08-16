@@ -71,6 +71,17 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
+    // system_specifications_v2.md §6.5.1/§16.1 (2026-08-16) — machine
+    // status (شغالة/متوقفة/صيانة), shown on the Production Board Overview.
+    module: 'machines',
+    moduleLabel: 'Machines',
+    actions: [
+      { action: 'view', label: 'View machines and their status' },
+      { action: 'edit', label: 'Add/edit machines and update their status' },
+      { action: 'delete', label: 'Delete machines' },
+    ],
+  },
+  {
     // FEATURE-004 M1. Administering Workflow Templates/Stages is a
     // separate concern from operating within them (advancing a
     // WorkflowInstance stays under `work-orders.edit`, per
