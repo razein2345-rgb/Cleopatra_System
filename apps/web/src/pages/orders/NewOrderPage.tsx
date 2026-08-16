@@ -588,6 +588,8 @@ interface StoredBreakdown {
   boshrCostPerPiece?: number;
   extraCosts?: number;
   notes?: string | null;
+  /** SERVICE-kind only — "نطاق العمل", frozen into the breakdown by `orderService.ts`/`convertQuotation` (OrderItem has no dedicated column, unlike QuotationItem). */
+  description?: string | null;
   referenceImageUrl?: string | null;
   // FEATURE-009 (2026-08-13) — see createOrderItemSchema's own doc comment.
   inkColor?: string | null;
@@ -778,6 +780,7 @@ function reconstructCartLine(
       itemType: item.modelName || item.kind || KIND_LABELS[kind],
       summary: `${item.modelName || KIND_LABELS[kind]} — الكمية ${b.quantity ?? '—'}`,
       notes: b.notes ?? undefined,
+      description: b.description ?? undefined,
       inkColor: b.inkColor ?? undefined,
       bindingType: b.bindingType ?? undefined,
       sellophaneType: b.sellophaneType ?? undefined,
@@ -1054,6 +1057,8 @@ interface CartLine {
   itemType: string;
   summary: string;
   notes?: string;
+  /** SERVICE-kind only — "نطاق العمل" (scope of work), distinct from the generic printed `notes`. Reuses the schema's existing top-level `description` field (see createOrderItemSchema), never surfaced in the UI until now. */
+  description?: string;
   inkColor?: string;
   bindingType?: string;
   sellophaneType?: string;
@@ -1292,6 +1297,7 @@ function NewOrderForm({
       itemType: label,
       summary: describeDraft(draft, readyProducts, services),
       notes: draft.notes || undefined,
+      description: draft.kind === 'SERVICE' ? draft.description || undefined : undefined,
       inkColor: draft.inkColor || undefined,
       bindingType: draft.bindingType || undefined,
       sellophaneType: draft.sellophaneType || undefined,
@@ -1341,8 +1347,9 @@ function NewOrderForm({
       // `validateQuotationItemRefs` requires a description on any item
       // with no readyProductId/serviceId — reuse the same label the
       // user already typed (or the kind's default) rather than adding
-      // a second, redundant free-text field to the form.
-      description: line.readyProductId || line.serviceId ? undefined : line.itemType,
+      // a second, redundant free-text field to the form. SERVICE items
+      // prefer the staff's own "نطاق العمل" text when they entered one.
+      description: line.description ?? (line.readyProductId || line.serviceId ? undefined : line.itemType),
       readyProductId: line.readyProductId,
       serviceId: line.serviceId,
       attachmentId: line.attachmentId,
@@ -2312,6 +2319,17 @@ function NewOrderForm({
                   min={1}
                   value={draft.quantity}
                   onChange={(e) => updateDraft({ quantity: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              {/* ERP-navigation research (2026-08-16) — a scope-of-work definition is what actually prevents disputes over a creative/agency service later; distinct from the generic "ملاحظات" note below (which prints on the job-card, not meant for defining deliverables). */}
+              <label className="col-span-2 space-y-1 text-sm sm:col-span-4">
+                <span className="text-muted-foreground">نطاق العمل (اختياري) — إيه اللي الخدمة دي بتشمله بالظبط</span>
+                <textarea
+                  value={draft.description}
+                  onChange={(e) => updateDraft({ description: e.target.value })}
+                  rows={2}
+                  placeholder="مثال: هوية بصرية تشمل شعار + ٣ نسخ ألوان + دليل استخدام مبسط، مراجعتين مجانًا"
                   className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 />
               </label>

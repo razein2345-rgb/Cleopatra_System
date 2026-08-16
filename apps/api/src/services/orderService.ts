@@ -339,6 +339,13 @@ export async function createOrder(
               breakdownOverride: {
                 ...(result.breakdown as Record<string, unknown>),
                 notes: item.notes ?? null,
+                // ERP-navigation research (2026-08-16, "نطاق العمل" for
+                // SERVICE items) — was accepted by the schema but silently
+                // dropped here before now: `buildOrderItemCreate`'s own
+                // `description` param only feeds its ad-hoc fallback shape,
+                // which this `breakdownOverride` always bypasses, same as
+                // `notes` above.
+                description: item.description ?? null,
                 referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
                 // FEATURE-009 (2026-08-13) — printed on the Offset Work
                 // Order job-card only, no pricing effect.
@@ -553,6 +560,13 @@ export async function updateOrder(
               breakdownOverride: {
                 ...(result.breakdown as Record<string, unknown>),
                 notes: item.notes ?? null,
+                // ERP-navigation research (2026-08-16, "نطاق العمل" for
+                // SERVICE items) — was accepted by the schema but silently
+                // dropped here before now: `buildOrderItemCreate`'s own
+                // `description` param only feeds its ad-hoc fallback shape,
+                // which this `breakdownOverride` always bypasses, same as
+                // `notes` above.
+                description: item.description ?? null,
                 referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,
                 inkColor: item.inkColor ?? null,
                 bindingType: item.bindingType ?? null,

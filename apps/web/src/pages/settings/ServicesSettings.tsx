@@ -20,7 +20,7 @@ export function ServicesSettings() {
   if (!services) return <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>;
 
   return (
-    <Section title="الخدمات (تصميم / مونتاج)">
+    <Section title="خدمات الوكالة">
       <ServicesEditor services={services} onChanged={load} />
     </Section>
   );

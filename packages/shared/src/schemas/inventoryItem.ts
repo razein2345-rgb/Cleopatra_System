@@ -15,6 +15,7 @@ export const inventoryItemSchema = z.object({
   name: z.string(),
   unit: inventoryUnitSchema,
   sheetTypeId: z.string().uuid().nullable(),
+  barcode: z.string().nullable(),
   // FEATURE-007 PE-E — the linked SheetType's per-sheet price, read at
   // response time (never stored redundantly here). Null for items with no
   // `sheetTypeId` (non-paper categories). Lets `NewOrderPage.tsx` price a
@@ -41,11 +42,13 @@ export const createInventoryItemSchema = z.object({
   sheetTypeId: z.string().uuid().optional(),
   reorderLevel: z.number().nonnegative().optional(),
   initialQuantity: z.number().nonnegative().optional(),
+  barcode: z.string().trim().min(1).max(100).optional(),
 });
 
 export const updateInventoryItemSchema = z.object({
   name: z.string().trim().min(1).max(150).optional(),
   reorderLevel: z.number().nonnegative().nullable().optional(),
+  barcode: z.string().trim().min(1).max(100).nullable().optional(),
 });
 
 export const createStockMovementSchema = z.object({

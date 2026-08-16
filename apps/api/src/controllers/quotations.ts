@@ -390,7 +390,16 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
               serviceId: item.serviceId,
               serviceName: item.modelName,
               itemTotal: item.itemTotal?.toNumber() ?? null,
-              breakdownOverride: item.breakdown as Prisma.InputJsonValue | undefined,
+              // A converted Order's `OrderItem` has no `description` column
+              // (unlike `QuotationItem`, which does) — merge the quotation's
+              // own "نطاق العمل" into the frozen breakdown here, same as
+              // `orderService.ts`'s `createOrder` does for a direct invoice,
+              // or a scope the customer already approved silently vanishes
+              // on conversion.
+              breakdownOverride: {
+                ...((item.breakdown as Record<string, unknown> | null) ?? {}),
+                description: item.description ?? null,
+              },
               sizeFamilyKey: item.sizeFamilyKey,
               realSizeLabel: item.realSizeLabel,
             }),

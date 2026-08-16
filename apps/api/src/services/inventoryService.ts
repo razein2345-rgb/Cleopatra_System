@@ -18,6 +18,7 @@ function mapInventoryItemToDto(record: InventoryItemRecord, branchId: string): I
     name: record.name,
     unit: record.unit,
     sheetTypeId: record.sheetTypeId,
+    barcode: record.barcode,
     sheetPrice: record.sheetType?.price.toNumber() ?? null,
     reorderLevel,
     quantityOnHand,
@@ -39,6 +40,37 @@ export class InventoryItemInUseError extends Error {
     super('This inventory item is referenced by at least one order and cannot be deleted');
     this.name = 'InventoryItemInUseError';
   }
+}
+
+export class DuplicateBarcodeError extends Error {
+  constructor() {
+    super('This barcode is already assigned to another item');
+    this.name = 'DuplicateBarcodeError';
+  }
+}
+
+/**
+ * Prisma P2002 (unique constraint) on `barcode` — surfaced as a friendly,
+ * specific error rather than a raw 500. The field list showing which
+ * unique constraint was hit lives in different places depending on the
+ * Prisma engine: classic `meta.target` (array of field names) vs. the
+ * Prisma 7 driver-adapter shape observed here, which nests it at
+ * `meta.driverAdapterError.cause.constraint.fields` — check both.
+ */
+function isDuplicateBarcodeError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null || (err as { code?: string }).code !== 'P2002') return false;
+  const meta = (err as { meta?: unknown }).meta;
+  if (typeof meta !== 'object' || meta === null) return false;
+
+  const target = (meta as { target?: unknown }).target;
+  if (Array.isArray(target) && target.includes('barcode')) return true;
+
+  const driverFields = (
+    meta as {
+      driverAdapterError?: { cause?: { constraint?: { fields?: unknown } } };
+    }
+  ).driverAdapterError?.cause?.constraint?.fields;
+  return Array.isArray(driverFields) && driverFields.includes('barcode');
 }
 
 export async function listInventoryItems(branchId: string): Promise<InventoryItem[]> {
@@ -68,15 +100,22 @@ export async function createInventoryItem(
   branchId: string,
 ): Promise<InventoryItem> {
   const created = await prisma.$transaction(async (tx) => {
-    const item = await tx.inventoryItem.create({
-      data: {
-        category: input.category,
-        name: input.name,
-        unit: input.unit,
-        sheetTypeId: input.sheetTypeId ?? null,
-        reorderLevel: input.reorderLevel ?? null,
-      },
-    });
+    let item;
+    try {
+      item = await tx.inventoryItem.create({
+        data: {
+          category: input.category,
+          name: input.name,
+          unit: input.unit,
+          sheetTypeId: input.sheetTypeId ?? null,
+          reorderLevel: input.reorderLevel ?? null,
+          barcode: input.barcode ?? null,
+        },
+      });
+    } catch (err) {
+      if (isDuplicateBarcodeError(err)) throw new DuplicateBarcodeError();
+      throw err;
+    }
 
     if (input.initialQuantity && input.initialQuantity > 0) {
       await tx.stockMovement.create({
@@ -105,11 +144,17 @@ export async function updateInventoryItem(id: string, input: UpdateInventoryItem
   if (!existing || existing.isDeleted) throw new InventoryItemNotFoundError();
 
   const updated = await prisma.$transaction(async (tx) => {
-    const item = await tx.inventoryItem.update({
-      where: { id },
-      data: { name: input.name, reorderLevel: input.reorderLevel },
-      include: INCLUDE,
-    });
+    let item;
+    try {
+      item = await tx.inventoryItem.update({
+        where: { id },
+        data: { name: input.name, reorderLevel: input.reorderLevel, barcode: input.barcode },
+        include: INCLUDE,
+      });
+    } catch (err) {
+      if (isDuplicateBarcodeError(err)) throw new DuplicateBarcodeError();
+      throw err;
+    }
     // The reverse of sheetTypes.ts's own SheetType → InventoryItem name
     // sync — a paper item renamed from the Inventory page keeps its
     // linked SheetType's catalog name in step, so "أنواع الورق" and the

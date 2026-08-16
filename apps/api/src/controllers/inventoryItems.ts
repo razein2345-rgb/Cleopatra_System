@@ -3,6 +3,7 @@ import { createInventoryItemSchema, createStockMovementSchema, updateInventoryIt
 import {
   createInventoryItem,
   deleteInventoryItem,
+  DuplicateBarcodeError,
   getInventoryItem,
   InventoryItemInUseError,
   InventoryItemNotFoundError,
@@ -20,6 +21,10 @@ function handleServiceError(err: unknown, res: Response): boolean {
   }
   if (err instanceof InventoryItemInUseError) {
     res.status(409).json({ success: false, error: { message: err.message, code: 'INVENTORY_ITEM_IN_USE' } });
+    return true;
+  }
+  if (err instanceof DuplicateBarcodeError) {
+    res.status(409).json({ success: false, error: { message: err.message, code: 'DUPLICATE_BARCODE' } });
     return true;
   }
   return false;
@@ -51,7 +56,14 @@ export async function getInventoryItemHandler(req: Request<{ id: string }>, res:
 export async function createInventoryItemHandler(req: Request, res: Response) {
   const auth = req.auth!;
   const input = createInventoryItemSchema.parse(req.body);
-  const created = await createInventoryItem(input, auth.branchId);
+
+  let created;
+  try {
+    created = await createInventoryItem(input, auth.branchId);
+  } catch (err) {
+    if (handleServiceError(err, res)) return;
+    throw err;
+  }
 
   await recordAudit({
     entityType: 'InventoryItem',

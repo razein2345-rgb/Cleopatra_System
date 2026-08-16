@@ -1,5 +1,5 @@
 import { prisma } from '../src/lib/prisma.js';
-import { DocumentType } from '../src/generated/prisma/enums.js';
+import { DocumentType, ServiceCategory } from '../src/generated/prisma/enums.js';
 import { GLOBAL_PERMISSION, PERMISSION_CATALOG } from '@cleopatra/shared';
 import { replaceTemplateStages } from '../src/services/workflowTemplateService.js';
 
@@ -104,6 +104,50 @@ const DEFAULT_SETTINGS = {
   boardsSeasro: 230,
   boardsGapMM: 5,
 };
+
+// system_specifications_v2.md §17 — starter catalog of named agency
+// sub-services, one row per bullet across the 5 categories. `price: 0`
+// placeholders exactly like SHEET_TYPE_NAMES below (an admin fills in real
+// prices via Settings → خدمات الوكالة once agreed with the owner) — this
+// just gives the "أضف خدمة" flow a populated, editable starting point
+// instead of an empty list per category.
+const DEFAULT_SERVICES: { name: string; category: ServiceCategory }[] = [
+  // 17.1 التصميم
+  { name: 'هوية بصرية / براندنج', category: 'DESIGN' },
+  { name: 'تصميم سوشيال ميديا', category: 'DESIGN' },
+  { name: 'تصميم مطبوعات', category: 'DESIGN' },
+  { name: 'تصميم واجهات UI/UX', category: 'DESIGN' },
+  { name: 'تصميم عروض تقديمية', category: 'DESIGN' },
+  { name: 'إنفوجرافيك', category: 'DESIGN' },
+  { name: 'تصميم تغليف وعبوات', category: 'DESIGN' },
+  { name: 'تعديل وريتاتش الصور', category: 'DESIGN' },
+  // 17.2 المونتاج
+  { name: 'فيديوهات سوشيال ميديا قصيرة', category: 'MONTAGE' },
+  { name: 'فيديوهات تعريفية للشركات', category: 'MONTAGE' },
+  { name: 'فيديوهات إعلانية وترويجية', category: 'MONTAGE' },
+  { name: 'موشن جرافيك', category: 'MONTAGE' },
+  { name: 'تصحيح الألوان ومعالجة الصوت', category: 'MONTAGE' },
+  { name: 'فيديوهات مناسبات وفعاليات', category: 'MONTAGE' },
+  { name: 'تعديل لقطات خام', category: 'MONTAGE' },
+  // 17.3 التصوير
+  { name: 'تصوير منتجات', category: 'PHOTOGRAPHY' },
+  { name: 'تصوير فعاليات ومناسبات', category: 'PHOTOGRAPHY' },
+  { name: 'تصوير بورتريه / شخصي', category: 'PHOTOGRAPHY' },
+  { name: 'تصوير أماكن', category: 'PHOTOGRAPHY' },
+  { name: 'تصوير فيديو مرافق', category: 'PHOTOGRAPHY' },
+  // 17.4 التسويق
+  { name: 'إدارة سوشيال ميديا', category: 'MARKETING' },
+  { name: 'إعلانات ممولة (Meta / Google / TikTok)', category: 'MARKETING' },
+  { name: 'تحسين محركات البحث (SEO)', category: 'MARKETING' },
+  { name: 'تسويق بالمحتوى', category: 'MARKETING' },
+  { name: 'تسويق عبر البريد الإلكتروني / واتساب بيزنس', category: 'MARKETING' },
+  // 17.5 بناء المواقع
+  { name: 'مواقع تعريفية', category: 'WEBSITES' },
+  { name: 'متاجر إلكترونية', category: 'WEBSITES' },
+  { name: 'صفحات هبوط', category: 'WEBSITES' },
+  { name: 'برمجة مخصصة', category: 'WEBSITES' },
+  { name: 'الصيانة والدعم الفني', category: 'WEBSITES' },
+];
 
 // FEATURE-004 M1. Representative departments from VISION.md's
 // Department-Based Workflow — starting data an administrator can rename,
@@ -444,6 +488,13 @@ async function main() {
         { base: 'GAYER' as const, name, price: 0 },
         { base: 'REGULAR' as const, name, price: 0 },
       ]),
+    });
+  }
+
+  const existingServices = await prisma.service.count({ where: { isDeleted: false } });
+  if (existingServices === 0) {
+    await prisma.service.createMany({
+      data: DEFAULT_SERVICES.map((s) => ({ name: s.name, category: s.category, price: 0 })),
     });
   }
 

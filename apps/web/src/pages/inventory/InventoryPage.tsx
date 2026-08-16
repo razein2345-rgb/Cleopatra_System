@@ -27,6 +27,8 @@ export function InventoryPage() {
   const [needsSupplier, setNeedsSupplier] = useState<InventoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<MaterialCategory | 'ALL'>('ALL');
 
   const load = () => {
     apiGet<InventoryItem[]>('/api/inventory-items')
@@ -51,6 +53,12 @@ export function InventoryPage() {
 
   const saveName = async (item: InventoryItem, next: string) => {
     await apiPut(`/api/inventory-items/${item.id}`, { name: next });
+    load();
+  };
+
+  /** system_specifications_v2.md §12.5 — the catalog field a future barcode scanner reads from; POS scanning itself is separate, deferred work. */
+  const saveBarcode = async (item: InventoryItem, next: string) => {
+    await apiPut(`/api/inventory-items/${item.id}`, { barcode: next.trim() === '' ? null : next.trim() });
     load();
   };
 
@@ -93,6 +101,28 @@ export function InventoryPage() {
         />
       )}
 
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="بحث بالاسم أو الباركود…"
+          className="border-input bg-background min-w-[200px] flex-1 rounded-md border px-3 py-2 text-sm"
+        />
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value as MaterialCategory | 'ALL')}
+          className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+        >
+          <option value="ALL">كل الفئات</option>
+          {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {!items ? (
         <div className="text-muted-foreground">جارٍ التحميل…</div>
       ) : (
@@ -102,52 +132,74 @@ export function InventoryPage() {
               <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
                 <th className="p-3">الصنف</th>
                 <th className="p-3">الفئة</th>
+                <th className="p-3">الباركود</th>
                 <th className="p-3">الرصيد الحالي</th>
                 <th className="p-3">حد التنبيه</th>
                 <th className="p-3">الحالة</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
-                <tr key={item.id} className="border-border border-b last:border-0">
-                  <td className="p-3 font-medium">
-                    {can('inventory.edit') ? (
-                      <EditableTextCell value={item.name} onSave={(next) => saveName(item, next)} />
-                    ) : (
-                      item.name
-                    )}
-                  </td>
-                  <td className="p-3">{CATEGORY_LABELS[item.category]}</td>
-                  <td className="p-3">
-                    {item.quantityOnHand.toLocaleString('en-US')} {item.unit === 'SHEET' ? 'فرخ' : ''}
-                  </td>
-                  <td className="text-muted-foreground p-3">
-                    {can('inventory.edit') ? (
-                      <EditableTextCell
-                        value={item.reorderLevel?.toString() ?? ''}
-                        placeholder="بدون حد تنبيه"
-                        onSave={(next) => saveReorderLevel(item, next)}
-                      />
-                    ) : (
-                      (item.reorderLevel?.toLocaleString('en-US') ?? '—')
-                    )}
-                  </td>
-                  <td className="p-3">
-                    {item.isLowStock ? (
-                      <StatusBadge tone="danger">ناقصة</StatusBadge>
-                    ) : (
-                      <StatusBadge tone="success">متوفرة</StatusBadge>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {items.length === 0 && (
-                <tr>
-                  <td className="text-muted-foreground p-3 text-center" colSpan={5}>
-                    لا توجد بضاعة مسجلة بعد.
-                  </td>
-                </tr>
-              )}
+              {(() => {
+                const q = search.trim().toLowerCase();
+                const filtered = items.filter((item) => {
+                  if (categoryFilter !== 'ALL' && item.category !== categoryFilter) return false;
+                  if (q && !item.name.toLowerCase().includes(q) && !item.barcode?.toLowerCase().includes(q)) return false;
+                  return true;
+                });
+                if (filtered.length === 0) {
+                  return (
+                    <tr>
+                      <td className="text-muted-foreground p-3 text-center" colSpan={6}>
+                        {items.length === 0 ? 'لا توجد بضاعة مسجلة بعد.' : 'لا توجد أصناف مطابقة.'}
+                      </td>
+                    </tr>
+                  );
+                }
+                return filtered.map((item) => (
+                  <tr key={item.id} className="border-border border-b last:border-0">
+                    <td className="p-3 font-medium">
+                      {can('inventory.edit') ? (
+                        <EditableTextCell value={item.name} onSave={(next) => saveName(item, next)} />
+                      ) : (
+                        item.name
+                      )}
+                    </td>
+                    <td className="p-3">{CATEGORY_LABELS[item.category]}</td>
+                    <td className="text-muted-foreground p-3" dir="ltr">
+                      {can('inventory.edit') ? (
+                        <EditableTextCell
+                          value={item.barcode ?? ''}
+                          placeholder="بدون باركود"
+                          onSave={(next) => saveBarcode(item, next)}
+                        />
+                      ) : (
+                        (item.barcode ?? '—')
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {item.quantityOnHand.toLocaleString('en-US')} {item.unit === 'SHEET' ? 'فرخ' : ''}
+                    </td>
+                    <td className="text-muted-foreground p-3">
+                      {can('inventory.edit') ? (
+                        <EditableTextCell
+                          value={item.reorderLevel?.toString() ?? ''}
+                          placeholder="بدون حد تنبيه"
+                          onSave={(next) => saveReorderLevel(item, next)}
+                        />
+                      ) : (
+                        (item.reorderLevel?.toLocaleString('en-US') ?? '—')
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {item.isLowStock ? (
+                        <StatusBadge tone="danger">ناقصة</StatusBadge>
+                      ) : (
+                        <StatusBadge tone="success">متوفرة</StatusBadge>
+                      )}
+                    </td>
+                  </tr>
+                ));
+              })()}
             </tbody>
           </table>
         </div>
@@ -161,6 +213,7 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState('');
   const [reorderLevel, setReorderLevel] = useState('5');
   const [initialQuantity, setInitialQuantity] = useState('0');
+  const [barcode, setBarcode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -176,6 +229,7 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
         unit: 'SHEET',
         reorderLevel: reorderLevel ? Number(reorderLevel) : undefined,
         initialQuantity: initialQuantity ? Number(initialQuantity) : undefined,
+        barcode: barcode.trim() || undefined,
       };
       await apiPost('/api/inventory-items', input);
       onCreated();
@@ -231,6 +285,16 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
             min={0}
             value={reorderLevel}
             onChange={(e) => setReorderLevel(e.target.value)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">الباركود (اختياري)</span>
+          <input
+            value={barcode}
+            onChange={(e) => setBarcode(e.target.value)}
+            dir="ltr"
+            placeholder="امسح أو اكتب الباركود"
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           />
         </label>

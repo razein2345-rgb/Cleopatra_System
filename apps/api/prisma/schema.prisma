@@ -2221,6 +2221,12 @@ model InventoryItem {
   sheetTypeId  String?          @unique @db.Uuid
   sheetType    SheetType?       @relation(fields: [sheetTypeId], references: [id])
   reorderLevel Decimal?         @db.Decimal(12, 3)
+  /// system_specifications_v2.md §12.5 (2026-08-16) — supplier/manufacturer
+  /// barcode, or an internal SKU-style code for items with none. Optional
+  /// and unique (Postgres allows multiple NULLs under a unique index, so
+  /// most items simply have none). Scanning support in POS is separate,
+  /// deferred work — this is just the catalog field it reads from.
+  barcode      String?          @unique
 
   stockLevels    StockLevel[]
   stockMovements StockMovement[]

@@ -1,15 +1,20 @@
 import type { Request, Response } from 'express';
-import { createServiceSchema, updateServiceSchema } from '@cleopatra/shared';
+import { createServiceSchema, serviceCategorySchema, updateServiceSchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { serializeDecimals } from '../utils/serialize.js';
 
 export async function listServices(req: Request, res: Response) {
-  const category =
-    typeof req.query.category === 'string' ? req.query.category.toUpperCase() : undefined;
+  // Bug fix (2026-08-16, found during "أنهي قسم خدمات الوكالة" audit): this
+  // only ever matched 'DESIGN'/'MONTAGE' literally — WEBSITES/PHOTOGRAPHY/
+  // MARKETING silently returned every category unfiltered. Validating
+  // against the real enum (not a hand-picked pair) covers all five.
+  const categoryResult = serviceCategorySchema.safeParse(
+    typeof req.query.category === 'string' ? req.query.category.toUpperCase() : undefined,
+  );
   const items = await prisma.service.findMany({
     where: {
       isDeleted: false,
-      ...(category === 'DESIGN' || category === 'MONTAGE' ? { category } : {}),
+      ...(categoryResult.success ? { category: categoryResult.data } : {}),
     },
     orderBy: { name: 'asc' },
   });
