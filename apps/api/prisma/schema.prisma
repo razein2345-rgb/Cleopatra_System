@@ -326,20 +326,21 @@ model Branch {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  staff             StaffProfile[]
-  userBranchAccess  UserBranchAccess[]
-  businessPartners  BusinessPartner[]
-  orders            Order[]
-  quotations        Quotation[]
-  workOrders        WorkOrder[]
-  treasuryEntries   TreasuryEntry[]
-  documentSequences DocumentSequence[]
-  stockLevels       StockLevel[]
-  stockMovements    StockMovement[]
-  auditLogs         AuditLog[]
-  employeeAdvances  EmployeeAdvance[]
-  attendanceEntries AttendanceEntry[]
-  fieldAssignments  FieldAssignment[]
+  staff               StaffProfile[]
+  userBranchAccess    UserBranchAccess[]
+  businessPartners    BusinessPartner[]
+  orders              Order[]
+  quotations          Quotation[]
+  workOrders          WorkOrder[]
+  treasuryEntries     TreasuryEntry[]
+  documentSequences   DocumentSequence[]
+  stockLevels         StockLevel[]
+  stockMovements      StockMovement[]
+  auditLogs           AuditLog[]
+  employeeAdvances    EmployeeAdvance[]
+  attendanceEntries   AttendanceEntry[]
+  fieldAssignments    FieldAssignment[]
+  treasuryDayClosures TreasuryDayClosure[]
 
   @@index([isDeleted])
 }
@@ -683,6 +684,7 @@ model StaffProfile {
   attendanceEntriesRecorded  AttendanceEntry[]          @relation("AttendanceRecordedBy")
   fieldAssignments           FieldAssignment[]          @relation("FieldAssignmentStaff")
   fieldAssignmentsCreated    FieldAssignment[]          @relation("FieldAssignmentCreatedBy")
+  treasuryDayClosures        TreasuryDayClosure[]
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -1892,6 +1894,27 @@ model TreasuryEntry {
   @@index([branchId])
   @@index([type])
   @@index([date])
+}
+
+/// FEATURE-016 (2026-08-16, owner: "زرار تقفيل حساب اليوم علشان يقدر
+/// ينجز ويراجع حسابه آخر اليوم") — a review/summary marker only, per the
+/// owner's own clarification: closing a day does NOT lock further entries
+/// for it, it just records that a review happened and what the totals
+/// were at that moment. One row per (branch, date) — `@@unique` so a day
+/// can only be closed once; a second attempt is a 409, not a second row.
+model TreasuryDayClosure {
+  id                String       @id @default(uuid()) @db.Uuid
+  branchId          String       @db.Uuid
+  branch            Branch       @relation(fields: [branchId], references: [id])
+  date              DateTime     @db.Date
+  closedById        String       @db.Uuid
+  closedBy          StaffProfile @relation(fields: [closedById], references: [id])
+  closedAt          DateTime     @default(now())
+  totalAtClose      Decimal      @db.Decimal(12, 2)
+  entryCountAtClose Int
+
+  @@unique([branchId, date])
+  @@index([branchId])
 }
 
 // ---------------------------------------------------------------------------

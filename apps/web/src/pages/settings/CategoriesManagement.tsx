@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { CreatePartnerCategoryInput, PartnerCategory } from '@cleopatra/shared';
+import type { CreatePartnerCategoryInput, PartnerCategory, UpdatePartnerCategoryInput } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { EditableCheckboxCell, EditableTextCell } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /** Settings → Categories Management — FEATURE-002 Milestone 4. */
@@ -11,7 +12,6 @@ export function CategoriesManagement() {
   const [categories, setCategories] = useState<PartnerCategory[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [editing, setEditing] = useState<PartnerCategory | null>(null);
 
   const load = () => {
     apiGet<PartnerCategory[]>('/api/partner-categories')
@@ -32,6 +32,13 @@ export function CategoriesManagement() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر حذف التصنيف');
     }
+  };
+
+  // FEATURE-014 — every field here is simple enough for inline editing;
+  // the `CategoryForm` below stays only for creating a new category.
+  const updateCategoryField = async (category: PartnerCategory, patch: UpdatePartnerCategoryInput) => {
+    const updated = await apiPut<PartnerCategory>(`/api/partner-categories/${category.id}`, patch);
+    setCategories((prev) => prev?.map((c) => (c.id === category.id ? updated : c)) ?? prev);
   };
 
   if (error) return <div className="text-destructive text-sm">{error}</div>;
@@ -68,23 +75,49 @@ export function CategoriesManagement() {
           <tbody>
             {categories.map((category) => (
               <tr key={category.id} className="border-border border-b last:border-0">
-                <td className="p-2 font-medium">{category.name}</td>
-                <td className="text-muted-foreground p-2">{category.description ?? '—'}</td>
+                <td className="p-2 font-medium">
+                  {canManage ? (
+                    <EditableTextCell
+                      value={category.name}
+                      onSave={(next) => updateCategoryField(category, { name: next })}
+                    />
+                  ) : (
+                    category.name
+                  )}
+                </td>
+                <td className="text-muted-foreground p-2">
+                  {canManage ? (
+                    <EditableTextCell
+                      value={category.description ?? ''}
+                      placeholder="—"
+                      onSave={(next) => updateCategoryField(category, { description: next || null })}
+                    />
+                  ) : (
+                    (category.description ?? '—')
+                  )}
+                </td>
                 <td className="p-2">
-                  <span className={category.isActive ? 'text-green-600' : 'text-muted-foreground'}>
-                    {category.isActive ? 'نشط' : 'غير نشط'}
-                  </span>
+                  {canManage ? (
+                    <div className="flex items-center gap-1.5">
+                      <EditableCheckboxCell
+                        value={category.isActive}
+                        onSave={(next) => updateCategoryField(category, { isActive: next })}
+                      />
+                      <span className={category.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                        {category.isActive ? 'نشط' : 'غير نشط'}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className={category.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                      {category.isActive ? 'نشط' : 'غير نشط'}
+                    </span>
+                  )}
                 </td>
                 <td className="p-2">
                   {canManage && (
-                    <div className="flex gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => setEditing(category)}>
-                        تعديل
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => void remove(category)}>
-                        حذف
-                      </Button>
-                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => void remove(category)}>
+                      حذف
+                    </Button>
                   )}
                 </td>
               </tr>
@@ -99,17 +132,6 @@ export function CategoriesManagement() {
           </tbody>
         </table>
       </div>
-
-      {editing && (
-        <CategoryForm
-          category={editing}
-          onSaved={() => {
-            setEditing(null);
-            load();
-          }}
-          onCancel={() => setEditing(null)}
-        />
-      )}
     </div>
   );
 }

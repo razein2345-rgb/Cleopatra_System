@@ -1,8 +1,14 @@
 import type { Prisma } from '../generated/prisma/client.js';
 import type { WorkOrder } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
-import { WORKFLOW_INSTANCE_INCLUDE, mapWorkflowInstanceToDto } from './workflowInstanceService.js';
+import {
+  WORKFLOW_INSTANCE_INCLUDE,
+  createWorkflowInstance,
+  mapWorkflowInstanceToDto,
+  WorkflowNoStagesError,
+} from './workflowInstanceService.js';
 import { recordWorkflowEvent } from './workflowEventService.js';
+import { getLatestPublishedTemplate } from './workflowTemplateService.js';
 
 export const WORK_ORDER_INCLUDE = {
   workflowInstance: { include: WORKFLOW_INSTANCE_INCLUDE },
@@ -49,6 +55,46 @@ export async function nextWorkOrderNumber(tx: Prisma.TransactionClient): Promise
     update: { lastNumber: { increment: 1 } },
   });
   return `${sequence.prefix}-${year}-${String(sequence.lastNumber).padStart(6, '0')}`;
+}
+
+/**
+ * FEATURE-016 (2026-08-16, owner: "لما اعمل فاتورة دايركت يدخل في عملية
+ * التشغيل واقدر اطبع أمر شغل لها") — the automatic, best-effort counterpart
+ * to `createWorkOrder`'s manual endpoint: called from inside an Order's own
+ * creation transaction (`orderService.createOrder`, `quotations.ts`'s
+ * `convertQuotation`) so a fresh Invoice enters production immediately,
+ * with no separate manual step. Deliberately never throws — an Order/
+ * Invoice must always succeed even when no production track is set yet or
+ * no template has been published for it (same "never blocks order
+ * creation" principle already used for stock deduction), leaving the
+ * existing manual `POST /api/work-orders` flow (`GenerateWorkOrderPanel`)
+ * as the fallback for those cases.
+ */
+export async function tryAutoCreateWorkOrder(
+  tx: Prisma.TransactionClient,
+  order: { id: string; branchId: string; productionTrack: string | null; requiresDesign: boolean },
+  performedById: string,
+): Promise<string | null> {
+  if (!order.productionTrack) return null;
+  const template = await getLatestPublishedTemplate(order.productionTrack);
+  if (!template) return null;
+
+  try {
+    const workOrderNumber = await nextWorkOrderNumber(tx);
+    const workOrder = await tx.workOrder.create({
+      data: { workOrderNumber, orderId: order.id, branchId: order.branchId },
+    });
+    await createWorkflowInstance(tx, {
+      templateId: template.id,
+      workOrderId: workOrder.id,
+      performedById,
+      requiresDesign: order.requiresDesign,
+    });
+    return workOrder.id;
+  } catch (err) {
+    if (err instanceof WorkflowNoStagesError) return null;
+    throw err;
+  }
 }
 
 export class WorkOrderNotFoundError extends Error {

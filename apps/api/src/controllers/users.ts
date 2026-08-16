@@ -1,8 +1,11 @@
 import type { Request, Response } from 'express';
 import {
+  buildInternalLoginEmail,
   createUserSchema,
+  INTERNAL_LOGIN_DOMAIN,
   setAttendancePinSchema,
   setUserBranchAccessSchema,
+  setUserPasswordSchema,
   setUserRolesSchema,
   updateUserSchema,
 } from '@cleopatra/shared';
@@ -82,9 +85,14 @@ export async function getUser(req: Request<{ id: string }>, res: Response) {
 }
 
 /**
- * Creating a user is an invite, not a password-set: Supabase Auth sends the
- * invite email and owns the credential from the start (ADR 0005/0021) — this
- * system never sees, sets, or stores a password at any point.
+ * FEATURE-015 (2026-08-16, owner: "عايز انا اللي ادخل الموظفين بنفسي واعملهم
+ * باسوورد وID بدل موضوع الإيميل ده") — most employees have no real email
+ * inbox to receive an invite in, so the owner sets the account up complete
+ * with a password directly (`createUser` + `email_confirm: true`, not
+ * `inviteUserByEmail`) and hands the login ID + password to the employee
+ * himself. Still a normal Supabase email-based account under the hood
+ * (`buildInternalLoginEmail` appends a fixed internal domain), so nothing
+ * else about auth/session handling changes.
  */
 export async function createUser(req: Request, res: Response) {
   const auth = req.auth!;
@@ -97,31 +105,34 @@ export async function createUser(req: Request, res: Response) {
     return;
   }
 
+  const email = buildInternalLoginEmail(input.loginId);
+
   // FEATURE-001.2 fix (2026-08-13) — found live: a retry after a failed/stuck
-  // invite (e.g. the invited person's accept-invite page errored before they
-  // ever set a password) used to hit inviteUserByEmail again — wasting a rate-
-  // limited invite email on an account that already exists — and then failed
-  // with a raw, unhandled Prisma unique-constraint exception instead of a
-  // clear message telling the caller what actually happened.
-  const existing = await prisma.staffProfile.findFirst({ where: { email: input.email, isDeleted: false } });
+  // signup used to hit Supabase again — wasting effort on an account that
+  // already exists — and then failed with a raw, unhandled Prisma
+  // unique-constraint exception instead of a clear message telling the
+  // caller what actually happened.
+  const existing = await prisma.staffProfile.findFirst({ where: { email, isDeleted: false } });
   if (existing) {
     res.status(400).json({
       success: false,
       error: {
-        message: 'هذا البريد الإلكتروني مسجّل بالفعل لموظف موجود — استخدم "إعادة تعيين كلمة المرور" له بدل إضافته من جديد',
-        code: 'EMAIL_ALREADY_REGISTERED',
+        message: 'هذا المعرّف مستخدم بالفعل لموظف موجود — اختر معرّفًا آخر، أو استخدم "تعيين كلمة مرور جديدة" له بدل إضافته من جديد',
+        code: 'LOGIN_ID_ALREADY_REGISTERED',
       },
     });
     return;
   }
 
-  const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(input.email, {
-    redirectTo: ACCEPT_INVITE_REDIRECT_URL,
+  const { data, error } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password: input.password,
+    email_confirm: true,
   });
   if (error || !data.user) {
     res
       .status(400)
-      .json({ success: false, error: { message: error?.message ?? 'Failed to invite user' } });
+      .json({ success: false, error: { message: error?.message ?? 'Failed to create user' } });
     return;
   }
 
@@ -131,7 +142,7 @@ export async function createUser(req: Request, res: Response) {
       data: {
         supabaseUserId: data.user.id,
         name: input.name,
-        email: input.email,
+        email,
         phone: input.phone,
         branchId: input.branchId,
         roles: { create: input.roleIds.map((roleId) => ({ roleId })) },
@@ -139,7 +150,7 @@ export async function createUser(req: Request, res: Response) {
       include: userInclude,
     });
   } catch (err) {
-    // The Supabase invite already went out at this point (it isn't
+    // The Supabase account already exists at this point (it isn't
     // transactional with the row below) — surface a message that at least
     // explains a real account now exists in Supabase Auth without a
     // matching StaffProfile, rather than an opaque Prisma stack trace.
@@ -148,8 +159,8 @@ export async function createUser(req: Request, res: Response) {
       success: false,
       error: {
         message: isDuplicate
-          ? 'تم إنشاء حساب الدخول لكن فشل تسجيله كموظف — بريد إلكتروني مكرر. تواصل مع الدعم الفني.'
-          : 'تم إرسال الدعوة لكن فشل تسجيل الموظف في النظام',
+          ? 'تم إنشاء حساب الدخول لكن فشل تسجيله كموظف — معرّف مكرر. تواصل مع الدعم الفني.'
+          : 'تم إنشاء حساب الدخول لكن فشل تسجيل الموظف في النظام',
       },
     });
     return;
@@ -393,10 +404,65 @@ export async function resetUserPassword(req: Request<{ id: string }>, res: Respo
     return;
   }
 
+  // FEATURE-015 — a synthetic `<id>@cleopatra.local` address has no real
+  // inbox; generateLink would still report success and this would log a
+  // PASSWORD_RESET audit entry for a link nobody can ever receive. Point
+  // the caller at the endpoint that actually works for these accounts.
+  if (existing.email.endsWith(`@${INTERNAL_LOGIN_DOMAIN}`)) {
+    res.status(400).json({
+      success: false,
+      error: {
+        message: 'هذا الموظف مسجّل بمعرّف دخول، مش إيميل حقيقي — استخدم "تعيين كلمة مرور جديدة" بدل إعادة التعيين عبر البريد',
+        code: 'NO_REAL_EMAIL',
+      },
+    });
+    return;
+  }
+
   const { error } = await supabaseAdmin.auth.admin.generateLink({
     type: 'recovery',
     email: existing.email,
     options: { redirectTo: ACCEPT_INVITE_REDIRECT_URL },
+  });
+  if (error) {
+    res.status(400).json({ success: false, error: { message: error.message } });
+    return;
+  }
+
+  await recordAudit({
+    entityType: 'StaffProfile',
+    entityId: existing.id,
+    action: 'PASSWORD_RESET',
+    performedById: auth.staffId,
+    branchId: existing.branchId,
+  });
+
+  res.status(204).send();
+}
+
+/**
+ * FEATURE-015 (2026-08-16) — the direct counterpart to `resetUserPassword`
+ * for employees with no real email to receive a recovery link at: the owner
+ * types a new password himself and it takes effect immediately. Mirrors
+ * `resetUserPassword`'s branch-scoping exactly.
+ */
+export async function setUserPassword(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const input = setUserPasswordSchema.parse(req.body);
+  const existing = await prisma.staffProfile.findUnique({ where: { id: req.params.id } });
+  if (!existing || existing.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'User not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    res
+      .status(403)
+      .json({ success: false, error: { message: 'You do not have access to this branch' } });
+    return;
+  }
+
+  const { error } = await supabaseAdmin.auth.admin.updateUserById(existing.supabaseUserId, {
+    password: input.password,
   });
   if (error) {
     res.status(400).json({ success: false, error: { message: error.message } });

@@ -49,6 +49,11 @@ export function InventoryPage() {
     load();
   };
 
+  const saveName = async (item: InventoryItem, next: string) => {
+    await apiPut(`/api/inventory-items/${item.id}`, { name: next });
+    load();
+  };
+
   if (error) return <div className="text-destructive">{error}</div>;
 
   return (
@@ -105,7 +110,13 @@ export function InventoryPage() {
             <tbody>
               {items.map((item) => (
                 <tr key={item.id} className="border-border border-b last:border-0">
-                  <td className="p-3 font-medium">{item.name}</td>
+                  <td className="p-3 font-medium">
+                    {can('inventory.edit') ? (
+                      <EditableTextCell value={item.name} onSave={(next) => saveName(item, next)} />
+                    ) : (
+                      item.name
+                    )}
+                  </td>
                   <td className="p-3">{CATEGORY_LABELS[item.category]}</td>
                   <td className="p-3">
                     {item.quantityOnHand.toLocaleString('en-US')} {item.unit === 'SHEET' ? 'فرخ' : ''}

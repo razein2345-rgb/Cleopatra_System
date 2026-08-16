@@ -3,6 +3,7 @@ import type {
   CreateTreasuryEntryInput,
   MyTreasurySummary,
   TreasuryBalance,
+  TreasuryDayClosure,
   TreasuryEntry,
   UpdateTreasuryEntryInput,
 } from '@cleopatra/shared';
@@ -202,4 +203,70 @@ export async function deleteManualTreasuryEntry(id: string, deletedBy: string): 
     where: { id },
     data: { isDeleted: true, deletedAt: new Date(), deletedBy },
   });
+}
+
+function mapDayClosureToDto(record: Prisma.TreasuryDayClosureGetPayload<object>): TreasuryDayClosure {
+  return {
+    id: record.id,
+    branchId: record.branchId,
+    date: record.date.toISOString().slice(0, 10),
+    closedById: record.closedById,
+    closedAt: record.closedAt.toISOString(),
+    totalAtClose: record.totalAtClose.toNumber(),
+    entryCountAtClose: record.entryCountAtClose,
+  };
+}
+
+/** UTC midnight of "today" — matches the `@db.Date` column's own storage, no time-of-day component. */
+function todayDateOnly(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+}
+
+export class DayAlreadyClosedError extends Error {
+  constructor() {
+    super('This branch has already closed today');
+    this.name = 'DayAlreadyClosedError';
+  }
+}
+
+/**
+ * FEATURE-016 — a review/summary marker only (owner's own clarification:
+ * "مجرد علامة/ملخص", not a real lock). Reads today's branch-scoped total/
+ * count the same way `getMyTreasurySummary` does, just date-bounded, and
+ * freezes them into one row. Any `treasury.create` holder for that branch
+ * may close it — same access level already required to record entries
+ * there in the first place, per the owner's own confirmation.
+ */
+export async function closeTreasuryDay(branchId: string, staffId: string): Promise<TreasuryDayClosure> {
+  const date = todayDateOnly();
+  const existing = await prisma.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
+  if (existing) throw new DayAlreadyClosedError();
+
+  const startOfDay = date;
+  const endOfDay = new Date(date.getTime() + 24 * 60 * 60 * 1000 - 1);
+  const agg = await prisma.treasuryEntry.aggregate({
+    where: { isDeleted: false, branchId, date: { gte: startOfDay, lte: endOfDay } },
+    _sum: { amount: true },
+    _count: true,
+  });
+
+  const created = await prisma.treasuryDayClosure.create({
+    data: {
+      branchId,
+      date,
+      closedById: staffId,
+      totalAtClose: agg._sum.amount ?? 0,
+      entryCountAtClose: agg._count,
+    },
+  });
+  return mapDayClosureToDto(created);
+}
+
+/** Null when today hasn't been closed yet for this branch — the normal, default state. */
+export async function getTodayClosure(branchId: string): Promise<TreasuryDayClosure | null> {
+  const closure = await prisma.treasuryDayClosure.findUnique({
+    where: { branchId_date: { branchId, date: todayDateOnly() } },
+  });
+  return closure ? mapDayClosureToDto(closure) : null;
 }

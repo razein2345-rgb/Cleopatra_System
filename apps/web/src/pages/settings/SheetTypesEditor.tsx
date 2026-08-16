@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import type { SheetBase, SheetType } from '@cleopatra/shared';
+import type { SheetBase, SheetType, UpdateSheetTypeInput } from '@cleopatra/shared';
 import { apiDelete, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { EditableNumberCell, EditableTextCell } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /**
@@ -24,7 +25,6 @@ export function SheetTypesEditor({
   const { can } = useAuth();
   const canManage = can('settings.edit');
   const [showCreate, setShowCreate] = useState(false);
-  const [editing, setEditing] = useState<SheetType | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const remove = async (sheetType: SheetType) => {
@@ -35,6 +35,17 @@ export function SheetTypesEditor({
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر حذف نوع الورق');
+    }
+  };
+
+  const updateSheetTypeField = async (sheetType: SheetType, patch: UpdateSheetTypeInput) => {
+    setError(null);
+    try {
+      await apiPut(`/api/sheet-types/${sheetType.id}`, patch);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حفظ نوع الورق');
+      throw err;
     }
   };
 
@@ -63,35 +74,32 @@ export function SheetTypesEditor({
         <tbody>
           {sheetTypes.map((s) => (
             <tr key={s.id} className="border-border border-b">
-              {editing?.id === s.id ? (
-                <td colSpan={3} className="py-2">
-                  <SheetTypeForm
-                    base={base}
-                    sheetType={s}
-                    onSaved={() => {
-                      setEditing(null);
-                      onChanged();
-                    }}
-                    onCancel={() => setEditing(null)}
+              <td className="py-1.5">
+                {canManage ? (
+                  <EditableTextCell value={s.name} onSave={(next) => updateSheetTypeField(s, { name: next })} />
+                ) : (
+                  s.name
+                )}
+              </td>
+              <td className="py-1.5 text-end">
+                {canManage ? (
+                  <EditableNumberCell
+                    value={s.price}
+                    min={0}
+                    step={0.01}
+                    onSave={(next) => updateSheetTypeField(s, { price: next })}
+                    className="text-end"
                   />
+                ) : (
+                  `${s.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج`
+                )}
+              </td>
+              {canManage && (
+                <td className="py-1.5 text-end">
+                  <Button variant="ghost" size="sm" onClick={() => void remove(s)}>
+                    حذف
+                  </Button>
                 </td>
-              ) : (
-                <>
-                  <td className="py-1.5">{s.name}</td>
-                  <td className="py-1.5 text-end">{s.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج</td>
-                  {canManage && (
-                    <td className="py-1.5 text-end">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => setEditing(s)}>
-                          تعديل
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => void remove(s)}>
-                          حذف
-                        </Button>
-                      </div>
-                    </td>
-                  )}
-                </>
               )}
             </tr>
           ))}

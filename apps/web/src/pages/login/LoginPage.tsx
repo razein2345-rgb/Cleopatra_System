@@ -114,16 +114,15 @@ export function LoginPage() {
 
         <div className="mb-4 flex flex-col gap-1.5">
           <label htmlFor="identifier" className="text-sm font-medium">
-            البريد الإلكتروني أو رقم الهاتف
+            البريد الإلكتروني أو رقم الهاتف أو معرّف الدخول
           </label>
           <input
             id="identifier"
             type="text"
-            inputMode="email"
             required
             autoComplete="username"
             disabled={submitting}
-            placeholder="omar@gmail.com أو 01012345678"
+            placeholder="omar@gmail.com أو 01012345678 أو المعرّف اللي اداكلك المدير"
             value={identifier}
             onChange={(e) => setIdentifier(e.target.value)}
             dir="ltr"

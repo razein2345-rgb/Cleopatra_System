@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { BranchSummary, Role, User } from '@cleopatra/shared';
-import { ADMIN_ROLE_NAMES } from '@cleopatra/shared';
+import { ADMIN_ROLE_NAMES, INTERNAL_LOGIN_DOMAIN } from '@cleopatra/shared';
+import { Eye, EyeOff } from 'lucide-react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { EditableSelectCell, EditableTextCell } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { isLastActiveAdmin } from '@/lib/adminSafety';
 
@@ -18,6 +20,7 @@ export function UsersPage() {
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [editingRolesFor, setEditingRolesFor] = useState<User | null>(null);
+  const [settingPasswordFor, setSettingPasswordFor] = useState<User | null>(null);
 
   const load = () => {
     Promise.all([
@@ -37,16 +40,27 @@ export function UsersPage() {
 
   useEffect(load, []);
 
+  // Accounts created via FEATURE-015 store a synthetic `<id>@cleopatra.local`
+  // email — showing the bare ID here matches what the owner actually hands
+  // the employee, instead of a domain suffix nobody was told about. Legacy
+  // accounts with a real email are shown as-is.
+  const displayLoginId = (email: string) =>
+    email.endsWith(`@${INTERNAL_LOGIN_DOMAIN}`) ? email.slice(0, -(INTERNAL_LOGIN_DOMAIN.length + 1)) : email;
+
   const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? id;
+  const branchOptions = branches.map((b) => [b.id, b.name] as const);
+  const canEdit = can('employees.edit');
+
+  // FEATURE-014 — same "زي جدول نوشن" inline-edit pattern as PartnersPage's
+  // `updatePartnerField`: click a cell, edit in place, no separate form.
+  const updateUserField = async (id: string, patch: { name?: string; branchId?: string }) => {
+    const updated = await apiPut<User>(`/api/users/${id}`, patch);
+    setUsers((prev) => prev?.map((u) => (u.id === id ? updated : u)) ?? prev);
+  };
 
   const toggleActive = async (user: User) => {
     await apiPut(`/api/users/${user.id}`, { isActive: !user.isActive });
     load();
-  };
-
-  const resetPassword = async (user: User) => {
-    await apiPost(`/api/users/${user.id}/reset-password`);
-    alert(`تم إرسال رابط إعادة تعيين كلمة المرور إلى ${user.email}`);
   };
 
   const deleteUser = async (user: User) => {
@@ -92,7 +106,7 @@ export function UsersPage() {
           <thead>
             <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
               <th className="p-3">الاسم</th>
-              <th className="p-3">البريد الإلكتروني</th>
+              <th className="p-3">معرّف الدخول</th>
               <th className="p-3">الفرع</th>
               <th className="p-3">الأدوار</th>
               <th className="p-3">الحالة</th>
@@ -110,12 +124,35 @@ export function UsersPage() {
               return (
                 <tr key={user.id} className="border-border border-b last:border-0">
                   <td className="p-3 font-medium">
-                    <Link to={`/users/${user.id}`} className="hover:underline">
-                      {user.name}
-                    </Link>
+                    <div className="flex items-center gap-1">
+                      {canEdit ? (
+                        <EditableTextCell
+                          value={user.name}
+                          onSave={(next) => updateUserField(user.id, { name: next })}
+                        />
+                      ) : (
+                        user.name
+                      )}
+                      <Link to={`/users/${user.id}`} className="text-muted-foreground shrink-0 hover:underline" title="الملف الكامل">
+                        ↗
+                      </Link>
+                    </div>
                   </td>
-                  <td className="p-3">{user.email}</td>
-                  <td className="p-3">{branchName(user.branchId)}</td>
+                  <td className="p-3" dir="ltr">
+                    {displayLoginId(user.email)}
+                  </td>
+                  <td className="p-3">
+                    {canEdit ? (
+                      <EditableSelectCell
+                        value={user.branchId}
+                        options={branchOptions}
+                        onSave={(next) => updateUserField(user.id, { branchId: next })}
+                        renderValue={branchName}
+                      />
+                    ) : (
+                      branchName(user.branchId)
+                    )}
+                  </td>
                   <td className="p-3">
                     <div className="flex flex-wrap gap-1">
                       {user.roles.map((role) => (
@@ -158,9 +195,9 @@ export function UsersPage() {
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={() => void resetPassword(user)}
+                          onClick={() => setSettingPasswordFor(user)}
                         >
-                          إعادة تعيين كلمة المرور
+                          تعيين كلمة مرور جديدة
                         </Button>
                         {can('employees.delete') && (
                           <Button
@@ -195,10 +232,28 @@ export function UsersPage() {
           }}
         />
       )}
+
+      {settingPasswordFor && (
+        <SetPasswordPanel user={settingPasswordFor} onClose={() => setSettingPasswordFor(null)} />
+      )}
     </div>
   );
 }
 
+/** Random alphanumeric password — legible enough to read/copy off-screen to hand to an employee, well past Supabase's 6-char minimum. */
+function generatePassword(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  return Array.from({ length: 10 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+}
+
+/**
+ * FEATURE-015 (2026-08-16, owner: "عايز انا اللي ادخل الموظفين بنفسي واعملهم
+ * باسوورد وID بدل موضوع الإيميل ده") — the owner sets a login ID + password
+ * himself and hands them to the employee directly; no invite email involved.
+ * After a successful create, the credentials are shown once (Supabase never
+ * lets us retrieve the password again) so the owner can copy/read them off
+ * before dismissing.
+ */
 function CreateUserForm({
   roles,
   branches,
@@ -209,20 +264,45 @@ function CreateUserForm({
   onCreated: () => void;
 }) {
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [loginId, setLoginId] = useState('');
+  const [password, setPassword] = useState(generatePassword());
+  const [showPassword, setShowPassword] = useState(true);
   const [phone, setPhone] = useState('');
   const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
   const [roleIds, setRoleIds] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [created, setCreated] = useState<{ loginId: string; password: string } | null>(null);
+
+  if (created) {
+    return (
+      <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
+        <p className="font-medium">تم إنشاء الحساب — سجّل بيانات الدخول دي وسلّمها للموظف:</p>
+        <div className="border-border bg-muted/30 space-y-1 rounded-lg border p-3 text-sm" dir="ltr">
+          <p>
+            <span className="text-muted-foreground">ID: </span>
+            <span className="font-mono font-bold">{created.loginId}</span>
+          </p>
+          <p>
+            <span className="text-muted-foreground">Password: </span>
+            <span className="font-mono font-bold">{created.password}</span>
+          </p>
+        </div>
+        <p className="text-muted-foreground text-xs">
+          مش هتقدر تشوف كلمة المرور دي تاني بعد ما تقفل الرسالة دي — لو نسيتها استخدم "تعيين كلمة مرور جديدة" من جدول الموظفين.
+        </p>
+        <Button onClick={onCreated}>تمام، إغلاق</Button>
+      </div>
+    );
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
-      await apiPost('/api/users', { name, email, phone: phone || undefined, branchId, roleIds });
-      onCreated();
+      await apiPost('/api/users', { name, loginId, password, phone: phone || undefined, branchId, roleIds });
+      setCreated({ loginId, password });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر إنشاء المستخدم');
     } finally {
@@ -243,12 +323,44 @@ function CreateUserForm({
         />
         <input
           required
-          type="email"
-          placeholder="البريد الإلكتروني"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          placeholder="معرّف الدخول (مثال: khaled1)"
+          value={loginId}
+          onChange={(e) => setLoginId(e.target.value)}
+          dir="ltr"
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         />
+        <div className="relative">
+          <input
+            required
+            type={showPassword ? 'text' : 'password'}
+            placeholder="كلمة المرور"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            dir="ltr"
+            minLength={6}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 pl-16 text-sm"
+          />
+          <div className="absolute inset-y-0 left-0 flex items-center gap-1 px-1.5">
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              tabIndex={-1}
+              aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+              className="text-muted-foreground hover:text-foreground p-1"
+            >
+              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPassword(generatePassword())}
+              tabIndex={-1}
+              title="توليد كلمة مرور"
+              className="text-muted-foreground hover:text-foreground p-1 text-xs underline"
+            >
+              توليد
+            </button>
+          </div>
+        </div>
         <input
           placeholder="الهاتف (اختياري)"
           value={phone}
@@ -287,9 +399,90 @@ function CreateUserForm({
         </div>
       </div>
       <Button type="submit" disabled={submitting}>
-        {submitting ? 'جارٍ إرسال الدعوة…' : 'إرسال الدعوة'}
+        {submitting ? 'جارٍ الإنشاء…' : 'إنشاء الحساب'}
       </Button>
     </form>
+  );
+}
+
+/** The direct-set counterpart to invite-based creation — same reasoning as `CreateUserForm`. */
+function SetPasswordPanel({ user, onClose }: { user: User; onClose: () => void }) {
+  const [password, setPassword] = useState(generatePassword());
+  const [showPassword, setShowPassword] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const submit = async () => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPut(`/api/users/${user.id}/password`, { password });
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تعيين كلمة المرور');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
+        <p className="font-medium">تم تغيير كلمة مرور {user.name} — سلّمها له:</p>
+        <div className="border-border bg-muted/30 rounded-lg border p-3 text-sm" dir="ltr">
+          <span className="text-muted-foreground">Password: </span>
+          <span className="font-mono font-bold">{password}</span>
+        </div>
+        <Button onClick={onClose}>تمام، إغلاق</Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
+      <h2 className="font-semibold">تعيين كلمة مرور جديدة لـ {user.name}</h2>
+      {error && <div className="text-destructive text-sm">{error}</div>}
+      <div className="relative w-full max-w-xs">
+        <input
+          required
+          type={showPassword ? 'text' : 'password'}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          dir="ltr"
+          minLength={6}
+          className="border-input bg-background w-full rounded-md border px-3 py-2 pl-16 text-sm"
+        />
+        <div className="absolute inset-y-0 left-0 flex items-center gap-1 px-1.5">
+          <button
+            type="button"
+            onClick={() => setShowPassword((v) => !v)}
+            tabIndex={-1}
+            aria-label={showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+            className="text-muted-foreground hover:text-foreground p-1"
+          >
+            {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPassword(generatePassword())}
+            tabIndex={-1}
+            title="توليد كلمة مرور"
+            className="text-muted-foreground hover:text-foreground p-1 text-xs underline"
+          >
+            توليد
+          </button>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Button onClick={() => void submit()} disabled={submitting}>
+          {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
+        </Button>
+        <Button variant="secondary" onClick={onClose}>
+          إلغاء
+        </Button>
+      </div>
+    </div>
   );
 }
 

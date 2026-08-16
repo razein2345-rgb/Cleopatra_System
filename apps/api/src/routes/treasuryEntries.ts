@@ -4,9 +4,11 @@ import { hasPermission } from '@cleopatra/shared';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { requirePermission } from '../middlewares/requirePermission.js';
 import {
+  closeTreasuryDayHandler,
   createTreasuryEntryHandler,
   deleteTreasuryEntryHandler,
   getMyTreasurySummaryHandler,
+  getTodayClosureHandler,
   getTreasuryBalanceHandler,
   listTreasuryEntriesHandler,
   updateTreasuryEntryHandler,
@@ -43,6 +45,11 @@ function requireTreasuryReadAccess(req: Request, res: Response, next: NextFuncti
 treasuryEntriesRouter.get('/', requireTreasuryReadAccess, listTreasuryEntriesHandler);
 treasuryEntriesRouter.get('/balance', requirePermission('treasury.view'), getTreasuryBalanceHandler);
 treasuryEntriesRouter.get('/my-summary', requireTreasuryReadAccess, getMyTreasurySummaryHandler);
+// FEATURE-016 — "تقفيل حساب اليوم" (review/summary marker, never a lock —
+// see closeTreasuryDay's own doc comment); same access level as recording
+// entries in the first place, per the owner's own confirmation.
+treasuryEntriesRouter.get('/today-closure', requireTreasuryReadAccess, getTodayClosureHandler);
+treasuryEntriesRouter.post('/close-day', requirePermission('treasury.create'), closeTreasuryDayHandler);
 treasuryEntriesRouter.post('/', requirePermission('treasury.create'), createTreasuryEntryHandler);
 treasuryEntriesRouter.put('/:id', requirePermission('treasury.edit'), updateTreasuryEntryHandler);
 treasuryEntriesRouter.delete('/:id', requirePermission('treasury.delete'), deleteTreasuryEntryHandler);

@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { AuthContext as AuthContextData } from '@cleopatra/shared';
-import { hasPermission } from '@cleopatra/shared';
+import { buildInternalLoginEmail, hasPermission } from '@cleopatra/shared';
 import { supabase, setRememberMe } from '@/lib/supabase';
 import { apiGet, apiPost } from '@/lib/api';
 
@@ -74,8 +74,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = async (identifier: string, password: string, rememberMe: boolean) => {
     setRememberMe(rememberMe);
     const trimmed = identifier.trim();
-    const { error } = trimmed.includes('@')
-      ? await supabase.auth.signInWithPassword({ email: trimmed, password })
+    // FEATURE-015 — an employee with no real email logs in with the short
+    // ID the owner assigned them (see buildInternalLoginEmail); anything
+    // that isn't an email and doesn't look like a phone number is treated
+    // as one of those IDs rather than falling through to a doomed
+    // phone-format sign-in attempt.
+    const isPhone = !trimmed.includes('@') && (trimmed.startsWith('+') || EGYPT_MOBILE_PATTERN.test(trimmed.replace(/[\s-]/g, '')));
+    const email = trimmed.includes('@')
+      ? trimmed
+      : isPhone
+        ? null
+        : buildInternalLoginEmail(trimmed);
+    const { error } = email
+      ? await supabase.auth.signInWithPassword({ email, password })
       : await supabase.auth.signInWithPassword({ phone: normalizePhone(trimmed), password });
     if (error) throw new Error(error.message);
     await refreshAuthContext();

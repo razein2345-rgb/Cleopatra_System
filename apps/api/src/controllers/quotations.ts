@@ -28,6 +28,7 @@ import {
 import { buildPricingContext, computeItemPricing, PricingInputError } from '../services/pricingEngineService.js';
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
+import { tryAutoCreateWorkOrder } from '../services/workOrderService.js';
 
 /**
  * All current callers are internal staff (this route is gated on
@@ -404,6 +405,16 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
       data: { status: 'CONVERTED', convertedOrderId: createdOrder.id },
       include: QUOTATION_INCLUDE,
     });
+
+    // FEATURE-016 (2026-08-16) — same best-effort auto-entry-into-production
+    // as the direct-invoice path (`orderService.createOrder`). A Quotation
+    // carries no `productionTrack` of its own, so this only actually creates
+    // a WorkOrder once quotations gain that field; harmless no-op until then.
+    await tryAutoCreateWorkOrder(
+      tx,
+      { id: createdOrder.id, branchId: createdOrder.branchId, productionTrack: createdOrder.productionTrack, requiresDesign: createdOrder.requiresDesign },
+      auth.staffId,
+    );
 
     // Re-fetch with ORDER_INCLUDE now that the Quotation's `convertedOrderId`
     // FK is committed — `createdOrder`'s own include ran before that FK

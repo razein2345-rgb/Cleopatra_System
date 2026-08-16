@@ -41,6 +41,7 @@ interface DocumentRow {
   key: string;
   type: DocumentType;
   number: string;
+  partnerId: string | null;
   partnerName: string;
   date: string;
   statusLabel: string;
@@ -48,6 +49,9 @@ interface DocumentRow {
   total: number | null;
   link: string | null;
 }
+
+/** A customer with no resolvable partnerId (shouldn't normally happen) falls into its own bucket, sorted last. */
+const NO_PARTNER_KEY = '__none__';
 
 /**
  * FEATURE-007 — "المستندات" (Documents), the owner's rename of what used
@@ -79,6 +83,7 @@ export function DocumentsPage() {
           key: `q-${q.id}`,
           type: 'QUOTATION',
           number: q.quotationNumber,
+          partnerId: q.partnerId,
           partnerName: partnerName(q.partnerId),
           date: q.date,
           statusLabel: QUOTATION_STATUS_LABELS[q.status],
@@ -91,6 +96,7 @@ export function DocumentsPage() {
           key: `o-${o.id}`,
           type: 'INVOICE',
           number: o.invoiceNumber,
+          partnerId: o.partnerId,
           partnerName: partnerName(o.partnerId),
           date: o.date,
           statusLabel: ORDER_STATUS_LABELS[o.status],
@@ -106,6 +112,7 @@ export function DocumentsPage() {
             key: `w-${w.id}`,
             type: 'WORK_ORDER',
             number: w.workOrderNumber,
+            partnerId: order?.partnerId ?? null,
             partnerName: order ? partnerName(order.partnerId) : '—',
             date: w.createdAt,
             statusLabel: status ? WORKFLOW_STATUS_LABELS[status] : '—',
@@ -132,6 +139,28 @@ export function DocumentsPage() {
   if (error) return <div className="text-destructive">{error}</div>;
   if (!rows) return <div className="text-muted-foreground">جارٍ تحميل المستندات…</div>;
 
+  // FEATURE-016 (2026-08-16, owner: "عايز عرض السعر والفاتورة وأمر الشغل
+  // اللي لنفس العميل يكونوا في جروب مع بعض") — group by partnerId
+  // (already on every row's source data, no backend change needed) instead
+  // of one flat list. Each row still links to its own existing detail page
+  // (print/edit/delete all already work there); groups are sorted by their
+  // most recent document, most-active customer first.
+  const groups = new Map<string, DocumentRow[]>();
+  for (const row of rows) {
+    const key = row.partnerId ?? NO_PARTNER_KEY;
+    const group = groups.get(key);
+    if (group) group.push(row);
+    else groups.set(key, [row]);
+  }
+  const sortedGroups = Array.from(groups.entries())
+    .map(([partnerId, groupRows]) => ({
+      partnerId,
+      partnerName: groupRows[0]!.partnerName,
+      rows: groupRows,
+      latestDate: Math.max(...groupRows.map((r) => new Date(r.date).getTime())),
+    }))
+    .sort((a, b) => b.latestDate - a.latestDate);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -154,51 +183,59 @@ export function DocumentsPage() {
         </div>
       </div>
 
-      <div className="border-border bg-card overflow-x-auto rounded-2xl border">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
-              <th className="p-3">النوع</th>
-              <th className="p-3">الرقم</th>
-              <th className="p-3">العميل</th>
-              <th className="p-3">الحالة</th>
-              <th className="p-3">التاريخ</th>
-              <th className="p-3">الإجمالي</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr
-                key={row.key}
-                onClick={row.link ? () => navigate(row.link!) : undefined}
-                className={`border-border border-b last:border-0 ${row.link ? 'hover:bg-accent/40 cursor-pointer' : ''}`}
+      {rows.length === 0 && <div className="text-muted-foreground">لا توجد مستندات بعد.</div>}
+
+      {sortedGroups.map((group) => (
+        <div key={group.partnerId} className="border-border bg-card overflow-hidden rounded-2xl border">
+          <div className="border-border bg-muted/30 flex items-center justify-between border-b p-3">
+            <h2 className="font-semibold">{group.partnerName}</h2>
+            {can('orders.create') && group.partnerId !== NO_PARTNER_KEY && (
+              <Link
+                to={`/orders/new?partnerId=${group.partnerId}`}
+                className="text-primary text-sm hover:underline"
               >
-                <td className="p-3">
-                  <span className={`rounded-full px-2 py-0.5 text-xs ${TYPE_CLASSES[row.type]}`}>
-                    {TYPE_LABELS[row.type]}
-                  </span>
-                </td>
-                <td className="p-3 font-medium">{row.number}</td>
-                <td className="p-3">{row.partnerName}</td>
-                <td className="p-3">
-                  <StatusBadge tone={row.statusTone}>{row.statusLabel}</StatusBadge>
-                </td>
-                <td className="text-muted-foreground p-3">{new Date(row.date).toLocaleDateString('en-GB')}</td>
-                <td className="p-3">
-                  {row.total !== null ? row.total.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'}
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td className="text-muted-foreground p-3" colSpan={6}>
-                  لا توجد مستندات بعد.
-                </td>
-              </tr>
+                + إضافة
+              </Link>
             )}
-          </tbody>
-        </table>
-      </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+                  <th className="p-3">النوع</th>
+                  <th className="p-3">الرقم</th>
+                  <th className="p-3">الحالة</th>
+                  <th className="p-3">التاريخ</th>
+                  <th className="p-3">الإجمالي</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.rows.map((row) => (
+                  <tr
+                    key={row.key}
+                    onClick={row.link ? () => navigate(row.link!) : undefined}
+                    className={`border-border border-b last:border-0 ${row.link ? 'hover:bg-accent/40 cursor-pointer' : ''}`}
+                  >
+                    <td className="p-3">
+                      <span className={`rounded-full px-2 py-0.5 text-xs ${TYPE_CLASSES[row.type]}`}>
+                        {TYPE_LABELS[row.type]}
+                      </span>
+                    </td>
+                    <td className="p-3 font-medium">{row.number}</td>
+                    <td className="p-3">
+                      <StatusBadge tone={row.statusTone}>{row.statusLabel}</StatusBadge>
+                    </td>
+                    <td className="text-muted-foreground p-3">{new Date(row.date).toLocaleDateString('en-GB')}</td>
+                    <td className="p-3">
+                      {row.total !== null ? row.total.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

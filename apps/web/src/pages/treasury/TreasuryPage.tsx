@@ -6,6 +6,7 @@ import type {
   MyTreasurySummary,
   PaymentMethod,
   TreasuryBalance,
+  TreasuryDayClosure,
   TreasuryEntry,
   TreasuryType,
   UpdateTreasuryEntryInput,
@@ -15,7 +16,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { StatusBadge } from '@/components/cleopatra';
+import { StatusBadge, EditableDateCell, EditableNumberCell, EditableSelectCell, EditableTextCell } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 import { TREASURY_TYPE_LABELS, TREASURY_TYPE_OPTIONS, treasuryTypeTone, WALLET_COLORS } from './treasuryLabels';
@@ -54,7 +55,6 @@ function FullTreasuryView() {
 
   const [typeFilter, setTypeFilter] = useState<TreasuryType | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
 
   const loadList = () => {
     const params = new URLSearchParams();
@@ -98,6 +98,11 @@ function FullTreasuryView() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر حذف الحركة');
     }
+  };
+
+  const updateEntryField = async (entry: TreasuryEntry, patch: UpdateTreasuryEntryInput) => {
+    await apiPut(`/api/treasury-entries/${entry.id}`, patch);
+    refreshAll();
   };
 
   if (error) return <div className="text-destructive">{error}</div>;
@@ -220,61 +225,95 @@ function FullTreasuryView() {
                 <th className="p-3">الفرع</th>
                 <th className="p-3">بواسطة</th>
                 <th className="p-3">المصدر</th>
-                {(can('treasury.edit') || can('treasury.delete')) && <th className="p-3"></th>}
+                {can('treasury.delete') && <th className="p-3"></th>}
               </tr>
             </thead>
             <tbody>
-              {entries.map((entry) =>
-                editingId === entry.id ? (
+              {entries.map((entry) => {
+                const canEditEntry = can('treasury.edit') && entry.sourceType === 'MANUAL';
+                return (
                   <tr key={entry.id} className="border-border border-b last:border-0">
-                    <td colSpan={11} className="p-3">
-                      <EditTreasuryEntryForm
-                        entry={entry}
-                        onSaved={() => {
-                          setEditingId(null);
-                          refreshAll();
-                        }}
-                        onCancel={() => setEditingId(null)}
-                      />
+                    <td className="text-muted-foreground p-3">
+                      {canEditEntry ? (
+                        <EditableDateCell
+                          value={entry.date.slice(0, 10)}
+                          onSave={(next) => {
+                            if (!next) throw new Error('التاريخ مطلوب');
+                            return updateEntryField(entry, { date: new Date(next).toISOString() });
+                          }}
+                        />
+                      ) : (
+                        new Date(entry.date).toLocaleDateString('en-GB')
+                      )}
                     </td>
-                  </tr>
-                ) : (
-                  <tr key={entry.id} className="border-border border-b last:border-0">
-                    <td className="text-muted-foreground p-3">{new Date(entry.date).toLocaleDateString('en-GB')}</td>
                     <td className="p-3">
                       <StatusBadge tone={treasuryTypeTone(entry.type)}>{TREASURY_TYPE_LABELS[entry.type]}</StatusBadge>
                     </td>
-                    <td className="p-3 font-medium">{entry.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                    <td className="p-3">{entry.method ? PAYMENT_METHOD_LABELS[entry.method] : '—'}</td>
-                    <td className="p-3">{entry.category ?? '—'}</td>
-                    <td className="text-muted-foreground p-3">{entry.note ?? '—'}</td>
+                    <td className="p-3 font-medium">
+                      {canEditEntry ? (
+                        <EditableNumberCell
+                          value={entry.amount}
+                          min={0.01}
+                          step={0.01}
+                          onSave={(next) => updateEntryField(entry, { amount: next })}
+                        />
+                      ) : (
+                        entry.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {canEditEntry ? (
+                        <EditableSelectCell
+                          value={entry.method ?? 'CASH'}
+                          options={PAYMENT_METHOD_OPTIONS}
+                          onSave={(next) => updateEntryField(entry, { method: next })}
+                        />
+                      ) : entry.method ? (
+                        PAYMENT_METHOD_LABELS[entry.method]
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {canEditEntry ? (
+                        <EditableTextCell
+                          value={entry.category ?? ''}
+                          placeholder="—"
+                          onSave={(next) => updateEntryField(entry, { category: next || null })}
+                        />
+                      ) : (
+                        (entry.category ?? '—')
+                      )}
+                    </td>
+                    <td className="text-muted-foreground p-3">
+                      {canEditEntry ? (
+                        <EditableTextCell
+                          value={entry.note ?? ''}
+                          placeholder="—"
+                          onSave={(next) => updateEntryField(entry, { note: next || null })}
+                        />
+                      ) : (
+                        (entry.note ?? '—')
+                      )}
+                    </td>
                     <td className="p-3">{partnerName(entry.partnerId)}</td>
                     <td className="text-muted-foreground p-3">{branchName(entry.branchId)}</td>
                     <td className="text-muted-foreground p-3">{staffName(entry.staffId)}</td>
                     <td className="text-muted-foreground p-3">
                       {entry.sourceType === 'INVOICE_PAYMENT' ? 'تحصيل فاتورة تلقائي' : 'يدوي'}
                     </td>
-                    {(can('treasury.edit') || can('treasury.delete')) && (
+                    {can('treasury.delete') && (
                       <td className="p-3">
                         {entry.sourceType === 'MANUAL' && (
-                          <div className="flex gap-1">
-                            {can('treasury.edit') && (
-                              <Button type="button" variant="ghost" size="sm" onClick={() => setEditingId(entry.id)}>
-                                تعديل
-                              </Button>
-                            )}
-                            {can('treasury.delete') && (
-                              <Button type="button" variant="ghost" size="sm" onClick={() => void removeEntry(entry)}>
-                                حذف
-                              </Button>
-                            )}
-                          </div>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => void removeEntry(entry)}>
+                            حذف
+                          </Button>
                         )}
                       </td>
                     )}
                   </tr>
-                ),
-              )}
+                );
+              })}
               {entries.length === 0 && (
                 <tr>
                   <td className="text-muted-foreground p-3 text-center" colSpan={11}>
@@ -303,7 +342,8 @@ function ReceptionTreasuryView() {
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [closure, setClosure] = useState<TreasuryDayClosure | null>(null);
+  const [closing, setClosing] = useState(false);
 
   const load = () => {
     apiGet<MyTreasurySummary>('/api/treasury-entries/my-summary')
@@ -311,6 +351,9 @@ function ReceptionTreasuryView() {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل ملخص حركاتك'));
     apiGet<TreasuryEntry[]>('/api/treasury-entries')
       .then(setMyEntries)
+      .catch(() => undefined);
+    apiGet<TreasuryDayClosure | null>('/api/treasury-entries/today-closure')
+      .then(setClosure)
       .catch(() => undefined);
   };
 
@@ -335,6 +378,29 @@ function ReceptionTreasuryView() {
     }
   };
 
+  // FEATURE-016 (2026-08-16, owner: "زرار تقفيل حساب اليوم علشان يقدر ينجز
+  // ويراجع حسابه آخر اليوم") — a review/summary marker only, confirmed by
+  // the owner: closing does NOT block adding/editing/deleting entries
+  // afterward, it just freezes today's total as a "reviewed at" record.
+  const closeDay = async () => {
+    if (!confirm('تقفيل حساب اليوم؟ هيتسجل إجمالي وعدد حركات النهاردة كمرجع — ده مش هيمنعك من إضافة حركات جديدة بعد كده.')) return;
+    setClosing(true);
+    setError(null);
+    try {
+      const created = await apiPost<TreasuryDayClosure>('/api/treasury-entries/close-day');
+      setClosure(created);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تقفيل حساب اليوم');
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  const updateEntryField = async (entry: TreasuryEntry, patch: UpdateTreasuryEntryInput) => {
+    await apiPut(`/api/treasury-entries/${entry.id}`, patch);
+    load();
+  };
+
   if (error) return <div className="text-destructive">{error}</div>;
 
   return (
@@ -342,10 +408,25 @@ function ReceptionTreasuryView() {
       <h1 className="text-2xl font-bold">الوارد والمنصرف{myBranchName ? ` — ${myBranchName}` : ''}</h1>
 
       {/* FEATURE-007 M3 (2026-08-13, owner: "لو حاطه في فرع كليوباترا يبقى الوارد والمنصرف بتاعه في كليوباترا بس") — this total/list is the caller's own branch's ledger, not just entries they personally recorded within it. */}
-      <Card className="p-4">
-        <p className="text-muted-foreground text-sm">إجمالي حركات الفرع</p>
-        <p className="text-xl font-bold">{(summary?.total ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
-        <p className="text-muted-foreground mt-1 text-xs">{summary?.entryCount ?? 0} حركة</p>
+      <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
+        <div>
+          <p className="text-muted-foreground text-sm">إجمالي حركات الفرع</p>
+          <p className="text-xl font-bold">{(summary?.total ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+          <p className="text-muted-foreground mt-1 text-xs">{summary?.entryCount ?? 0} حركة</p>
+        </div>
+        {closure ? (
+          <div className="border-success/40 bg-success/10 text-success rounded-lg border px-3 py-2 text-sm">
+            <p className="font-semibold">اليوم مقفول ✓</p>
+            <p className="text-xs">
+              الإجمالي وقت التقفيل: {closure.totalAtClose.toLocaleString('en-US', { minimumFractionDigits: 2 })} —{' '}
+              {new Date(closure.closedAt).toLocaleTimeString('ar-EG')}
+            </p>
+          </div>
+        ) : (
+          <Button type="button" variant="secondary" disabled={closing} onClick={() => void closeDay()}>
+            {closing ? 'جارٍ التقفيل…' : 'تقفيل حساب اليوم'}
+          </Button>
+        )}
       </Card>
 
       <NewEntryForm branches={branches} partners={partners} onCreated={load} />
@@ -365,57 +446,91 @@ function ReceptionTreasuryView() {
                 <th className="p-3">الملاحظات</th>
                 <th className="p-3">العميل/المورّد</th>
                 <th className="p-3">الفرع</th>
-                {(can('treasury.edit') || can('treasury.delete')) && <th className="p-3"></th>}
+                {can('treasury.delete') && <th className="p-3"></th>}
               </tr>
             </thead>
             <tbody>
-              {myEntries.map((entry) =>
-                editingId === entry.id ? (
+              {myEntries.map((entry) => {
+                const canEditEntry = can('treasury.edit') && entry.sourceType === 'MANUAL';
+                return (
                   <tr key={entry.id} className="border-border border-b last:border-0">
-                    <td colSpan={9} className="p-3">
-                      <EditTreasuryEntryForm
-                        entry={entry}
-                        onSaved={() => {
-                          setEditingId(null);
-                          load();
-                        }}
-                        onCancel={() => setEditingId(null)}
-                      />
+                    <td className="text-muted-foreground p-3">
+                      {canEditEntry ? (
+                        <EditableDateCell
+                          value={entry.date.slice(0, 10)}
+                          onSave={(next) => {
+                            if (!next) throw new Error('التاريخ مطلوب');
+                            return updateEntryField(entry, { date: new Date(next).toISOString() });
+                          }}
+                        />
+                      ) : (
+                        new Date(entry.date).toLocaleDateString('en-GB')
+                      )}
                     </td>
-                  </tr>
-                ) : (
-                  <tr key={entry.id} className="border-border border-b last:border-0">
-                    <td className="text-muted-foreground p-3">{new Date(entry.date).toLocaleDateString('en-GB')}</td>
                     <td className="p-3">
                       <StatusBadge tone={treasuryTypeTone(entry.type)}>{TREASURY_TYPE_LABELS[entry.type]}</StatusBadge>
                     </td>
-                    <td className="p-3 font-medium">{entry.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
-                    <td className="p-3">{entry.method ? PAYMENT_METHOD_LABELS[entry.method] : '—'}</td>
-                    <td className="p-3">{entry.category ?? '—'}</td>
-                    <td className="text-muted-foreground p-3">{entry.note ?? '—'}</td>
+                    <td className="p-3 font-medium">
+                      {canEditEntry ? (
+                        <EditableNumberCell
+                          value={entry.amount}
+                          min={0.01}
+                          step={0.01}
+                          onSave={(next) => updateEntryField(entry, { amount: next })}
+                        />
+                      ) : (
+                        entry.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {canEditEntry ? (
+                        <EditableSelectCell
+                          value={entry.method ?? 'CASH'}
+                          options={PAYMENT_METHOD_OPTIONS}
+                          onSave={(next) => updateEntryField(entry, { method: next })}
+                        />
+                      ) : entry.method ? (
+                        PAYMENT_METHOD_LABELS[entry.method]
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="p-3">
+                      {canEditEntry ? (
+                        <EditableTextCell
+                          value={entry.category ?? ''}
+                          placeholder="—"
+                          onSave={(next) => updateEntryField(entry, { category: next || null })}
+                        />
+                      ) : (
+                        (entry.category ?? '—')
+                      )}
+                    </td>
+                    <td className="text-muted-foreground p-3">
+                      {canEditEntry ? (
+                        <EditableTextCell
+                          value={entry.note ?? ''}
+                          placeholder="—"
+                          onSave={(next) => updateEntryField(entry, { note: next || null })}
+                        />
+                      ) : (
+                        (entry.note ?? '—')
+                      )}
+                    </td>
                     <td className="p-3">{partnerName(entry.partnerId)}</td>
                     <td className="text-muted-foreground p-3">{branchName(entry.branchId)}</td>
-                    {(can('treasury.edit') || can('treasury.delete')) && (
+                    {can('treasury.delete') && (
                       <td className="p-3">
                         {entry.sourceType === 'MANUAL' && (
-                          <div className="flex gap-1">
-                            {can('treasury.edit') && (
-                              <Button type="button" variant="ghost" size="sm" onClick={() => setEditingId(entry.id)}>
-                                تعديل
-                              </Button>
-                            )}
-                            {can('treasury.delete') && (
-                              <Button type="button" variant="ghost" size="sm" onClick={() => void removeEntry(entry)}>
-                                حذف
-                              </Button>
-                            )}
-                          </div>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => void removeEntry(entry)}>
+                            حذف
+                          </Button>
                         )}
                       </td>
                     )}
                   </tr>
-                ),
-              )}
+                );
+              })}
               {myEntries.length === 0 && (
                 <tr>
                   <td className="text-muted-foreground p-3 text-center" colSpan={9}>
@@ -428,112 +543,6 @@ function ReceptionTreasuryView() {
         </div>
       )}
     </div>
-  );
-}
-
-/** FEATURE-007 (2026-08-12) — inline correction for a manual entry (amount/method/category/note/date only — `type`/`branchId`/`partnerId` stay fixed, matching `updateTreasuryEntrySchema`'s own shape). */
-function EditTreasuryEntryForm({
-  entry,
-  onSaved,
-  onCancel,
-}: {
-  entry: TreasuryEntry;
-  onSaved: () => void;
-  onCancel: () => void;
-}) {
-  const [amount, setAmount] = useState(entry.amount.toString());
-  const [method, setMethod] = useState<PaymentMethod>(entry.method ?? 'CASH');
-  const [category, setCategory] = useState(entry.category ?? '');
-  const [note, setNote] = useState(entry.note ?? '');
-  const [date, setDate] = useState(entry.date.slice(0, 10));
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submitting) return;
-    setError(null);
-    setSubmitting(true);
-    try {
-      const input: UpdateTreasuryEntryInput = {
-        amount: Number(amount),
-        method,
-        category: category || null,
-        note: note || null,
-        date: new Date(date).toISOString(),
-      };
-      await apiPut(`/api/treasury-entries/${entry.id}`, input);
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر حفظ التعديل');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <form onSubmit={submit} className="border-border bg-muted/30 flex flex-wrap items-end gap-2 rounded-lg border p-2">
-      {error && <div className="text-destructive w-full text-xs">{error}</div>}
-      <label className="w-28 space-y-1 text-xs">
-        <span className="text-muted-foreground">المبلغ</span>
-        <input
-          type="number"
-          min={0}
-          step="0.01"
-          required
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
-        />
-      </label>
-      <label className="w-40 space-y-1 text-xs">
-        <span className="text-muted-foreground">طريقة الدفع</span>
-        <select
-          value={method}
-          onChange={(e) => setMethod(e.target.value as PaymentMethod)}
-          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
-        >
-          {PAYMENT_METHOD_OPTIONS.map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="w-36 space-y-1 text-xs">
-        <span className="text-muted-foreground">التاريخ</span>
-        <input
-          type="date"
-          required
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
-        />
-      </label>
-      <label className="flex-1 space-y-1 text-xs">
-        <span className="text-muted-foreground">التصنيف (اختياري)</span>
-        <input
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          placeholder="مثال: إيجار، مرتبات، كهرباء"
-          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
-        />
-      </label>
-      <label className="flex-1 space-y-1 text-xs">
-        <span className="text-muted-foreground">تفاصيل — اتصرفت في إيه بالظبط؟ (اختياري)</span>
-        <input
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
-        />
-      </label>
-      <Button type="submit" size="sm" disabled={submitting}>
-        {submitting ? '...' : 'حفظ'}
-      </Button>
-      <Button type="button" variant="secondary" size="sm" onClick={onCancel}>
-        إلغاء
-      </Button>
-    </form>
   );
 }
 

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import type { CreatePartnerTagInput, PartnerTag } from '@cleopatra/shared';
+import type { CreatePartnerTagInput, PartnerTag, UpdatePartnerTagInput } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { EditableCheckboxCell, EditableTextCell } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /** Settings → Tags Management — FEATURE-002 Milestone 4. */
@@ -11,7 +12,6 @@ export function TagsManagement() {
   const [tags, setTags] = useState<PartnerTag[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
-  const [editing, setEditing] = useState<PartnerTag | null>(null);
 
   const load = () => {
     apiGet<PartnerTag[]>('/api/partner-tags')
@@ -30,6 +30,11 @@ export function TagsManagement() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر حذف الوسم');
     }
+  };
+
+  const updateTagField = async (tag: PartnerTag, patch: UpdatePartnerTagInput) => {
+    const updated = await apiPut<PartnerTag>(`/api/partner-tags/${tag.id}`, patch);
+    setTags((prev) => prev?.map((t) => (t.id === tag.id ? updated : t)) ?? prev);
   };
 
   if (error) return <div className="text-destructive text-sm">{error}</div>;
@@ -63,22 +68,35 @@ export function TagsManagement() {
           <tbody>
             {tags.map((tag) => (
               <tr key={tag.id} className="border-border border-b last:border-0">
-                <td className="p-2 font-medium">{tag.name}</td>
+                <td className="p-2 font-medium">
+                  {canManage ? (
+                    <EditableTextCell value={tag.name} onSave={(next) => updateTagField(tag, { name: next })} />
+                  ) : (
+                    tag.name
+                  )}
+                </td>
                 <td className="p-2">
-                  <span className={tag.isActive ? 'text-green-600' : 'text-muted-foreground'}>
-                    {tag.isActive ? 'نشط' : 'غير نشط'}
-                  </span>
+                  {canManage ? (
+                    <div className="flex items-center gap-1.5">
+                      <EditableCheckboxCell
+                        value={tag.isActive}
+                        onSave={(next) => updateTagField(tag, { isActive: next })}
+                      />
+                      <span className={tag.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                        {tag.isActive ? 'نشط' : 'غير نشط'}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className={tag.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                      {tag.isActive ? 'نشط' : 'غير نشط'}
+                    </span>
+                  )}
                 </td>
                 <td className="p-2">
                   {canManage && (
-                    <div className="flex gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => setEditing(tag)}>
-                        تعديل
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => void remove(tag)}>
-                        حذف
-                      </Button>
-                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => void remove(tag)}>
+                      حذف
+                    </Button>
                   )}
                 </td>
               </tr>
@@ -93,17 +111,6 @@ export function TagsManagement() {
           </tbody>
         </table>
       </div>
-
-      {editing && (
-        <TagForm
-          tag={editing}
-          onSaved={() => {
-            setEditing(null);
-            load();
-          }}
-          onCancel={() => setEditing(null)}
-        />
-      )}
     </div>
   );
 }

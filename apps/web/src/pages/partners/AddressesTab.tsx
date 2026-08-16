@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AddressType, CreatePartnerAddressInput, PartnerAddress, UpdatePartnerAddressInput } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { EditableCheckboxCell, EditableTextCell } from '@/components/cleopatra';
 import { ADDRESS_TYPE_LABELS, ADDRESS_TYPE_OPTIONS } from './partnerLabels';
 
 /** Addresses tab — FEATURE-002 Milestone 3. */
@@ -48,6 +49,14 @@ export function AddressesTab({
     }
   };
 
+  // FEATURE-014 — inline edit for the two cleanly single-cell fields (name,
+  // active status); the full address (street/city/coordinates/notes...)
+  // stays in `AddressForm`.
+  const updateAddressField = async (address: PartnerAddress, patch: UpdatePartnerAddressInput) => {
+    const updated = await apiPut<PartnerAddress>(`/api/partners/${partnerId}/addresses/${address.id}`, patch);
+    setAddresses((prev) => prev?.map((a) => (a.id === address.id ? updated : a)) ?? prev);
+  };
+
   if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (!addresses) return <div className="text-muted-foreground text-sm">جارٍ تحميل العناوين…</div>;
 
@@ -85,7 +94,14 @@ export function AddressesTab({
             {addresses.map((address) => (
               <tr key={address.id} className="border-border border-b last:border-0 align-top">
                 <td className="p-3 font-medium">
-                  {address.name}
+                  {canManage ? (
+                    <EditableTextCell
+                      value={address.name}
+                      onSave={(next) => updateAddressField(address, { name: next })}
+                    />
+                  ) : (
+                    address.name
+                  )}
                   <div className="mt-1 flex flex-wrap gap-1">
                     <span className="bg-secondary rounded-full px-2 py-0.5 text-xs">
                       {ADDRESS_TYPE_LABELS[address.type]}
@@ -126,9 +142,21 @@ export function AddressesTab({
                   )}
                 </td>
                 <td className="p-3">
-                  <span className={address.isActive ? 'text-green-600' : 'text-muted-foreground'}>
-                    {address.isActive ? 'نشط' : 'غير نشط'}
-                  </span>
+                  {canManage ? (
+                    <div className="flex items-center gap-1.5">
+                      <EditableCheckboxCell
+                        value={address.isActive}
+                        onSave={(next) => updateAddressField(address, { isActive: next })}
+                      />
+                      <span className={address.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                        {address.isActive ? 'نشط' : 'غير نشط'}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className={address.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                      {address.isActive ? 'نشط' : 'غير نشط'}
+                    </span>
+                  )}
                 </td>
                 <td className="p-3">
                   {canManage && (

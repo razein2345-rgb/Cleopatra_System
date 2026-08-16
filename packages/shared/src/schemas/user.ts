@@ -31,12 +31,44 @@ export const userSchema = z.object({
   createdAt: z.string(),
 });
 
+/**
+ * FEATURE-015 (2026-08-16, owner: "عايز انا اللي ادخل الموظفين بنفسي واعملهم
+ * باسوورد وID بدل موضوع الإيميل ده") — most employees have no real email, so
+ * the owner assigns a short login ID + password directly instead of an
+ * email-invite link. Still a normal Supabase email-based account under the
+ * hood (`buildInternalLoginEmail` appends a fixed internal domain neither
+ * side ever needs to type in full) — `loginId` alone is what's typed at
+ * both creation and login (see AuthContext.signIn's matching logic).
+ */
+export const INTERNAL_LOGIN_DOMAIN = 'cleopatra.local';
+
+export const loginIdSchema = z
+  .string()
+  .trim()
+  .min(2, 'المعرّف قصير جدًا')
+  .max(30, 'المعرّف طويل جدًا')
+  .regex(/^[a-zA-Z0-9_.-]+$/, 'المعرّف يجب أن يحتوي على حروف/أرقام إنجليزية فقط، بدون مسافات')
+  // A purely numeric ID shaped like an Egyptian mobile number (e.g.
+  // "01012345678") would be indistinguishable from a phone login at
+  // sign-in time (see AuthContext.signIn's isPhone check) — requiring at
+  // least one letter keeps every loginId unambiguous.
+  .regex(/[a-zA-Z]/, 'المعرّف لازم يحتوي على حرف واحد على الأقل (مش أرقام بس)');
+
+export function buildInternalLoginEmail(loginId: string): string {
+  return `${loginId.trim().toLowerCase()}@${INTERNAL_LOGIN_DOMAIN}`;
+}
+
 export const createUserSchema = z.object({
   name: z.string().min(1),
-  email: z.string().email(),
+  loginId: loginIdSchema,
+  password: z.string().min(6, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل'),
   phone: z.string().optional(),
   branchId: z.string().uuid(),
   roleIds: z.array(z.string().uuid()).min(1, 'Assign at least one role'),
+});
+
+export const setUserPasswordSchema = z.object({
+  password: z.string().min(6, 'كلمة المرور يجب أن تكون 6 أحرف على الأقل'),
 });
 
 export const updateUserSchema = z.object({
@@ -64,6 +96,7 @@ export const setUserBranchAccessSchema = z.object({
 export type PayFrequency = z.infer<typeof payFrequencySchema>;
 export type User = z.infer<typeof userSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type SetUserPasswordInput = z.infer<typeof setUserPasswordSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 export type SetUserRolesInput = z.infer<typeof setUserRolesSchema>;
 export type SetUserBranchAccessInput = z.infer<typeof setUserBranchAccessSchema>;

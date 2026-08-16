@@ -7,6 +7,7 @@ import type {
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { EditableCheckboxCell, EditableTextCell } from '@/components/cleopatra';
 
 const PREFERRED_METHOD_OPTIONS: Array<[PreferredContactMethod, string]> = [
   ['PHONE', 'تليفون'],
@@ -59,6 +60,15 @@ export function ContactsTab({
     }
   };
 
+  // FEATURE-014 — inline edit for the two cleanly single-cell fields
+  // (name, active status); the rest (job title/contact methods/approval
+  // permissions/notes) stay in `ContactForm` — a bundle of related fields,
+  // not one cell's worth.
+  const updateContactField = async (contact: ContactPerson, patch: UpdateContactPersonInput) => {
+    const updated = await apiPut<ContactPerson>(`/api/partners/${partnerId}/contacts/${contact.id}`, patch);
+    setContacts((prev) => prev?.map((c) => (c.id === contact.id ? updated : c)) ?? prev);
+  };
+
   if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (!contacts) return <div className="text-muted-foreground text-sm">جارٍ تحميل جهات الاتصال…</div>;
 
@@ -97,12 +107,21 @@ export function ContactsTab({
             {contacts.map((contact) => (
               <tr key={contact.id} className="border-border border-b last:border-0 align-top">
                 <td className="p-3 font-medium">
-                  {contact.fullName}
-                  {contact.isPrimary && (
-                    <span className="bg-primary/10 text-primary ms-2 rounded-full px-2 py-0.5 text-xs">
-                      أساسية
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {canManage ? (
+                      <EditableTextCell
+                        value={contact.fullName}
+                        onSave={(next) => updateContactField(contact, { fullName: next })}
+                      />
+                    ) : (
+                      contact.fullName
+                    )}
+                    {contact.isPrimary && (
+                      <span className="bg-primary/10 text-primary rounded-full px-2 py-0.5 text-xs">
+                        أساسية
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td className="text-muted-foreground p-3">
                   {[contact.jobTitle, contact.department].filter(Boolean).join(' — ') || '—'}
@@ -138,9 +157,21 @@ export function ContactsTab({
                   </div>
                 </td>
                 <td className="p-3">
-                  <span className={contact.isActive ? 'text-green-600' : 'text-muted-foreground'}>
-                    {contact.isActive ? 'نشط' : 'غير نشط'}
-                  </span>
+                  {canManage ? (
+                    <div className="flex items-center gap-1.5">
+                      <EditableCheckboxCell
+                        value={contact.isActive}
+                        onSave={(next) => updateContactField(contact, { isActive: next })}
+                      />
+                      <span className={contact.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                        {contact.isActive ? 'نشط' : 'غير نشط'}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className={contact.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                      {contact.isActive ? 'نشط' : 'غير نشط'}
+                    </span>
+                  )}
                 </td>
                 <td className="p-3">
                   {canManage && (

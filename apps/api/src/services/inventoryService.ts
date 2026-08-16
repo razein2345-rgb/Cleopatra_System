@@ -104,10 +104,21 @@ export async function updateInventoryItem(id: string, input: UpdateInventoryItem
   const existing = await prisma.inventoryItem.findUnique({ where: { id } });
   if (!existing || existing.isDeleted) throw new InventoryItemNotFoundError();
 
-  const updated = await prisma.inventoryItem.update({
-    where: { id },
-    data: { name: input.name, reorderLevel: input.reorderLevel },
-    include: INCLUDE,
+  const updated = await prisma.$transaction(async (tx) => {
+    const item = await tx.inventoryItem.update({
+      where: { id },
+      data: { name: input.name, reorderLevel: input.reorderLevel },
+      include: INCLUDE,
+    });
+    // The reverse of sheetTypes.ts's own SheetType → InventoryItem name
+    // sync — a paper item renamed from the Inventory page keeps its
+    // linked SheetType's catalog name in step, so "أنواع الورق" and the
+    // Orders paper dropdown never show two different names for the same
+    // physical stock.
+    if (input.name !== undefined && item.sheetTypeId) {
+      await tx.sheetType.update({ where: { id: item.sheetTypeId }, data: { name: input.name } });
+    }
+    return item;
   });
   // reorderLevel/quantityOnHand is branch-scoped for the DTO, but this
   // update path isn't branch-specific — any branch value works to shape

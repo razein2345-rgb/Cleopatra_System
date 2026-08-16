@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import type { SizeFamily, SizeFamilyEntry } from '@cleopatra/shared';
+import type { SizeFamily, SizeFamilyEntry, UpdateSizeFamilyEntryInput } from '@cleopatra/shared';
 import { apiDelete, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { EditableNumberCell, EditableTextCell } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /**
@@ -39,7 +40,6 @@ function FamilyCard({
   onChanged: () => void;
 }) {
   const [showAddEntry, setShowAddEntry] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<SizeFamilyEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const removeEntry = async (entry: SizeFamilyEntry) => {
@@ -50,6 +50,17 @@ function FamilyCard({
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر حذف المقاس');
+    }
+  };
+
+  const updateEntryField = async (entry: SizeFamilyEntry, patch: UpdateSizeFamilyEntryInput) => {
+    setError(null);
+    try {
+      await apiPut(`/api/size-families/${family.id}/entries/${entry.id}`, patch);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حفظ المقاس');
+      throw err;
     }
   };
 
@@ -71,40 +82,39 @@ function FamilyCard({
           </tr>
         </thead>
         <tbody>
-          {family.entries.map((entry) =>
-            editingEntry?.id === entry.id ? (
-              <tr key={entry.id} className="border-border border-t">
-                <td colSpan={3} className="py-2">
-                  <EntryForm
-                    familyId={family.id}
-                    entry={entry}
-                    onSaved={() => {
-                      setEditingEntry(null);
-                      onChanged();
-                    }}
-                    onCancel={() => setEditingEntry(null)}
+          {family.entries.map((entry) => (
+            <tr key={entry.id} className="border-border border-t">
+              <td className="py-1.5">
+                {canManage ? (
+                  <EditableTextCell
+                    value={entry.label}
+                    onSave={(next) => updateEntryField(entry, { label: next })}
                   />
-                </td>
-              </tr>
-            ) : (
-              <tr key={entry.id} className="border-border border-t">
-                <td className="py-1.5">{entry.label}</td>
-                <td className="py-1.5">{entry.piecesPerSheet}</td>
-                {canManage && (
-                  <td className="py-1.5 text-end">
-                    <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => setEditingEntry(entry)}>
-                        تعديل
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => void removeEntry(entry)}>
-                        حذف
-                      </Button>
-                    </div>
-                  </td>
+                ) : (
+                  entry.label
                 )}
-              </tr>
-            ),
-          )}
+              </td>
+              <td className="py-1.5">
+                {canManage ? (
+                  <EditableNumberCell
+                    value={entry.piecesPerSheet}
+                    min={0}
+                    step={0.001}
+                    onSave={(next) => updateEntryField(entry, { piecesPerSheet: next })}
+                  />
+                ) : (
+                  entry.piecesPerSheet
+                )}
+              </td>
+              {canManage && (
+                <td className="py-1.5 text-end">
+                  <Button variant="ghost" size="sm" onClick={() => void removeEntry(entry)}>
+                    حذف
+                  </Button>
+                </td>
+              )}
+            </tr>
+          ))}
         </tbody>
       </table>
       {canManage && (

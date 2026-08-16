@@ -36,6 +36,7 @@ import { apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { PartnerCombobox } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { ORDER_ITEM_CATEGORIES } from '@/lib/orders/itemCategories';
 
@@ -741,6 +742,10 @@ export function NewOrderPage() {
   const [searchParams] = useSearchParams();
   const editOrderId = searchParams.get('editOrder');
   const editQuotationId = searchParams.get('editQuotation');
+  // FEATURE-016 (2026-08-16) — the Documents page's per-customer "+ إضافة"
+  // link lands here with the customer pre-selected, same query-param
+  // pattern as editOrder/editQuotation above.
+  const presetPartnerId = searchParams.get('partnerId') ?? undefined;
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [readyProducts, setReadyProducts] = useState<ReadyProduct[]>([]);
@@ -801,7 +806,18 @@ export function NewOrderPage() {
             مستند جديد آخر
           </Button>
         </div>
-        <GenerateWorkOrderPanel orderId={order.id} productionTrack={order.productionTrack} />
+        {/* FEATURE-016 (2026-08-16) — an invoice with a published-template
+            production track now enters production automatically (see
+            orderService.createOrder), so `order.workOrderId` is usually
+            already set here; only fall back to the manual panel when it
+            isn't (no track, or no published template yet for it). */}
+        {order.workOrderId ? (
+          <Button type="button" variant="secondary" onClick={() => navigate(`/work-orders/${order.workOrderId}`)}>
+            طباعة أمر الشغل
+          </Button>
+        ) : (
+          <GenerateWorkOrderPanel orderId={order.id} productionTrack={order.productionTrack} />
+        )}
       </div>
     );
   }
@@ -842,6 +858,7 @@ export function NewOrderPage() {
       onCreated={setCreated}
       editOrder={editOrder}
       editQuotation={editQuotation}
+      presetPartnerId={presetPartnerId}
     />
   );
 }
@@ -997,6 +1014,7 @@ function NewOrderForm({
   onCreated,
   editOrder,
   editQuotation,
+  presetPartnerId,
 }: {
   partners: BusinessPartner[];
   branches: BranchSummary[];
@@ -1009,6 +1027,8 @@ function NewOrderForm({
   editOrder?: Order | null;
   /** FEATURE-007 (2026-08-12, owner: "المفروض أقدر أعدل في عرض السعر إني أضيف مثلا بند") — same full item-replacement edit, for a Quotation. Present only when reached via `/orders/new?editQuotation=<id>`. Mutually exclusive with `editOrder` — never both set. */
   editQuotation?: Quotation | null;
+  /** FEATURE-016 — pre-selects the customer when reached from a Documents group's "+ إضافة" link (`/orders/new?partnerId=<id>`). Ignored once editOrder/editQuotation already fix the customer. */
+  presetPartnerId?: string;
 }) {
   const { can } = useAuth();
   const canInvoice = can('orders.create');
@@ -1020,7 +1040,9 @@ function NewOrderForm({
   // نسخة محلية قابلة للتحديث — عشان لما تتضاف عميل جديد من نفس الشاشة يظهر فورًا بدون إعادة تحميل الصفحة.
   const [localPartners, setLocalPartners] = useState<BusinessPartner[]>(partners);
   const [showAddPartner, setShowAddPartner] = useState(false);
-  const [partnerId, setPartnerId] = useState(editOrder?.partnerId ?? editQuotation?.partnerId ?? partners[0]?.id ?? '');
+  const [partnerId, setPartnerId] = useState(
+    editOrder?.partnerId ?? editQuotation?.partnerId ?? presetPartnerId ?? partners[0]?.id ?? '',
+  );
   const [branchId, setBranchId] = useState(editOrder?.branchId ?? editQuotation?.branchId ?? branches[0]?.id ?? '');
   const [productionTrack, setProductionTrack] = useState<ProductionTrack | ''>(editOrder?.productionTrack ?? '');
   // FEATURE-010 (2026-08-14, owner: "عند إنشاء الطلب يجب أن يكون واضحًا هل:
@@ -1220,6 +1242,14 @@ function NewOrderForm({
   const submit = async (intent: 'SAVE_ONLY' | 'SAVE_AND_PRINT') => {
     if (submitting) return;
     setError(null);
+
+    // FEATURE-016 — the customer field is no longer a native `<select
+    // required>` (now `PartnerCombobox`, a button/search combo with no
+    // built-in HTML5 form validation), so this replaces that lost gate.
+    if (!partnerId) {
+      setError('اختر العميل أولًا');
+      return;
+    }
 
     if (cart.length === 0) {
       setError('أضف بندًا واحدًا على الأقل للفاتورة قبل الحفظ');
@@ -1554,20 +1584,7 @@ function NewOrderForm({
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">العميل</span>
               <div className="flex items-center gap-1">
-                <select
-                  required
-                  disabled={isEditing}
-                  value={partnerId}
-                  onChange={(e) => setPartnerId(e.target.value)}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
-                >
-                  <option value="">— اختر —</option>
-                  {localPartners.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nameAr}
-                    </option>
-                  ))}
-                </select>
+                <PartnerCombobox partners={localPartners} value={partnerId} onChange={setPartnerId} disabled={isEditing} />
                 {can('partners.create') && (
                   <Button type="button" variant="secondary" size="sm" onClick={() => setShowAddPartner(true)}>
                     + عميل جديد

@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { deductStockForOrderItem, restockForOrderItem } from './inventoryService.js';
 import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
+import { tryAutoCreateWorkOrder } from './workOrderService.js';
 
 export { PricingInputError } from './pricingEngineService.js';
 
@@ -355,6 +356,16 @@ export async function createOrder(
       },
       select: { id: true, branchId: true, partnerId: true, invoiceNumber: true, _count: { select: { items: true } } },
     });
+
+    // FEATURE-016 (2026-08-16, owner: "لما اعمل فاتورة دايركت يدخل في عملية
+    // التشغيل") — best-effort, never blocks order creation (see the
+    // function's own doc comment): silently skipped when the order has no
+    // production track yet or no template is published for it.
+    await tryAutoCreateWorkOrder(
+      tx,
+      { id: created.id, branchId: created.branchId, productionTrack: input.productionTrack ?? null, requiresDesign: input.requiresDesign ?? true },
+      input.staffId,
+    );
 
     // Link each uploaded Attachment to this Order now that it exists —
     // mirrors the Payment+TreasuryEntry atomicity below, same transaction.

@@ -1,9 +1,12 @@
 import type { Request, Response } from 'express';
 import { createTreasuryEntrySchema, hasPermission, treasuryTypeSchema, updateTreasuryEntrySchema } from '@cleopatra/shared';
 import {
+  closeTreasuryDay,
   createManualTreasuryEntry,
+  DayAlreadyClosedError,
   deleteManualTreasuryEntry,
   getMyTreasurySummary,
+  getTodayClosure,
   getTreasuryBalance,
   listTreasuryEntries,
   ManualEntryOnlyError,
@@ -52,6 +55,39 @@ export async function getMyTreasurySummaryHandler(req: Request, res: Response) {
   const auth = req.auth!;
   const summary = await getMyTreasurySummary(auth.branchId);
   res.json({ success: true, data: summary });
+}
+
+/** FEATURE-016 — whether the caller's own branch has already closed today; null if not. Same access level as `/my-summary` (`treasury.create` is enough). */
+export async function getTodayClosureHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const closure = await getTodayClosure(auth.branchId);
+  res.json({ success: true, data: closure });
+}
+
+/** FEATURE-016 — closes the caller's own branch's day (review/summary marker only, never a lock — see `closeTreasuryDay`'s own doc comment). */
+export async function closeTreasuryDayHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  let closure;
+  try {
+    closure = await closeTreasuryDay(auth.branchId, auth.staffId);
+  } catch (err) {
+    if (err instanceof DayAlreadyClosedError) {
+      res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_ALREADY_CLOSED' } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'TreasuryDayClosure',
+    entityId: closure.id,
+    action: 'CREATE',
+    performedById: auth.staffId,
+    branchId: closure.branchId,
+    newValue: { date: closure.date, totalAtClose: closure.totalAtClose, entryCountAtClose: closure.entryCountAtClose },
+  });
+
+  res.status(201).json({ success: true, data: closure });
 }
 
 export async function createTreasuryEntryHandler(req: Request, res: Response) {

@@ -84,6 +84,23 @@ export const myTreasurySummarySchema = z.object({
   entryCount: z.number().int(),
 });
 
+/**
+ * FEATURE-016 (2026-08-16, owner: "زرار تقفيل حساب اليوم علشان يقدر ينجز
+ * ويراجع حسابه آخر اليوم") — a review/summary marker, not a lock: the
+ * owner explicitly confirmed closing a day does NOT block further entries
+ * for it, it just records that a review happened and what the totals were
+ * at that moment. One row per (branch, date) — closing twice is a 409.
+ */
+export const treasuryDayClosureSchema = z.object({
+  id: z.string().uuid(),
+  branchId: z.string().uuid(),
+  date: z.string(),
+  closedById: z.string().uuid(),
+  closedAt: z.string(),
+  totalAtClose: z.number(),
+  entryCountAtClose: z.number().int(),
+});
+
 export type TreasuryType = z.infer<typeof treasuryTypeSchema>;
 export type TreasurySourceType = z.infer<typeof treasurySourceTypeSchema>;
 export type TreasuryEntry = z.infer<typeof treasuryEntrySchema>;
@@ -91,3 +108,4 @@ export type CreateTreasuryEntryInput = z.infer<typeof createTreasuryEntrySchema>
 export type UpdateTreasuryEntryInput = z.infer<typeof updateTreasuryEntrySchema>;
 export type TreasuryBalance = z.infer<typeof treasuryBalanceSchema>;
 export type MyTreasurySummary = z.infer<typeof myTreasurySummarySchema>;
+export type TreasuryDayClosure = z.infer<typeof treasuryDayClosureSchema>;
