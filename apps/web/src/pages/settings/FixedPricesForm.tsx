@@ -30,6 +30,10 @@ const NUMBER_FIELDS: Array<{ key: keyof UpdateSettingInput; label: string; step?
   { key: 'boardsFlex', label: 'فلكس' },
   { key: 'boardsSeasro', label: 'سيسرو' },
   { key: 'boardsGapMM', label: 'المسافة بين القطع (مم)' },
+  { key: 'digitalPrintPricePerQuarter', label: 'سعر طباعة الربع (ديجيتال)' },
+  { key: 'digitalSellophanePricePerQuarter', label: 'سعر سلوفان الربع (ديجيتال)' },
+  { key: 'digitalQuarterWidthCm', label: 'عرض الربع (سم) — مقاس تغذية الماكينة' },
+  { key: 'digitalQuarterHeightCm', label: 'ارتفاع الربع (سم) — مقاس تغذية الماكينة' },
 ];
 
 /**

@@ -38,8 +38,16 @@ function money(n: number) {
  */
 export function EmployeeProfilePage() {
   const { id } = useParams<{ id: string }>();
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
   const canEdit = can('employees.edit');
+  // system_specifications_v2.md §3.1.1 (2026-08-16) — this page bundles
+  // attendance records with payroll/salary/advances, which the spec calls
+  // out by name as sensitive enough to restrict to the Super Admin account
+  // only, even for other admins/managers who otherwise hold
+  // `employees.edit`. The plain employees LIST (`/users`) is unaffected —
+  // only this profile drill-down (and its "الملف الكامل" link, hidden in
+  // UsersPage.tsx for non-Super-Admins) is gated here.
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
   const [user, setUser] = useState<User | null>(null);
   const [advances, setAdvances] = useState<EmployeeAdvance[] | null>(null);
   const [attendance, setAttendance] = useState<AttendanceEntry[] | null>(null);
@@ -70,6 +78,15 @@ export function EmployeeProfilePage() {
   };
 
   useEffect(load, [id]);
+
+  if (!authContext) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+  if (!isSuperAdmin) {
+    return (
+      <div className="text-destructive">
+        الملف الكامل للموظف (يشمل الحضور والرواتب) مقصور على حساب المسؤول العام فقط.
+      </div>
+    );
+  }
 
   if (error) return <div className="text-destructive">{error}</div>;
   if (!user || !advances || !attendance || payroll === undefined) {

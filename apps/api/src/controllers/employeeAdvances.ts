@@ -77,7 +77,12 @@ export async function getEmployeeAdvanceSummariesHandler(_req: Request, res: Res
 }
 
 /** FEATURE-008 — the day-by-day breakdown behind a summary row's `attendanceAdjustment`, for the employee profile page. Null when the employee has no shift schedule configured yet. */
+/** system_specifications_v2.md §3.1.1 (2026-08-16) — payroll (including the attendance-based adjustment) restricted to Super Admin, same reasoning/enforcement point as `listAttendanceForStaffHandler` in attendance.ts. */
 export async function getEmployeePayrollHandler(req: Request<{ staffId: string }>, res: Response) {
+  if (!req.auth!.roleNames.includes('SUPER_ADMIN')) {
+    res.status(403).json({ success: false, error: { message: 'Payroll data is restricted to Super Admin' } });
+    return;
+  }
   const payroll = await computeEmployeePayroll(req.params.staffId);
   res.json({ success: true, data: payroll });
 }

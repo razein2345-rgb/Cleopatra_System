@@ -38,13 +38,23 @@ export const boardsPricingConstantsSchema = z.object({
   boardsGapMM: z.number(),
 });
 
+export const digitalPricingConstantsSchema = z.object({
+  digitalPrintPricePerQuarter: z.number(),
+  digitalSellophanePricePerQuarter: z.number(),
+  digitalQuarterWidthCm: z.number(),
+  digitalQuarterHeightCm: z.number(),
+  profitPercent: z.number(),
+});
+
 export const pricingReferenceSchema = z.object({
   pricingConstants: pricingConstantsSchema,
   boardsConstants: boardsPricingConstantsSchema,
+  digitalConstants: digitalPricingConstantsSchema,
   vatRate: z.number(),
   sizeFamilies: z.array(sizeFamilySchema),
 });
 
 export type PricingConstantsDto = z.infer<typeof pricingConstantsSchema>;
 export type BoardsPricingConstantsDto = z.infer<typeof boardsPricingConstantsSchema>;
+export type DigitalPricingConstantsDto = z.infer<typeof digitalPricingConstantsSchema>;
 export type PricingReference = z.infer<typeof pricingReferenceSchema>;

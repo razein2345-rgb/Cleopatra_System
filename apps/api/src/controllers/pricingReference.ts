@@ -1,6 +1,10 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
-import { mapSettingToBoardsPricingConstants, mapSettingToPricingConstants } from '../services/pricingEngineService.js';
+import {
+  mapSettingToBoardsPricingConstants,
+  mapSettingToDigitalPricingConstants,
+  mapSettingToPricingConstants,
+} from '../services/pricingEngineService.js';
 
 /**
  * FEATURE-007 PE-E — everything `NewOrderPage.tsx` needs to run the same
@@ -25,6 +29,7 @@ export async function getPricingReference(_req: Request, res: Response) {
     data: {
       pricingConstants: mapSettingToPricingConstants(setting),
       boardsConstants: mapSettingToBoardsPricingConstants(setting),
+      digitalConstants: mapSettingToDigitalPricingConstants(setting),
       vatRate: setting.vatRate.toNumber(),
       sizeFamilies: families.map((f) => ({
         id: f.id,

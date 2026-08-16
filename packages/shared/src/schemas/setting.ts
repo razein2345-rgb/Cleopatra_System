@@ -29,6 +29,12 @@ export const settingSchema = z.object({
   boardsSeasro: z.number(),
   boardsGapMM: z.number(),
 
+  // system_specifications_v2.md §13.3 — Digital printing Yield-based costing.
+  digitalPrintPricePerQuarter: z.number(),
+  digitalSellophanePricePerQuarter: z.number(),
+  digitalQuarterWidthCm: z.number(),
+  digitalQuarterHeightCm: z.number(),
+
   // FEATURE-006 — business identity for document headers. Nullable/
   // additive; logoUrl above is reused as-is (no upload endpoint exists in
   // this codebase — confirmed by inspection — so this stays a plain URL

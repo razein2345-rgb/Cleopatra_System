@@ -402,6 +402,15 @@ model Setting {
   boardsSeasro                 Decimal @db.Decimal(12, 2)
   boardsGapMM                  Decimal @db.Decimal(6, 2)
 
+  /// system_specifications_v2.md §13.3 — Digital printing Yield-based
+  /// costing. Quarter-sheet dimensions are configurable (rule 15) rather
+  /// than hardcoded, defaulting to the spec's 50×35cm, in case the feed
+  /// size changes with a different machine.
+  digitalPrintPricePerQuarter     Decimal @default(0) @db.Decimal(12, 2)
+  digitalSellophanePricePerQuarter Decimal @default(0) @db.Decimal(12, 2)
+  digitalQuarterWidthCm            Decimal @default(50) @db.Decimal(6, 2)
+  digitalQuarterHeightCm           Decimal @default(35) @db.Decimal(6, 2)
+
   /// FEATURE-006 — business identity for document headers (Quotation/
   /// Invoice/Work Order printing). All nullable/additive; logoUrl above is
   /// reused as-is (no upload endpoint exists anywhere in this codebase —

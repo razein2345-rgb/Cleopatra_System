@@ -60,7 +60,19 @@ export async function checkOutHandler(req: Request, res: Response) {
   }
 }
 
+/**
+ * system_specifications_v2.md §3.1.1 (2026-08-16) — attendance records are
+ * called out by name (alongside payroll) as sensitive enough to restrict
+ * to the Super Admin account only, even for other roles that otherwise
+ * hold `employees.view` (the route-level permission this endpoint still
+ * requires too). A frontend-only guard (`EmployeeProfilePage.tsx`) isn't
+ * enough on its own — this is the actual enforcement point.
+ */
 export async function listAttendanceForStaffHandler(req: Request<{ staffId: string }>, res: Response) {
+  if (!req.auth!.roleNames.includes('SUPER_ADMIN')) {
+    res.status(403).json({ success: false, error: { message: 'Attendance records are restricted to Super Admin' } });
+    return;
+  }
   const entries = await listAttendanceForStaff(req.params.staffId);
   res.json({ success: true, data: entries });
 }

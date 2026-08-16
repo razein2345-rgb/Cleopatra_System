@@ -113,6 +113,22 @@ export const boardsPricingInputSchema = z.object({
   ...extraServiceFields,
 });
 
+/** system_specifications_v2.md §13.3 — Digital printing, Yield-based. No zinc/plate cost (no plates in digital printing), so no `zincPrintOverrideFields` here — that's an Offset-only concept. */
+export const digitalPricingInputSchema = z.object({
+  kind: z.literal('DIGITAL'),
+  inventoryItemId: z.string().uuid(),
+  pieceWidthCm: z.number().positive(),
+  pieceHeightCm: z.number().positive(),
+  quantity: z.number().int().positive(),
+  /** "Yield" — Pre-Press-adjustable, auto-suggested client-side then submitted as a plain number; always required, never recomputed server-side. */
+  yieldPerQuarter: z.number().int().positive(),
+  sellophaneEnabled: z.boolean().optional(),
+  /** "سعر البشر" — optional, always caller-entered per piece. */
+  boshrPricePerPiece: z.number().nonnegative().optional(),
+  ...marginOverrideFields,
+  ...extraServiceFields,
+});
+
 /** Product/service: no size/cost inputs at all — `readyProductId`/`serviceId` on the parent item schema say which catalog row supplies the unit price. */
 export const productOrServicePricingInputSchema = z.object({
   kind: z.enum(['PRODUCT', 'SERVICE']),
@@ -126,6 +142,7 @@ export const orderItemPricingInputSchema = z.discriminatedUnion('kind', [
   envelopePricingInputSchema,
   folderPricingInputSchema,
   boardsPricingInputSchema,
+  digitalPricingInputSchema,
   productOrServicePricingInputSchema,
 ]);
 
@@ -137,5 +154,6 @@ export type NotebookPricingInput = z.infer<typeof notebookPricingInputSchema>;
 export type EnvelopePricingInput = z.infer<typeof envelopePricingInputSchema>;
 export type FolderPricingInput = z.infer<typeof folderPricingInputSchema>;
 export type BoardsPricingInput = z.infer<typeof boardsPricingInputSchema>;
+export type DigitalPricingInput = z.infer<typeof digitalPricingInputSchema>;
 export type ProductOrServicePricingInput = z.infer<typeof productOrServicePricingInputSchema>;
 export type OrderItemPricingInput = z.infer<typeof orderItemPricingInputSchema>;

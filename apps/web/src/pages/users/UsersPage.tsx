@@ -13,7 +13,12 @@ const LAST_ADMIN_TITLE =
   'هذا آخر مسؤول نشط — تم تعطيل هذا الإجراء لمنع فقدان الوصول إلى النظام بالكامل.';
 
 export function UsersPage() {
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
+  // system_specifications_v2.md §3.1.1 (2026-08-16) — the full profile
+  // (`/users/:id`) bundles attendance + payroll, restricted to Super Admin
+  // there and enforced server-side; hidden here too so the link isn't a
+  // dead end for anyone else.
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
   const [users, setUsers] = useState<User[] | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
@@ -133,9 +138,11 @@ export function UsersPage() {
                       ) : (
                         user.name
                       )}
-                      <Link to={`/users/${user.id}`} className="text-muted-foreground shrink-0 hover:underline" title="الملف الكامل">
-                        ↗
-                      </Link>
+                      {isSuperAdmin && (
+                        <Link to={`/users/${user.id}`} className="text-muted-foreground shrink-0 hover:underline" title="الملف الكامل">
+                          ↗
+                        </Link>
+                      )}
                     </div>
                   </td>
                   <td className="p-3" dir="ltr">

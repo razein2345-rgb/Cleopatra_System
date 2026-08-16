@@ -16,8 +16,10 @@ import type { OrderItemPricingInput, ServiceCategory } from '@cleopatra/shared';
  * Owner (2026-08-13): "لوحات وإعلانات" already has a complete, working
  * pricing path (`BOARDS` kind — banner/vinyl/flex/seasro, per-meter, no
  * margin) — this registry just re-parents it under the new tab, it does
- * not change it. Digital's pricing rules are explicitly undefined yet
- * (`status: 'pending'`) — never invent them here.
+ * not change it. Digital (`DIGITAL` kind, Yield-based costing per
+ * system_specifications_v2.md §13.3) was added 2026-08-16 with explicit
+ * owner approval — the first real implementation of this track's pricing,
+ * not a modification of anything pre-existing.
  */
 
 type PricingKind = OrderItemPricingInput['kind'];
@@ -55,7 +57,8 @@ export const ORDER_ITEM_CATEGORIES: OrderItemParentTab[] = [
   {
     id: 'DIGITAL',
     label: 'ديجيتال',
-    status: 'pending',
+    status: 'ready',
+    kind: 'DIGITAL',
   },
   {
     id: 'BOARDS_SIGNAGE',

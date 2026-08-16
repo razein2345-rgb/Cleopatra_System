@@ -60,46 +60,158 @@ const TRACK_TAB_LABELS: Record<TrackTabKey, string> = {
  * queue, unchanged behaviorally — see `DepartmentsTab` below, previously
  * this whole file's default export).
  */
+type TopTab = 'OVERVIEW' | 'ORDERS' | 'DEPARTMENTS';
+const TOP_TAB_ORDER: TopTab[] = ['OVERVIEW', 'ORDERS', 'DEPARTMENTS'];
+const TOP_TAB_LABELS: Record<TopTab, string> = {
+  OVERVIEW: 'نظرة عامة',
+  ORDERS: 'الطلبات',
+  DEPARTMENTS: 'الأقسام',
+};
+
 export function ProductionBoardPage() {
-  const [tab, setTab] = useState<'ORDERS' | 'DEPARTMENTS'>('ORDERS');
+  const [tab, setTab] = useState<TopTab>('OVERVIEW');
+  const [departmentsTrackTab, setDepartmentsTrackTab] = useState<TrackTabKey>('DESIGN');
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">لوحة الإنتاج</h1>
         <div className="border-border bg-muted/40 flex gap-1 rounded-lg border p-1">
-          <button
-            type="button"
-            onClick={() => setTab('ORDERS')}
-            className={cn(
-              'rounded-md px-3 py-1.5 text-sm font-medium',
-              tab === 'ORDERS' ? 'bg-background shadow-sm' : 'text-muted-foreground',
-            )}
-          >
-            الطلبات
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('DEPARTMENTS')}
-            className={cn(
-              'rounded-md px-3 py-1.5 text-sm font-medium',
-              tab === 'DEPARTMENTS' ? 'bg-background shadow-sm' : 'text-muted-foreground',
-            )}
-          >
-            الأقسام
-          </button>
+          {TOP_TAB_ORDER.map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={cn(
+                'rounded-md px-3 py-1.5 text-sm font-medium',
+                tab === key ? 'bg-background shadow-sm' : 'text-muted-foreground',
+              )}
+            >
+              {TOP_TAB_LABELS[key]}
+            </button>
+          ))}
         </div>
       </div>
 
-      {tab === 'ORDERS' ? <ProductionBoardOrdersTab /> : <DepartmentsTab />}
+      {tab === 'OVERVIEW' && (
+        <OverviewTab
+          onSelectTrack={(track) => {
+            setDepartmentsTrackTab(track);
+            setTab('DEPARTMENTS');
+          }}
+        />
+      )}
+      {tab === 'ORDERS' && <ProductionBoardOrdersTab />}
+      {tab === 'DEPARTMENTS' && <DepartmentsTab initialTrackTab={departmentsTrackTab} />}
     </div>
   );
 }
 
-function DepartmentsTab() {
+interface TrackSummary {
+  key: TrackTabKey;
+  running: number;
+  delayed: number;
+  topPriority: WorkflowPriority | null;
+}
+
+const PRIORITY_RANK: Record<WorkflowPriority, number> = { LOW: 0, NORMAL: 1, HIGH: 2, URGENT: 3 };
+
+/**
+ * system_specifications_v2.md §6.5 — the Unified Production Overview, the
+ * spec's own "أولوية عليا في التصميم" (top design priority): one screen
+ * showing every production department's status at once (running/delayed
+ * job counts, top priority), instead of having to click through each
+ * track's own tab in `DepartmentsTab` to find out. Deliberately reuses the
+ * exact same `/api/workflow-instances/queue` endpoint `DepartmentsTab`
+ * already calls per track — no new backend endpoint, no data stored here
+ * beyond this component's own render state (rule 5 — no Duplicate Logic /
+ * parallel storage). Machine status isn't shown — no Machine/Capacity
+ * model exists yet (deferred to a later batch, see gap_analysis_report.md).
+ */
+function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) => void }) {
+  const [summaries, setSummaries] = useState<TrackSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  const load = useCallback(() => {
+    setError(null);
+    apiGet<Department[]>('/api/departments')
+      .then(async (depts) => {
+        const designDeptId = depts.find((d) => d.code === 'DESIGN')?.id;
+        const results = await Promise.all(
+          TRACK_TAB_ORDER.map(async (key): Promise<TrackSummary> => {
+            const query = key === 'DESIGN' ? (designDeptId ? `departmentId=${designDeptId}` : null) : `productionTrack=${key}`;
+            if (!query) return { key, running: 0, delayed: 0, topPriority: null };
+            const items = await apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?${query}`);
+            const topPriority = items.reduce<WorkflowPriority | null>(
+              (top, item) => (top === null || PRIORITY_RANK[item.priority] > PRIORITY_RANK[top] ? item.priority : top),
+              null,
+            );
+            return { key, running: items.length, delayed: items.filter((i) => i.isDelayed).length, topPriority };
+          }),
+        );
+        setSummaries(results);
+        setLastUpdated(new Date());
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل النظرة العامة'));
+  }, []);
+
+  useEffect(load, [load]);
+
+  if (error) return <div className="text-destructive">{error}</div>;
+  if (!summaries) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-muted-foreground text-sm">حالة كل قسم إنتاجي لحظيًا — اضغط على أي كارت لفتح القسم مباشرة.</p>
+        <div className="flex items-center gap-2">
+          {lastUpdated && (
+            <span className="text-muted-foreground text-xs">
+              آخر تحديث: {lastUpdated.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+          <Button type="button" variant="secondary" size="icon" onClick={load} aria-label="تحديث">
+            <RefreshCw className="size-4" />
+          </Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {summaries.map((s) => (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => onSelectTrack(s.key)}
+            className={cn(
+              'border-border bg-card rounded-2xl border p-4 text-start transition hover:shadow-md',
+              s.delayed > 0 ? 'border-danger/40' : s.topPriority === 'URGENT' ? 'border-warning/40' : '',
+            )}
+          >
+            <p className="text-muted-foreground text-sm">{TRACK_TAB_LABELS[s.key]}</p>
+            <p className="mt-1 text-2xl font-bold">
+              {s.running} <span className="text-muted-foreground text-sm font-normal">جارية</span>
+            </p>
+            {s.delayed > 0 ? (
+              <p className="text-danger mt-1 text-sm">⚠ {s.delayed} متأخر</p>
+            ) : (
+              <p className="text-success mt-1 text-sm">✓ مفيش متأخر</p>
+            )}
+            {s.topPriority && (
+              <StatusBadge tone={priorityTone(s.topPriority)} className="mt-2">
+                أعلى أولوية: {PRIORITY_LABELS[s.topPriority]}
+              </StatusBadge>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) {
   const { can } = useAuth();
   const [departments, setDepartments] = useState<Department[] | null>(null);
-  const [trackTab, setTrackTab] = useState<TrackTabKey>('DESIGN');
+  const [trackTab, setTrackTab] = useState<TrackTabKey>(initialTrackTab ?? 'DESIGN');
   const [employees, setEmployees] = useState<User[]>([]);
   const [queue, setQueue] = useState<WorkflowQueueItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);

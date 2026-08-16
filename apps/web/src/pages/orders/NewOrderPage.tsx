@@ -26,11 +26,13 @@ import type {
 } from '@cleopatra/shared';
 import {
   calculateBoardsCost,
+  calculateDigitalCost,
   calculateEnvelopeCost,
   calculateFolderCost,
   calculateLoosePaperCost,
   calculateNotebookCost,
   calculateProductOrServiceCost,
+  suggestYield,
 } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -55,6 +57,7 @@ const KIND_LABELS: Record<PricingKind, string> = {
   ENVELOPE: 'أظرف',
   FOLDER: 'فولدرات',
   BOARDS: 'لوحات وإعلانات',
+  DIGITAL: 'ديجيتال',
   PRODUCT: 'منتج جاهز',
   SERVICE: 'خدمة',
 };
@@ -155,6 +158,9 @@ interface DraftItem {
   heightCm: string;
   hasDesign: boolean;
   hasSellophane: boolean;
+  // DIGITAL — reuses inventoryItemId (paper)/widthCm+heightCm (piece size)/sellophaneEnabled above.
+  yieldPerQuarter: string;
+  boshrPricePerPiece: string;
   // نسبة الربح — تعديل يدوي اختياري بدل النسبة الافتراضية من الإعدادات (LOOSE_PAPER/NOTEBOOK/ENVELOPE/FOLDER فقط — BOARDS/PRODUCT/SERVICE لا هامش ربح فيهم أصلًا).
   profitPercentEnabled: boolean;
   profitPercentOverride: string;
@@ -212,6 +218,8 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     heightCm: '',
     hasDesign: false,
     hasSellophane: false,
+    yieldPerQuarter: '',
+    boshrPricePerPiece: '0',
     profitPercentEnabled: false,
     profitPercentOverride: '0',
     baggingEnabled: false,
@@ -336,6 +344,20 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         hasSellophane: d.material === 'VINYL_NORMAL' || d.material === 'VINYL_PRINT_CUT' ? d.hasSellophane : undefined,
         ...extra,
       };
+    case 'DIGITAL':
+      if (!d.inventoryItemId || !d.widthCm || !d.heightCm || !d.quantity || !d.yieldPerQuarter) return null;
+      return {
+        kind: 'DIGITAL',
+        inventoryItemId: d.inventoryItemId,
+        pieceWidthCm: toNum(d.widthCm),
+        pieceHeightCm: toNum(d.heightCm),
+        quantity: toNum(d.quantity),
+        yieldPerQuarter: toNum(d.yieldPerQuarter),
+        sellophaneEnabled: d.sellophaneEnabled,
+        boshrPricePerPiece: toOptionalNum(d.boshrPricePerPiece),
+        ...extra,
+        ...margin,
+      };
     case 'PRODUCT':
     case 'SERVICE':
       if (!d.quantity) return null;
@@ -347,6 +369,7 @@ interface PricingCtx {
   families: PricingReference['sizeFamilies'];
   pricingConstants: PricingReference['pricingConstants'];
   boardsConstants: PricingReference['boardsConstants'];
+  digitalConstants: PricingReference['digitalConstants'];
   sheetPriceByInventoryItemId: Map<string, number>;
   catalogPriceById: Map<string, number>;
 }
@@ -366,6 +389,10 @@ interface PricingPreviewResult {
   subtotal?: number;
   total?: number;
   unitPrice?: number;
+  // DIGITAL (§13.3)
+  fitsInQuarter?: boolean;
+  unitsNeeded?: number | null;
+  costPerPiece?: number;
 }
 
 /** Client-side mirror of `orderService.ts`'s `computeItemPricing` dispatch — same pure functions, used only for the live preview; the server always recomputes authoritatively on submit. */
@@ -473,6 +500,23 @@ function previewItemTotal(
         });
         return { total: r.total, error: null, result: r };
       }
+      case 'DIGITAL': {
+        const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
+        if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق', result: null };
+        const r = calculateDigitalCost({
+          pieceWidthCm: pricing.pieceWidthCm,
+          pieceHeightCm: pricing.pieceHeightCm,
+          quantity: pricing.quantity,
+          yieldPerQuarter: pricing.yieldPerQuarter,
+          sheetPrice,
+          sellophaneEnabled: pricing.sellophaneEnabled,
+          boshrPricePerPiece: pricing.boshrPricePerPiece,
+          settings: ctx.digitalConstants,
+          extraCosts,
+          profitPercentOverride: pricing.profitPercentOverride,
+        });
+        return { total: r.total, error: null, result: r };
+      }
       case 'PRODUCT':
       case 'SERVICE': {
         const catalogId = d.readyProductId || d.serviceId;
@@ -501,6 +545,8 @@ function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Se
       return `${d.itemType || KIND_LABELS.FOLDER} — ${d.realSizeLabel} — ${d.quantity} قطعة`;
     case 'BOARDS':
       return `${d.itemType || BOARD_MATERIAL_LABELS[d.material]} — ${d.widthCm}×${d.heightCm} سم — ${d.quantity} قطعة`;
+    case 'DIGITAL':
+      return `${d.itemType || KIND_LABELS.DIGITAL} — ${d.widthCm}×${d.heightCm} سم — ${d.quantity} قطعة`;
     case 'PRODUCT':
       return `${readyProducts.find((p) => p.id === d.readyProductId)?.name ?? d.itemType} × ${d.quantity}`;
     case 'SERVICE':
@@ -528,6 +574,16 @@ interface StoredBreakdown {
   hasDesign?: boolean | null;
   hasSellophane?: boolean | null;
   readyEnvelopePricePerPiece?: number;
+  // DIGITAL (§13.3) — `fitsInQuarter` is the distinguishing marker checked
+  // in `inferStoredKind` (FOLDER also freezes `sellophaneEnabled`, so that
+  // field alone can't tell the two apart).
+  fitsInQuarter?: boolean;
+  unitsNeeded?: number | null;
+  pieceWidthCm?: number;
+  pieceHeightCm?: number;
+  yieldPerQuarter?: number;
+  costPerPiece?: number;
+  boshrCostPerPiece?: number;
   extraCosts?: number;
   notes?: string | null;
   referenceImageUrl?: string | null;
@@ -560,6 +616,8 @@ interface StoredBreakdown {
 function inferStoredKind(sizeFamilyKey: string | null, breakdown: StoredBreakdown): PricingKind | null {
   if (breakdown.kind === 'PRODUCT' || breakdown.kind === 'SERVICE') return breakdown.kind;
   if ('material' in breakdown) return 'BOARDS';
+  // Checked before FOLDER — both freeze `sellophaneEnabled`, but only DIGITAL freezes `fitsInQuarter`.
+  if ('fitsInQuarter' in breakdown) return 'DIGITAL';
   if ('readyEnvelopePricePerPiece' in breakdown) return 'ENVELOPE';
   if ('contentType' in breakdown) return 'NOTEBOOK';
   if ('sellophaneEnabled' in breakdown) return 'FOLDER';
@@ -638,6 +696,19 @@ function reconstructPricingInput(
         quantity: b.quantity ?? 1,
         hasDesign: b.hasDesign ?? undefined,
         hasSellophane: b.hasSellophane ?? undefined,
+        ...extra,
+      };
+    case 'DIGITAL':
+      if (!inventoryItemId) return null;
+      return {
+        kind: 'DIGITAL',
+        inventoryItemId,
+        pieceWidthCm: b.pieceWidthCm ?? 1,
+        pieceHeightCm: b.pieceHeightCm ?? 1,
+        quantity: b.quantity ?? 1,
+        yieldPerQuarter: b.yieldPerQuarter ?? 1,
+        sellophaneEnabled: b.sellophaneEnabled ?? false,
+        boshrPricePerPiece: b.boshrCostPerPiece ?? undefined,
         ...extra,
       };
     case 'PRODUCT':
@@ -1129,6 +1200,7 @@ function NewOrderForm({
       families: pricingReference.sizeFamilies,
       pricingConstants: pricingReference.pricingConstants,
       boardsConstants: pricingReference.boardsConstants,
+      digitalConstants: pricingReference.digitalConstants,
       sheetPriceByInventoryItemId: new Map(
         inventoryItems.filter((i) => i.sheetPrice !== null).map((i) => [i.id, i.sheetPrice as number]),
       ),
@@ -1395,8 +1467,8 @@ function NewOrderForm({
           </div>
         )}
 
-        {/* نسبة الربح — تعديل يدوي اختياري (عايزة اقدر اعدلها وانا بطلب). موقعها اتنقل تحت قائمة بنود السلة نفسها (owner, 2026-08-13) — كانت قبل كده جوه نموذج تصميم البند نفسه، قبل "سعر البند" مباشرة. */}
-        {hasPrintSection && (
+        {/* نسبة الربح — تعديل يدوي اختياري (عايزة اقدر اعدلها وانا بطلب). موقعها اتنقل تحت قائمة بنود السلة نفسها (owner, 2026-08-13) — كانت قبل كده جوه نموذج تصميم البند نفسه، قبل "سعر البند" مباشرة. DIGITAL يشارك نفس نسبة الربح الافتراضية القابلة للتعديل (schema's `marginOverrideFields`) رغم إنه مش من كتلة hasPrintSection الأصلية (زنكات/تراج أوفست فقط). */}
+        {(hasPrintSection || draft.kind === 'DIGITAL') && (
           <div className="border-border flex flex-wrap items-center gap-2 rounded-lg border p-2">
             <Checkbox
               checked={draft.profitPercentEnabled}
@@ -2054,6 +2126,125 @@ function NewOrderForm({
                 </label>
               )}
             </div>
+          )}
+
+          {draft.kind === 'DIGITAL' && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">نوع الورق (يُسحب من المخزن)</span>
+                <select
+                  value={draft.inventoryItemId}
+                  onChange={(e) => updateDraft({ inventoryItemId: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— اختر —</option>
+                  {paperInventoryItems.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">عرض القطعة (سم)</span>
+                <input
+                  type="number"
+                  min={0.1}
+                  step="0.1"
+                  value={draft.widthCm}
+                  onChange={(e) => {
+                    const widthCm = e.target.value;
+                    const w = Number(widthCm);
+                    const h = Number(draft.heightCm);
+                    const suggested =
+                      w > 0 && h > 0
+                        ? suggestYield(
+                            w,
+                            h,
+                            pricingReference.digitalConstants.digitalQuarterWidthCm,
+                            pricingReference.digitalConstants.digitalQuarterHeightCm,
+                          )
+                        : 0;
+                    updateDraft({ widthCm, yieldPerQuarter: suggested > 0 ? String(suggested) : draft.yieldPerQuarter });
+                  }}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">ارتفاع القطعة (سم)</span>
+                <input
+                  type="number"
+                  min={0.1}
+                  step="0.1"
+                  value={draft.heightCm}
+                  onChange={(e) => {
+                    const heightCm = e.target.value;
+                    const w = Number(draft.widthCm);
+                    const h = Number(heightCm);
+                    const suggested =
+                      w > 0 && h > 0
+                        ? suggestYield(
+                            w,
+                            h,
+                            pricingReference.digitalConstants.digitalQuarterWidthCm,
+                            pricingReference.digitalConstants.digitalQuarterHeightCm,
+                          )
+                        : 0;
+                    updateDraft({ heightCm, yieldPerQuarter: suggested > 0 ? String(suggested) : draft.yieldPerQuarter });
+                  }}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">الكمية</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.quantity}
+                  onChange={(e) => updateDraft({ quantity: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">التنزيلة (Yield) — عدد القطع في الربع</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.yieldPerQuarter}
+                  onChange={(e) => updateDraft({ yieldPerQuarter: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="flex items-center gap-2 self-end text-sm">
+                <input
+                  type="checkbox"
+                  checked={draft.sellophaneEnabled}
+                  onChange={(e) => updateDraft({ sellophaneEnabled: e.target.checked })}
+                />
+                سلوفان
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">سعر البشر للقطعة (اختياري)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.boshrPricePerPiece}
+                  onChange={(e) => updateDraft({ boshrPricePerPiece: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+          )}
+
+          {/* صيغة تكلفة الديجيتال الحية — نظام التنزيلة، system_specifications_v2.md §13.3 */}
+          {draft.kind === 'DIGITAL' && result && typeof result.costPerPiece === 'number' && (
+            <p className="bg-muted/40 rounded-md p-2 text-xs" dir="rtl">
+              {result.fitsInQuarter === false && result.unitsNeeded
+                ? `القطعة أكبر من الربع — محتاجة ${result.unitsNeeded} ربع/قطعة`
+                : `التنزيلة: ${draft.yieldPerQuarter} قطعة في الربع`}
+              {' — '}تكلفة القطعة {money(result.costPerPiece)} ج.م × الكمية ({draft.quantity}) = {money(result.subtotal ?? 0)} ج.م
+            </p>
           )}
 
           {draft.kind === 'PRODUCT' && (

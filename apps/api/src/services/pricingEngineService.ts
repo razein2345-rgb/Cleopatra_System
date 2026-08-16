@@ -2,11 +2,13 @@ import type { Prisma } from '../generated/prisma/client.js';
 import type { BoardsPricingConstants, OrderItemPricingInput, PricingConstants } from '@cleopatra/shared';
 import {
   calculateBoardsCost,
+  calculateDigitalCost,
   calculateEnvelopeCost,
   calculateFolderCost,
   calculateLoosePaperCost,
   calculateNotebookCost,
   calculateProductOrServiceCost,
+  type DigitalPricingConstants,
   type SizeFamilyInput,
 } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
@@ -31,6 +33,7 @@ export interface PricingContext {
   families: SizeFamilyInput[];
   pricingConstants: PricingConstants;
   boardsConstants: BoardsPricingConstants;
+  digitalConstants: DigitalPricingConstants;
   vatRate: number;
   sheetPriceByInventoryItemId: Map<string, number>;
   /** Frozen into `breakdown` at creation time (same "freeze by default" discipline as `modelName`) so a later paper rename never changes what an already-printed Work Order shows it used. */
@@ -75,6 +78,16 @@ export function mapSettingToBoardsPricingConstants(setting: SettingRecord): Boar
     boardsFlex: setting.boardsFlex.toNumber(),
     boardsSeasro: setting.boardsSeasro.toNumber(),
     boardsGapMM: setting.boardsGapMM.toNumber(),
+  };
+}
+
+export function mapSettingToDigitalPricingConstants(setting: SettingRecord): DigitalPricingConstants {
+  return {
+    digitalPrintPricePerQuarter: setting.digitalPrintPricePerQuarter.toNumber(),
+    digitalSellophanePricePerQuarter: setting.digitalSellophanePricePerQuarter.toNumber(),
+    digitalQuarterWidthCm: setting.digitalQuarterWidthCm.toNumber(),
+    digitalQuarterHeightCm: setting.digitalQuarterHeightCm.toNumber(),
+    profitPercent: setting.profitPercent.toNumber(),
   };
 }
 
@@ -152,6 +165,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
     families: families.map(mapSizeFamilyToInput),
     pricingConstants: mapSettingToPricingConstants(setting),
     boardsConstants: mapSettingToBoardsPricingConstants(setting),
+    digitalConstants: mapSettingToDigitalPricingConstants(setting),
     vatRate: setting.vatRate.toNumber(),
     sheetPriceByInventoryItemId,
     paperNameByInventoryItemId,
@@ -355,6 +369,39 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         inventoryItemId: pricing.inventoryItemId,
         sizeFamilyKey: pricing.sizeFamilyKey,
         realSizeLabel: pricing.realSizeLabel,
+      };
+    }
+    case 'DIGITAL': {
+      const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
+      if (sheetPrice === undefined) {
+        throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no linked sheet price`);
+      }
+      const result = calculateDigitalCost({
+        pieceWidthCm: pricing.pieceWidthCm,
+        pieceHeightCm: pricing.pieceHeightCm,
+        quantity: pricing.quantity,
+        yieldPerQuarter: pricing.yieldPerQuarter,
+        sheetPrice,
+        sellophaneEnabled: pricing.sellophaneEnabled,
+        boshrPricePerPiece: pricing.boshrPricePerPiece,
+        settings: ctx.digitalConstants,
+        profitPercentOverride: pricing.profitPercentOverride,
+        extraCosts: sumExtraCosts(pricing),
+      });
+      return {
+        total: result.total,
+        breakdown: {
+          ...result,
+          pieceWidthCm: pricing.pieceWidthCm,
+          pieceHeightCm: pricing.pieceHeightCm,
+          yieldPerQuarter: pricing.yieldPerQuarter,
+          sellophaneEnabled: pricing.sellophaneEnabled ?? null,
+          paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+        } as unknown as Prisma.InputJsonValue,
+        sheetsNeeded: null,
+        inventoryItemId: pricing.inventoryItemId,
+        sizeFamilyKey: null,
+        realSizeLabel: null,
       };
     }
     case 'BOARDS': {

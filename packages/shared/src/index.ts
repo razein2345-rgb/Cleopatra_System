@@ -36,6 +36,7 @@ export * from './pricing/sizeCalculation.js';
 export * from './pricing/costCalculation.js';
 export * from './pricing/boardsCostCalculation.js';
 export * from './pricing/productCostCalculation.js';
+export * from './pricing/digitalCostCalculation.js';
 export * from './schemas/inventoryItem.js';
 export * from './schemas/employeeAdvance.js';
 export * from './schemas/employeePayroll.js';

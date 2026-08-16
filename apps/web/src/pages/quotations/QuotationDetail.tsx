@@ -272,6 +272,16 @@ function QuotationLifecycle({
         )}
       </div>
 
+      {/* FEATURE-016 (2026-08-16, owner: "عرض السعر لسه مش بعرف أطبعه أكتر من مره ولا حتى لما
+          اعدله") — the only print entry point used to be a one-time link on the creation
+          success screen; editing (which lands back here) and revisiting from المستندات both
+          had no way to reach `/quotations/:id/print` again. Unconditional, same as
+          OrderDocumentPage's "طباعة الفاتورة" — printing an existing document isn't gated
+          behind quotations.edit. */}
+      <Button type="button" variant="secondary" onClick={() => navigate(`/quotations/${quotation.id}/print`)}>
+        طباعة عرض السعر
+      </Button>
+
       {/* FEATURE-007 (2026-08-12, owner: "المفروض أقدر أعدل في عرض السعر إني أضيف مثلا بند") — full item-replacement edit, reusing the exact same unified-screen edit mode `/orders/new?editOrder=<id>` already uses for invoices. Hidden once converted — the resulting Order is the thing to edit at that point, not a quotation that's already become one. */}
       {canEdit && !quotation.convertedOrderId && (
         <Button type="button" variant="secondary" onClick={() => navigate(`/orders/new?editQuotation=${quotation.id}`)}>
