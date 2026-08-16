@@ -177,6 +177,14 @@ enum MaterialCategory {
   PLATE
   FINISHING
   CONSUMABLE
+  /// system_specifications_v2.md (2026-08-16, owner: "مخزون جاهز عندي،
+  /// والعميل ياخدها فورًا") — held-stock ready-made merchandise bought in
+  /// already finished (stationery, external books, ...), sold directly off
+  /// the shelf rather than consumed by a production formula. Distinct from
+  /// the other 5 categories, which all feed pricing/consumption formulas —
+  /// this one only needs `salePrice` + `barcode` + the stock engine already
+  /// built for the rest of InventoryItem.
+  READY_MADE
 }
 
 enum StockMovementType {
@@ -2224,9 +2232,14 @@ model InventoryItem {
   /// system_specifications_v2.md §12.5 (2026-08-16) — supplier/manufacturer
   /// barcode, or an internal SKU-style code for items with none. Optional
   /// and unique (Postgres allows multiple NULLs under a unique index, so
-  /// most items simply have none). Scanning support in POS is separate,
-  /// deferred work — this is just the catalog field it reads from.
+  /// most items simply have none). Now read directly by POS scan-to-add
+  /// (2026-08-16, second pass) for `READY_MADE` items.
   barcode      String?          @unique
+  /// system_specifications_v2.md (2026-08-16) — retail price for a
+  /// `READY_MADE` item sold directly from stock (owner: "مخزون جاهز عندي").
+  /// Nullable — meaningless for the other 5 categories, whose cost feeds
+  /// into a production pricing formula instead of a direct sale price.
+  salePrice    Decimal?         @db.Decimal(12, 2)
 
   stockLevels    StockLevel[]
   stockMovements StockMovement[]

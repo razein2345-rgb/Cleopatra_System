@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CreateInventoryItemInput, InventoryItem, MaterialCategory } from '@cleopatra/shared';
+import type { CreateInventoryItemInput, InventoryItem, InventoryUnit, MaterialCategory } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -12,6 +12,21 @@ const CATEGORY_LABELS: Record<MaterialCategory, string> = {
   PLATE: 'زنكات',
   FINISHING: 'تشطيب',
   CONSUMABLE: 'مستهلكات',
+  // system_specifications_v2.md (2026-08-16, owner: "مخزون جاهز عندي") —
+  // held-stock ready-made merchandise (stationery, external books, ...)
+  // sold directly off the shelf, unlike the other 5 categories which all
+  // feed a production pricing formula.
+  READY_MADE: 'بضاعة جاهزة للبيع',
+};
+
+const UNIT_LABELS: Record<InventoryUnit, string> = {
+  SHEET: 'فرخ',
+  ROLL: 'رول',
+  LINEAR_METER: 'متر طولي',
+  SQUARE_METER: 'متر مربع',
+  PIECE: 'قطعة',
+  KILOGRAM: 'كيلو',
+  LITER: 'لتر',
 };
 
 /**
@@ -56,9 +71,19 @@ export function InventoryPage() {
     load();
   };
 
-  /** system_specifications_v2.md §12.5 — the catalog field a future barcode scanner reads from; POS scanning itself is separate, deferred work. */
+  /** system_specifications_v2.md §12.5 — the catalog field POS scan-to-add reads from. */
   const saveBarcode = async (item: InventoryItem, next: string) => {
     await apiPut(`/api/inventory-items/${item.id}`, { barcode: next.trim() === '' ? null : next.trim() });
+    load();
+  };
+
+  /** Retail price for a `READY_MADE` item sold directly from stock — see orderItemPricing.ts's `INVENTORY_RETAIL` kind. */
+  const saveSalePrice = async (item: InventoryItem, next: string) => {
+    const parsed = next.trim() === '' ? null : Number(next);
+    if (parsed !== null && (Number.isNaN(parsed) || parsed < 0)) {
+      throw new Error('لازم يكون رقم صحيح موجب');
+    }
+    await apiPut(`/api/inventory-items/${item.id}`, { salePrice: parsed });
     load();
   };
 
@@ -135,6 +160,7 @@ export function InventoryPage() {
                 <th className="p-3">الباركود</th>
                 <th className="p-3">الرصيد الحالي</th>
                 <th className="p-3">حد التنبيه</th>
+                <th className="p-3">سعر البيع</th>
                 <th className="p-3">الحالة</th>
               </tr>
             </thead>
@@ -149,7 +175,7 @@ export function InventoryPage() {
                 if (filtered.length === 0) {
                   return (
                     <tr>
-                      <td className="text-muted-foreground p-3 text-center" colSpan={6}>
+                      <td className="text-muted-foreground p-3 text-center" colSpan={7}>
                         {items.length === 0 ? 'لا توجد بضاعة مسجلة بعد.' : 'لا توجد أصناف مطابقة.'}
                       </td>
                     </tr>
@@ -177,7 +203,7 @@ export function InventoryPage() {
                       )}
                     </td>
                     <td className="p-3">
-                      {item.quantityOnHand.toLocaleString('en-US')} {item.unit === 'SHEET' ? 'فرخ' : ''}
+                      {item.quantityOnHand.toLocaleString('en-US')} {UNIT_LABELS[item.unit]}
                     </td>
                     <td className="text-muted-foreground p-3">
                       {can('inventory.edit') ? (
@@ -188,6 +214,17 @@ export function InventoryPage() {
                         />
                       ) : (
                         (item.reorderLevel?.toLocaleString('en-US') ?? '—')
+                      )}
+                    </td>
+                    <td className="text-muted-foreground p-3">
+                      {can('inventory.edit') ? (
+                        <EditableTextCell
+                          value={item.salePrice?.toString() ?? ''}
+                          placeholder="—"
+                          onSave={(next) => saveSalePrice(item, next)}
+                        />
+                      ) : (
+                        (item.salePrice?.toLocaleString('en-US') ?? '—')
                       )}
                     </td>
                     <td className="p-3">
@@ -211,11 +248,21 @@ export function InventoryPage() {
 function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
   const [category, setCategory] = useState<MaterialCategory>('PAPER');
   const [name, setName] = useState('');
+  // READY_MADE items (stationery, ...) are almost always counted by the
+  // piece, not the sheet — defaulting the unit alongside the category
+  // saves the "غيّر الوحدة كل مرة" friction for the owner's actual use case.
+  const [unit, setUnit] = useState<InventoryUnit>('SHEET');
   const [reorderLevel, setReorderLevel] = useState('5');
   const [initialQuantity, setInitialQuantity] = useState('0');
   const [barcode, setBarcode] = useState('');
+  const [salePrice, setSalePrice] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const changeCategory = (next: MaterialCategory) => {
+    setCategory(next);
+    if (next === 'READY_MADE' && unit === 'SHEET') setUnit('PIECE');
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -226,10 +273,11 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
       const input: CreateInventoryItemInput = {
         category,
         name,
-        unit: 'SHEET',
+        unit,
         reorderLevel: reorderLevel ? Number(reorderLevel) : undefined,
         initialQuantity: initialQuantity ? Number(initialQuantity) : undefined,
         barcode: barcode.trim() || undefined,
+        salePrice: salePrice ? Number(salePrice) : undefined,
       };
       await apiPost('/api/inventory-items', input);
       onCreated();
@@ -250,7 +298,7 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="مثال: دوبلكس 200 جرام"
+            placeholder={category === 'READY_MADE' ? 'مثال: دباسة مكتبية' : 'مثال: دوبلكس 200 جرام'}
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           />
         </label>
@@ -258,7 +306,7 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
           <span className="text-muted-foreground">الفئة</span>
           <select
             value={category}
-            onChange={(e) => setCategory(e.target.value as MaterialCategory)}
+            onChange={(e) => changeCategory(e.target.value as MaterialCategory)}
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           >
             {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
@@ -269,7 +317,21 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
           </select>
         </label>
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">الرصيد الحالي (فرخ)</span>
+          <span className="text-muted-foreground">وحدة القياس</span>
+          <select
+            value={unit}
+            onChange={(e) => setUnit(e.target.value as InventoryUnit)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          >
+            {Object.entries(UNIT_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">الرصيد الحالي</span>
           <input
             type="number"
             min={0}
@@ -294,10 +356,24 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
             value={barcode}
             onChange={(e) => setBarcode(e.target.value)}
             dir="ltr"
-            placeholder="امسح أو اكتب الباركود"
+            placeholder="امسح باركود المورد المطبوع على العلبة"
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           />
         </label>
+        {category === 'READY_MADE' && (
+          <label className="space-y-1 text-sm">
+            <span className="text-muted-foreground">سعر البيع للقطعة</span>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={salePrice}
+              onChange={(e) => setSalePrice(e.target.value)}
+              placeholder="مطلوب عشان يتباع من نقطة البيع"
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+        )}
       </div>
       <Button type="submit" disabled={submitting}>
         {submitting ? 'جارٍ الحفظ…' : 'حفظ'}

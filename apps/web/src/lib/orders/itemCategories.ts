@@ -84,6 +84,16 @@ export const ORDER_ITEM_CATEGORIES: OrderItemParentTab[] = [
     status: 'ready',
     kind: 'PRODUCT',
   },
+  // system_specifications_v2.md (2026-08-16, owner: "مخزون جاهز عندي") —
+  // distinct from "منتجات جاهزة" above: that tab prices off the
+  // stock-untracked `ReadyProduct` catalog, this one sells real held stock
+  // (barcode scan-to-add + quantity deduction) via `InventoryItem.salePrice`.
+  {
+    id: 'INVENTORY_RETAIL',
+    label: 'بضاعة من المخزون',
+    status: 'ready',
+    kind: 'INVENTORY_RETAIL',
+  },
 ];
 
 /** Derives which parent/sub tab an existing item's `kind` (+ service category, when relevant) belongs under — used to select the right tab when the composer opens with a default/edited draft. Falls back to Offset/ورق سايب, the composer's own long-standing default kind. */

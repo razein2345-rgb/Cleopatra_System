@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { inventoryUnitSchema } from './sheetType.js';
 
-export const materialCategorySchema = z.enum(['PAPER', 'INK', 'PLATE', 'FINISHING', 'CONSUMABLE']);
+export const materialCategorySchema = z.enum(['PAPER', 'INK', 'PLATE', 'FINISHING', 'CONSUMABLE', 'READY_MADE']);
 export const stockMovementTypeSchema = z.enum(['IN', 'OUT', 'ADJUSTMENT']);
 
 /**
@@ -23,6 +23,10 @@ export const inventoryItemSchema = z.object({
   // `/api/sheet-types` call (that endpoint needs `settings.view`, which
   // reception/sales order-creators don't hold).
   sheetPrice: z.number().nullable(),
+  // system_specifications_v2.md (2026-08-16) — retail sale price for a
+  // READY_MADE item, sold directly off the shelf (owner: "مخزون جاهز
+  // عندي"). Null for the other 5 categories.
+  salePrice: z.number().nullable(),
   reorderLevel: z.number().nonnegative().nullable(),
   quantityOnHand: z.number(),
   isLowStock: z.boolean(),
@@ -43,12 +47,14 @@ export const createInventoryItemSchema = z.object({
   reorderLevel: z.number().nonnegative().optional(),
   initialQuantity: z.number().nonnegative().optional(),
   barcode: z.string().trim().min(1).max(100).optional(),
+  salePrice: z.number().nonnegative().optional(),
 });
 
 export const updateInventoryItemSchema = z.object({
   name: z.string().trim().min(1).max(150).optional(),
   reorderLevel: z.number().nonnegative().nullable().optional(),
   barcode: z.string().trim().min(1).max(100).nullable().optional(),
+  salePrice: z.number().nonnegative().nullable().optional(),
 });
 
 export const createStockMovementSchema = z.object({

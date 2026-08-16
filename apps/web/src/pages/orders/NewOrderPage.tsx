@@ -60,6 +60,7 @@ const KIND_LABELS: Record<PricingKind, string> = {
   DIGITAL: 'ديجيتال',
   PRODUCT: 'منتج جاهز',
   SERVICE: 'خدمة',
+  INVENTORY_RETAIL: 'بضاعة من المخزون',
 };
 
 /** FEATURE-007 WF-B — matches `WorkflowTemplate.code` for the 4 tracks seeded by WF-A; the customer's chosen track routes the eventual Work Order, never inferred from item kind (owner, 2026-08-12). */
@@ -363,6 +364,9 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
     case 'SERVICE':
       if (!d.quantity) return null;
       return { kind: d.kind, quantity: toNum(d.quantity), ...extra };
+    case 'INVENTORY_RETAIL':
+      if (!d.inventoryItemId || !d.quantity) return null;
+      return { kind: 'INVENTORY_RETAIL', inventoryItemId: d.inventoryItemId, quantity: toNum(d.quantity), ...extra };
   }
 }
 
@@ -373,6 +377,7 @@ interface PricingCtx {
   digitalConstants: PricingReference['digitalConstants'];
   sheetPriceByInventoryItemId: Map<string, number>;
   catalogPriceById: Map<string, number>;
+  salePriceByInventoryItemId: Map<string, number>;
 }
 
 /** Every field any `calculate*Cost` result might carry — display-only (formula strings), never used to compute an actual total. */
@@ -395,6 +400,12 @@ interface PricingPreviewResult {
   unitsNeeded?: number | null;
   costPerPiece?: number;
   quartersNeeded?: number;
+  // BOARDS — VINYL_PRINT_CUT only (calculateBoardsCost's piece-packing
+  // math already computed this server-side; just wasn't surfaced to the
+  // composer before — owner: "عايز اكتب مقاس الحتة وهو يطلعلي عددها كام
+  // في المتر"). No pricing-formula change, purely display.
+  piecesPerMeter?: number;
+  metersNeeded?: number;
 }
 
 /** Client-side mirror of `orderService.ts`'s `computeItemPricing` dispatch — same pure functions, used only for the live preview; the server always recomputes authoritatively on submit. */
@@ -528,6 +539,12 @@ function previewItemTotal(
         const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
         return { total, error: null, result: { unitPrice, extraCosts, total } };
       }
+      case 'INVENTORY_RETAIL': {
+        const unitPrice = ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId);
+        if (unitPrice === undefined) return { total: 0, error: 'هذا الصنف مالوش سعر بيع محدد', result: null };
+        const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
+        return { total, error: null, result: { unitPrice, extraCosts, total } };
+      }
     }
   } catch (err) {
     return { total: 0, error: err instanceof Error ? err.message : 'تعذر حساب السعر', result: null };
@@ -553,6 +570,8 @@ function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Se
       return `${readyProducts.find((p) => p.id === d.readyProductId)?.name ?? d.itemType} × ${d.quantity}`;
     case 'SERVICE':
       return `${services.find((s) => s.id === d.serviceId)?.name ?? d.itemType} × ${d.quantity}`;
+    case 'INVENTORY_RETAIL':
+      return `${d.itemType || KIND_LABELS.INVENTORY_RETAIL} × ${d.quantity}`;
   }
 }
 
@@ -560,7 +579,7 @@ const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 
 
 /** Loosely-typed shape of everything `computeItemPricing` might have merged into a frozen `breakdown` — used only when reconstructing an existing item for editing (see `reconstructPricingInput` below). */
 interface StoredBreakdown {
-  kind?: 'PRODUCT' | 'SERVICE';
+  kind?: 'PRODUCT' | 'SERVICE' | 'INVENTORY_RETAIL';
   quantity?: number;
   colorCount?: number;
   sides?: 1 | 2;
@@ -618,7 +637,7 @@ interface StoredBreakdown {
  * they were under doesn't.
  */
 function inferStoredKind(sizeFamilyKey: string | null, breakdown: StoredBreakdown): PricingKind | null {
-  if (breakdown.kind === 'PRODUCT' || breakdown.kind === 'SERVICE') return breakdown.kind;
+  if (breakdown.kind === 'PRODUCT' || breakdown.kind === 'SERVICE' || breakdown.kind === 'INVENTORY_RETAIL') return breakdown.kind;
   if ('material' in breakdown) return 'BOARDS';
   // Checked before FOLDER — both freeze `sellophaneEnabled`, but only DIGITAL freezes `fitsInQuarter`.
   if ('fitsInQuarter' in breakdown) return 'DIGITAL';
@@ -718,6 +737,9 @@ function reconstructPricingInput(
     case 'PRODUCT':
     case 'SERVICE':
       return { kind, quantity: b.quantity ?? 1, ...extra };
+    case 'INVENTORY_RETAIL':
+      if (!inventoryItemId) return null;
+      return { kind: 'INVENTORY_RETAIL', inventoryItemId, quantity: b.quantity ?? 1, ...extra };
   }
 }
 
@@ -1215,6 +1237,9 @@ function NewOrderForm({
         ...readyProducts.map((p) => [p.id, p.price] as const),
         ...services.map((s) => [s.id, s.price] as const),
       ]),
+      salePriceByInventoryItemId: new Map(
+        inventoryItems.filter((i) => i.salePrice !== null).map((i) => [i.id, i.salePrice as number]),
+      ),
     }),
     [pricingReference, inventoryItems, readyProducts, services],
   );
@@ -1313,6 +1338,55 @@ function NewOrderForm({
   };
 
   const removeFromCart = (key: string) => setCart((prev) => prev.filter((line) => line.key !== key));
+
+  // system_specifications_v2.md (2026-08-16, "بضاعة من المخزون") — a HID
+  // barcode scanner types the code then Enter, exactly like a very fast
+  // keyboard. Scanning goes straight into the cart (increment quantity if
+  // the item's already there), skipping the usual "أضف للفاتورة" click —
+  // that's the actual speed a physical POS scan is for.
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [barcodeError, setBarcodeError] = useState<string | null>(null);
+  const [barcodeLoading, setBarcodeLoading] = useState(false);
+
+  const scanBarcode = async () => {
+    const code = barcodeInput.trim();
+    if (!code || barcodeLoading) return;
+    setBarcodeLoading(true);
+    setBarcodeError(null);
+    try {
+      const item = await apiGet<InventoryItem>(`/api/inventory-items/by-barcode/${encodeURIComponent(code)}`);
+      if (item.salePrice === null) {
+        setBarcodeError(`"${item.name}" مسجل بس مالوش سعر بيع — حدده الأول من شاشة المخزون`);
+        return;
+      }
+      const salePrice = item.salePrice;
+      setCart((prev) => {
+        const idx = prev.findIndex((l) => l.pricing.kind === 'INVENTORY_RETAIL' && l.pricing.inventoryItemId === item.id);
+        if (idx >= 0) {
+          const existing = prev[idx]!;
+          const pricing = existing.pricing as Extract<OrderItemPricingInput, { kind: 'INVENTORY_RETAIL' }>;
+          const quantity = pricing.quantity + 1;
+          const total = calculateProductOrServiceCost(salePrice, quantity, sumExtraCosts(pricing));
+          const updated: CartLine = { ...existing, pricing: { ...pricing, quantity }, summary: `${item.name} × ${quantity}`, total };
+          return prev.map((l, i) => (i === idx ? updated : l));
+        }
+        const pricing: OrderItemPricingInput = { kind: 'INVENTORY_RETAIL', inventoryItemId: item.id, quantity: 1 };
+        const newLine: CartLine = {
+          key: `scan-${item.id}`,
+          itemType: item.name,
+          summary: `${item.name} × 1`,
+          pricing,
+          total: calculateProductOrServiceCost(salePrice, 1, 0),
+        };
+        return [...prev, newLine];
+      });
+      setBarcodeInput('');
+    } catch (err) {
+      setBarcodeError(err instanceof Error ? err.message : 'مفيش صنف بهذا الباركود');
+    } finally {
+      setBarcodeLoading(false);
+    }
+  };
 
   const addPaymentRow = () => setPayments((prev) => [...prev, emptyPaymentRow()]);
   const updatePaymentRow = (key: string, patch: Partial<PaymentRow>) =>
@@ -2134,6 +2208,15 @@ function NewOrderForm({
                   سلوفان
                 </label>
               )}
+              {/* owner: "لما اكتب مقاس الحتة الصغيرة عايز اعرف عددها كام في المتر" — calculateBoardsCost already computes this (piece-packing per square meter, gap from Settings), just wasn't shown here before. No formula change, purely display. */}
+              {draft.material === 'VINYL_PRINT_CUT' && draftPreview.result?.piecesPerMeter !== undefined && (
+                <p className="text-muted-foreground col-span-2 text-sm sm:col-span-4">
+                  بيدخل <span className="text-foreground font-semibold">{draftPreview.result.piecesPerMeter}</span> قطعة
+                  في المتر المربع الواحد — محتاج{' '}
+                  <span className="text-foreground font-semibold">{draftPreview.result.metersNeeded}</span> متر عشان{' '}
+                  {draft.quantity || 0} قطعة
+                </p>
+              )}
             </div>
           )}
 
@@ -2333,6 +2416,67 @@ function NewOrderForm({
                   className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 />
               </label>
+            </div>
+          )}
+
+          {draft.kind === 'INVENTORY_RETAIL' && (
+            <div className="space-y-3">
+              <div className="border-border bg-muted/30 space-y-2 rounded-lg border p-3">
+                <span className="text-muted-foreground text-sm">امسح الباركود — بيتضاف للفاتورة فورًا</span>
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    dir="ltr"
+                    value={barcodeInput}
+                    onChange={(e) => setBarcodeInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void scanBarcode();
+                      }
+                    }}
+                    placeholder="امسح الباركود هنا…"
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                  <Button type="button" variant="secondary" onClick={() => void scanBarcode()} disabled={barcodeLoading}>
+                    {barcodeLoading ? '...' : 'إضافة'}
+                  </Button>
+                </div>
+                {barcodeError && <p className="text-destructive text-sm">{barcodeError}</p>}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <label className="space-y-1 text-sm sm:col-span-2">
+                  <span className="text-muted-foreground">أو اختر يدويًا</span>
+                  <select
+                    value={draft.inventoryItemId}
+                    onChange={(e) => {
+                      const item = inventoryItems.find((i) => i.id === e.target.value);
+                      updateDraft({ inventoryItemId: e.target.value, itemType: item?.name ?? '' });
+                    }}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  >
+                    <option value="">— اختر —</option>
+                    {inventoryItems
+                      .filter((i) => i.category === 'READY_MADE' && i.salePrice !== null)
+                      .map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.name} — {money(i.salePrice as number)} ج
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">الكمية</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={draft.quantity}
+                    onChange={(e) => updateDraft({ quantity: e.target.value })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
             </div>
           )}
 

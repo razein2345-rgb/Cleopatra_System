@@ -136,6 +136,22 @@ export const productOrServicePricingInputSchema = z.object({
   ...extraServiceFields,
 });
 
+/**
+ * system_specifications_v2.md (2026-08-16, owner: "مخزون جاهز عندي") —
+ * held-stock ready-made merchandise (stationery, external books, ...) sold
+ * directly from `InventoryItem.salePrice`, no pricing formula. Distinct
+ * from `PRODUCT` (which prices off the separate, stock-untracked
+ * `ReadyProduct` catalog) — this kind always deducts real stock via the
+ * same generic `inventoryItemId`/`sheetsNeeded` path LOOSE_PAPER/DIGITAL
+ * already use (see pricingEngineService.ts's INVENTORY_RETAIL case).
+ */
+export const inventoryRetailPricingInputSchema = z.object({
+  kind: z.literal('INVENTORY_RETAIL'),
+  inventoryItemId: z.string().uuid(),
+  quantity: z.number().int().positive(),
+  ...extraServiceFields,
+});
+
 export const orderItemPricingInputSchema = z.discriminatedUnion('kind', [
   loosePaperPricingInputSchema,
   notebookPricingInputSchema,
@@ -144,6 +160,7 @@ export const orderItemPricingInputSchema = z.discriminatedUnion('kind', [
   boardsPricingInputSchema,
   digitalPricingInputSchema,
   productOrServicePricingInputSchema,
+  inventoryRetailPricingInputSchema,
 ]);
 
 // `BoardMaterial` itself is exported from `pricing/boardsCostCalculation.js`
@@ -156,4 +173,5 @@ export type FolderPricingInput = z.infer<typeof folderPricingInputSchema>;
 export type BoardsPricingInput = z.infer<typeof boardsPricingInputSchema>;
 export type DigitalPricingInput = z.infer<typeof digitalPricingInputSchema>;
 export type ProductOrServicePricingInput = z.infer<typeof productOrServicePricingInputSchema>;
+export type InventoryRetailPricingInput = z.infer<typeof inventoryRetailPricingInputSchema>;
 export type OrderItemPricingInput = z.infer<typeof orderItemPricingInputSchema>;

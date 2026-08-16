@@ -20,6 +20,7 @@ function mapInventoryItemToDto(record: InventoryItemRecord, branchId: string): I
     sheetTypeId: record.sheetTypeId,
     barcode: record.barcode,
     sheetPrice: record.sheetType?.price.toNumber() ?? null,
+    salePrice: record.salePrice?.toNumber() ?? null,
     reorderLevel,
     quantityOnHand,
     isLowStock: reorderLevel !== null && quantityOnHand <= reorderLevel,
@@ -88,6 +89,13 @@ export async function listItemsNeedingSupplier(branchId: string): Promise<Invent
   return items.filter((item) => item.isLowStock || item.quantityOnHand < 0);
 }
 
+/** POS scan-to-add (system_specifications_v2.md §12.5, second pass 2026-08-16) — exact lookup by the scanner's raw input, `barcode` being `@unique` makes this O(1). */
+export async function getInventoryItemByBarcode(barcode: string, branchId: string): Promise<InventoryItem | null> {
+  const record = await prisma.inventoryItem.findUnique({ where: { barcode }, include: INCLUDE });
+  if (!record || record.isDeleted) return null;
+  return mapInventoryItemToDto(record, branchId);
+}
+
 export async function getInventoryItem(id: string, branchId: string): Promise<InventoryItem | null> {
   const record = await prisma.inventoryItem.findUnique({ where: { id }, include: INCLUDE });
   if (!record || record.isDeleted) return null;
@@ -110,6 +118,7 @@ export async function createInventoryItem(
           sheetTypeId: input.sheetTypeId ?? null,
           reorderLevel: input.reorderLevel ?? null,
           barcode: input.barcode ?? null,
+          salePrice: input.salePrice ?? null,
         },
       });
     } catch (err) {
@@ -148,7 +157,7 @@ export async function updateInventoryItem(id: string, input: UpdateInventoryItem
     try {
       item = await tx.inventoryItem.update({
         where: { id },
-        data: { name: input.name, reorderLevel: input.reorderLevel, barcode: input.barcode },
+        data: { name: input.name, reorderLevel: input.reorderLevel, barcode: input.barcode, salePrice: input.salePrice },
         include: INCLUDE,
       });
     } catch (err) {

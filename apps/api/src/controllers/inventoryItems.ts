@@ -5,6 +5,7 @@ import {
   deleteInventoryItem,
   DuplicateBarcodeError,
   getInventoryItem,
+  getInventoryItemByBarcode,
   InventoryItemInUseError,
   InventoryItemNotFoundError,
   listInventoryItems,
@@ -41,6 +42,17 @@ export async function listItemsNeedingSupplierHandler(req: Request, res: Respons
   const auth = req.auth!;
   const items = await listItemsNeedingSupplier(auth.branchId);
   res.json({ success: true, data: items });
+}
+
+/** POS scan-to-add — exact match by barcode, not a fuzzy search (the scanner's raw input is the lookup key). */
+export async function getInventoryItemByBarcodeHandler(req: Request<{ barcode: string }>, res: Response) {
+  const auth = req.auth!;
+  const item = await getInventoryItemByBarcode(req.params.barcode, auth.branchId);
+  if (!item) {
+    res.status(404).json({ success: false, error: { message: 'مفيش صنف بهذا الباركود', code: 'BARCODE_NOT_FOUND' } });
+    return;
+  }
+  res.json({ success: true, data: item });
 }
 
 export async function getInventoryItemHandler(req: Request<{ id: string }>, res: Response) {

@@ -39,6 +39,8 @@ export interface PricingContext {
   /** Frozen into `breakdown` at creation time (same "freeze by default" discipline as `modelName`) so a later paper rename never changes what an already-printed Work Order shows it used. */
   paperNameByInventoryItemId: Map<string, string>;
   catalogPriceById: Map<string, number>;
+  /** `INVENTORY_RETAIL` items only (§ held-stock ready-made merchandise) — `InventoryItem.salePrice`, distinct from `sheetPriceByInventoryItemId` (a paper/sheet cost input, never a direct sale price). */
+  salePriceByInventoryItemId: Map<string, number>;
 }
 
 type SettingRecord = Prisma.SettingGetPayload<object>;
@@ -153,9 +155,11 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
 
   const sheetPriceByInventoryItemId = new Map<string, number>();
   const paperNameByInventoryItemId = new Map<string, string>();
+  const salePriceByInventoryItemId = new Map<string, number>();
   for (const ii of inventoryItems) {
     if (ii.sheetType) sheetPriceByInventoryItemId.set(ii.id, ii.sheetType.price.toNumber());
     paperNameByInventoryItemId.set(ii.id, ii.name);
+    if (ii.salePrice) salePriceByInventoryItemId.set(ii.id, ii.salePrice.toNumber());
   }
 
   const catalogPriceById = new Map<string, number>();
@@ -171,6 +175,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
     sheetPriceByInventoryItemId,
     paperNameByInventoryItemId,
     catalogPriceById,
+    salePriceByInventoryItemId,
   };
 }
 
@@ -433,6 +438,32 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: null,
         inventoryItemId: null,
+        sizeFamilyKey: null,
+        realSizeLabel: null,
+      };
+    }
+    case 'INVENTORY_RETAIL': {
+      const unitPrice = ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId);
+      if (unitPrice === undefined) {
+        throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no sale price set`);
+      }
+      const extraCosts = sumExtraCosts(pricing);
+      const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
+      return {
+        total,
+        breakdown: {
+          kind: pricing.kind,
+          unitPrice,
+          quantity: pricing.quantity,
+          extraCosts,
+          total,
+          itemName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+        } as unknown as Prisma.InputJsonValue,
+        // Same generic path LOOSE_PAPER/DIGITAL/... already use — no new
+        // deduction code needed, just a plain piece count instead of a
+        // sheets-based formula result.
+        sheetsNeeded: pricing.quantity,
+        inventoryItemId: pricing.inventoryItemId,
         sizeFamilyKey: null,
         realSizeLabel: null,
       };
