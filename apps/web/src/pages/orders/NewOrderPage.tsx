@@ -244,6 +244,17 @@ interface DraftItem {
   calcSizeOverrideValue: string;
   numberingSizeOverrideEnabled: boolean;
   numberingSizeOverrideValue: string;
+  /**
+   * Owner (2026-08-17, "عايز اقدر أعدل على عدد الورق الداخلي للدفتر...
+   * ممكن يكون 100 للأصل و100 للصورة... ممكن يكون 50 أصل فقط") — manual
+   * override of the per-notebook page counts, defaults to 100
+   * (ORIGINAL_ONLY) / 50+50-per-copy (ORIGINAL_PLUS_COPIES) when off.
+   * NOTEBOOK only.
+   */
+  originalPagesOverrideEnabled: boolean;
+  originalPagesOverrideValue: string;
+  copyPagesOverrideEnabled: boolean;
+  copyPagesOverrideValue: string;
   // الخدمات الإضافية — every kind
   baggingEnabled: boolean;
   baggingAmount: string;
@@ -316,6 +327,10 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     calcSizeOverrideValue: '',
     numberingSizeOverrideEnabled: false,
     numberingSizeOverrideValue: '',
+    originalPagesOverrideEnabled: false,
+    originalPagesOverrideValue: '',
+    copyPagesOverrideEnabled: false,
+    copyPagesOverrideValue: '',
     baggingEnabled: false,
     baggingAmount: '0',
     singleAdhesiveEnabled: false,
@@ -381,6 +396,11 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
   const calcSize = d.calcSizeOverrideEnabled && d.calcSizeOverrideValue ? { calcSizeOverride: d.calcSizeOverrideValue } : {};
   const numberingSize =
     d.numberingSizeOverrideEnabled && d.numberingSizeOverrideValue ? { numberingSizeOverride: d.numberingSizeOverrideValue } : {};
+  // Owner (2026-08-17) — manual notebook page-count overrides. NOTEBOOK only.
+  const pageCounts = {
+    ...(d.originalPagesOverrideEnabled ? { originalPagesOverride: toNum(d.originalPagesOverrideValue) } : {}),
+    ...(d.copyPagesOverrideEnabled ? { copyPagesOverride: toNum(d.copyPagesOverrideValue) } : {}),
+  };
   switch (d.kind) {
     case 'LOOSE_PAPER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -434,6 +454,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...numberingWaste,
         ...calcSize,
         ...numberingSize,
+        ...pageCounts,
       };
     }
     case 'ENVELOPE':
@@ -614,6 +635,11 @@ function draftFromCartLine(line: CartLine): DraftItem {
         if (idx >= 0 && idx < copyMaterials.length) copyMaterials[idx] = m.inventoryItemId;
       }
       d.copyMaterials = copyMaterials;
+      const notebookPageOverrides = p as Partial<{ originalPagesOverride: number; copyPagesOverride: number }>;
+      d.originalPagesOverrideEnabled = notebookPageOverrides.originalPagesOverride !== undefined;
+      d.originalPagesOverrideValue = String(notebookPageOverrides.originalPagesOverride ?? '');
+      d.copyPagesOverrideEnabled = notebookPageOverrides.copyPagesOverride !== undefined;
+      d.copyPagesOverrideValue = String(notebookPageOverrides.copyPagesOverride ?? '');
       break;
     }
     case 'ENVELOPE':
@@ -788,6 +814,8 @@ function previewItemTotal(
             wasteSheetsOverride: pricing.wasteSheetsOverride,
             calcSizeOverride: pricing.calcSizeOverride,
             numberingSizeOverride: pricing.numberingSizeOverride,
+            originalPagesOverride: pricing.originalPagesOverride,
+            copyPagesOverride: pricing.copyPagesOverride,
           },
           materialOverrides.length ? materialOverrides : undefined,
         );
@@ -2724,6 +2752,76 @@ function NewOrderForm({
                   className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 />
               </label>
+            </div>
+          )}
+
+          {/* Owner (2026-08-17, "عايز اقدر أعدل على عدد الورق الداخلي للدفتر... ممكن يكون 100 للأصل و100 للصورة... ممكن يكون 50 أصل فقط") — manual page-count overrides, replacing the fixed 100 (أصل فقط) / 50+50-لكل-نسخة (أصل + كربون) defaults. */}
+          {draft.kind === 'NOTEBOOK' && (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div
+                className={`space-y-2 rounded-xl border p-3 transition-colors ${
+                  draft.originalPagesOverrideEnabled ? 'border-primary/50 bg-primary/5' : 'border-border bg-muted/20 hover:bg-muted/30'
+                }`}
+              >
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                  <Checkbox
+                    checked={draft.originalPagesOverrideEnabled}
+                    onCheckedChange={(v) =>
+                      updateDraft({
+                        originalPagesOverrideEnabled: v === true,
+                        originalPagesOverrideValue: v === true ? draft.originalPagesOverrideValue : '',
+                      })
+                    }
+                  />
+                  <span aria-hidden className="text-base leading-none">📄</span>
+                  <span>عدد صفحات الأصل (اختياري)</span>
+                </label>
+                {draft.originalPagesOverrideEnabled ? (
+                  <input
+                    type="number"
+                    min={1}
+                    value={draft.originalPagesOverrideValue}
+                    onChange={(e) => updateDraft({ originalPagesOverrideValue: e.target.value })}
+                    className="border-primary/40 bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                ) : (
+                  <p className="text-muted-foreground text-xs">
+                    الافتراضي: {draft.contentType === 'ORIGINAL_ONLY' ? 100 : 50} صفحة للدفتر
+                  </p>
+                )}
+              </div>
+              {draft.contentType === 'ORIGINAL_PLUS_COPIES' && (
+                <div
+                  className={`space-y-2 rounded-xl border p-3 transition-colors ${
+                    draft.copyPagesOverrideEnabled ? 'border-primary/50 bg-primary/5' : 'border-border bg-muted/20 hover:bg-muted/30'
+                  }`}
+                >
+                  <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                    <Checkbox
+                      checked={draft.copyPagesOverrideEnabled}
+                      onCheckedChange={(v) =>
+                        updateDraft({
+                          copyPagesOverrideEnabled: v === true,
+                          copyPagesOverrideValue: v === true ? draft.copyPagesOverrideValue : '',
+                        })
+                      }
+                    />
+                    <span aria-hidden className="text-base leading-none">📑</span>
+                    <span>عدد صفحات كل نسخة (اختياري)</span>
+                  </label>
+                  {draft.copyPagesOverrideEnabled ? (
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.copyPagesOverrideValue}
+                      onChange={(e) => updateDraft({ copyPagesOverrideValue: e.target.value })}
+                      className="border-primary/40 bg-background w-full rounded-md border px-3 py-2 text-sm"
+                    />
+                  ) : (
+                    <p className="text-muted-foreground text-xs">الافتراضي: 50 صفحة لكل نسخة</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

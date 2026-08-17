@@ -335,6 +335,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           wasteSheetsOverride: pricing.wasteSheetsOverride,
           calcSizeOverride: pricing.calcSizeOverride,
           numberingSizeOverride: pricing.numberingSizeOverride,
+          originalPagesOverride: pricing.originalPagesOverride,
+          copyPagesOverride: pricing.copyPagesOverride,
           profitPercentOverride: pricing.profitPercentOverride,
           extraCosts: sumExtraCosts(pricing),
         },

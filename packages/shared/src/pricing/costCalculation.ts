@@ -295,6 +295,21 @@ export interface NotebookCostInput {
   wasteSheetsOverride?: number;
   calcSizeOverride?: string;
   numberingSizeOverride?: string;
+  /**
+   * Owner (2026-08-17, "عايز اقدر أعدل على عدد الورق الداخلي للدفتر...
+   * ممكن يكون 100 للأصل و100 للصورة... ممكن يكون 50 أصل فقط") — manual
+   * override of the per-notebook page counts, replacing the fixed
+   * 100-page (ORIGINAL_ONLY) / 50-page (ORIGINAL_PLUS_COPIES original
+   * "set" count) defaults. `originalPagesOverride` applies in both content
+   * types; `copyPagesOverride` only matters for ORIGINAL_PLUS_COPIES and
+   * applies uniformly to every copy (this notebook already prices each
+   * copy's own paper independently via `materials` — this override is
+   * about page COUNT, a separate concern). Neither changes any formula —
+   * `sheetsPerNotebook`/`numberingEnd` are computed with the exact same
+   * arithmetic, just fed a caller-chosen number instead of a literal.
+   */
+  originalPagesOverride?: number;
+  copyPagesOverride?: number;
   profitPercentOverride?: number;
   extraCosts?: number;
 }
@@ -319,7 +334,10 @@ export interface NotebookCostResult {
 
 /** §3.5 — notebooks, the most-confirmed formula (one fully worked example). */
 export function calculateNotebookCost(input: NotebookCostInput): NotebookCostResult {
-  const sheetsPerNotebook = input.contentType === 'ORIGINAL_ONLY' ? 100 : 50 + 50 * (input.copies ?? 0);
+  const originalPages = input.originalPagesOverride ?? (input.contentType === 'ORIGINAL_ONLY' ? 100 : 50);
+  const copyPages = input.copyPagesOverride ?? 50;
+  const sheetsPerNotebook =
+    input.contentType === 'ORIGINAL_ONLY' ? originalPages : originalPages + copyPages * (input.copies ?? 0);
   const totalSheetsFlat = input.notebookQuantity * sheetsPerNotebook;
 
   // Threshold compares against the notebook count itself, not the expanded
@@ -357,13 +375,13 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
     const numberingUnits = totalSheetsFlat / numRepeat;
     numberingRuns = Math.ceil(numberingUnits / 1000);
     numberingCost = input.numberingCostOverride ?? numberingRuns * input.settings.numberingRunPrice;
-    // §3.3 — original-only: 100 individually-numbered pages per notebook.
-    // original+copies: 50 shared "sets" per notebook (carbon copy shares
-    // the original's number regardless of copy count).
-    numberingEnd =
-      input.contentType === 'ORIGINAL_ONLY'
-        ? input.numbering.startNumber + input.notebookQuantity * 100 - 1
-        : input.numbering.startNumber + input.notebookQuantity * 50 - 1;
+    // §3.3 — original-only: `originalPages` individually-numbered pages
+    // per notebook. original+copies: `originalPages` shared "sets" per
+    // notebook (carbon copy shares the original's number regardless of
+    // copy count) — same `originalPages` value either way, already
+    // computed above (owner-overridable, defaults to 100/50 exactly as
+    // before).
+    numberingEnd = input.numbering.startNumber + input.notebookQuantity * originalPages - 1;
   }
 
   const extraCosts = input.extraCosts ?? 0;

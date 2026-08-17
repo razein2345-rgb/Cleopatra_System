@@ -111,6 +111,17 @@ const notebookMaterialOverrideSchema = z.object({
   inventoryItemId: z.string().uuid(),
 });
 
+/**
+ * Owner (2026-08-17, "عايز اقدر أعدل على عدد الورق الداخلي للدفتر...
+ * ممكن يكون 100 للأصل و100 للصورة... ممكن يكون 50 أصل فقط") — manual
+ * override of the per-notebook page counts, replacing the fixed
+ * 100/50-page defaults `calculateNotebookCost` otherwise assumes.
+ */
+const notebookPageCountOverrideFields = {
+  originalPagesOverride: z.number().int().positive().optional(),
+  copyPagesOverride: z.number().int().positive().optional(),
+};
+
 export const notebookPricingInputSchema = z.object({
   kind: z.literal('NOTEBOOK'),
   ...sheetJobFields,
@@ -125,6 +136,7 @@ export const notebookPricingInputSchema = z.object({
   ...wasteSheetsOverrideFields,
   ...calcSizeOverrideFields,
   ...numberingSizeOverrideFields,
+  ...notebookPageCountOverrideFields,
   ...extraServiceFields,
 });
 
