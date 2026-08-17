@@ -58,6 +58,12 @@ const TIERING_GROUPS: Record<
   // Single fixed size, no real tiering (§3.2's own note on g5).
   g5: { familyKey: 'foolscap', below: '23×33', above: '23×33' },
   gA: { familyKey: 'aSeries', below: 'A4', above: 'A3', aSeries: true },
+  // Owner-confirmed (2026-08-17) — extra3 had no group at all (a real gap,
+  // not a deliberate omission), causing numbering to hard-crash for this
+  // live, actively-used family. `below`/`above` follow the exact same
+  // "3rd/4th entry of a 4-entry extra-style family" pattern already set by
+  // g1/g3/g4 above (extra3's real entries: 11.5×20, 20×23, 20×25, 23×25).
+  g6: { familyKey: 'extra3', below: '20×25', above: '23×25' },
 };
 
 const FAMILY_KEY_TO_GROUP: Record<string, string> = Object.fromEntries(

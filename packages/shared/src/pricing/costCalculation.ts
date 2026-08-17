@@ -51,6 +51,8 @@ const NUMBERING_TARGETS: Record<string, { targetLabel: string; aSeries?: boolean
   g4: { targetLabel: '22×28' },
   g5: { targetLabel: '23×33' },
   gA: { targetLabel: 'A4', aSeries: true },
+  // Owner-confirmed (2026-08-17) — same target as sizeCalculation.ts's new g6 tiering group.
+  g6: { targetLabel: '20×25' },
 };
 
 const NUMBERING_GROUP2_MAP: Record<string, string> = {
@@ -59,27 +61,40 @@ const NUMBERING_GROUP2_MAP: Record<string, string> = {
   '25×35': '25×35',
 };
 
-/** §3.3 — resolves the numbering repeat factor. Never doubled for a large print sheet — confirmed rule, not an oversight. */
+/**
+ * §3.3 — resolves the numbering repeat factor. Never doubled for a large
+ * print sheet — confirmed rule, not an oversight.
+ *
+ * Owner (2026-08-17, "المفروض إن كل المقاسات تكون قابله للترقيم عندك
+ * بناءاً على المنطق التسعيري") — every size family must support numbering,
+ * with no exceptions. A family with no defined tiering group (present or
+ * future) falls back to numbering at its own real size (repeat 1, no
+ * batching benefit) instead of hard-failing — the exact same graceful
+ * degradation `resolveCalcSize` already applies for printing when a family
+ * has no group.
+ */
 export function resolveNumbering(params: {
   familyKey: string;
   realLabel: string;
   families: SizeFamilyInput[];
 }): { repeat: number; targetLabel: string } {
-  const groupKey = getTieringGroupKey(params.familyKey);
-  if (!groupKey) {
-    throw new SizeCalculationError(`No numbering rule defined for family "${params.familyKey}"`);
-  }
-
   const family = findFamily(params.families, params.familyKey);
   const realEntry = findEntry(family, params.realLabel);
   if (!realEntry) {
     throw new SizeCalculationError(`Unknown size "${params.realLabel}" in family "${params.familyKey}"`);
   }
 
-  const targetLabel = groupKey === 'g2' ? NUMBERING_GROUP2_MAP[params.realLabel] : NUMBERING_TARGETS[groupKey]?.targetLabel;
-  if (!targetLabel) {
-    throw new SizeCalculationError(`No numbering target for "${params.realLabel}" in group "${groupKey}"`);
+  const groupKey = getTieringGroupKey(params.familyKey);
+  if (!groupKey) {
+    return { repeat: 1, targetLabel: params.realLabel };
   }
+
+  // Same "never fail, worst case number at the real size" fallback as the
+  // no-group case above — covers g2's map not listing every standard size
+  // (e.g. 35×50, 50×70), which used to throw here.
+  const targetLabel =
+    (groupKey === 'g2' ? NUMBERING_GROUP2_MAP[params.realLabel] : NUMBERING_TARGETS[groupKey]?.targetLabel) ??
+    params.realLabel;
 
   if (NUMBERING_TARGETS[groupKey]?.aSeries) {
     const targetEntry = findEntry(family, targetLabel);
