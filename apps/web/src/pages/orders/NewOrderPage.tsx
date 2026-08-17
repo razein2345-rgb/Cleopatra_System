@@ -34,7 +34,7 @@ import {
   calculateProductOrServiceCost,
   suggestYield,
 } from '@cleopatra/shared';
-import { ORDER_ITEM_CATEGORIES, PRODUCTION_TRACK_LABELS, resolveProductionTrackForTab } from '@cleopatra/shared';
+import { findCategoryForKind, ORDER_ITEM_CATEGORIES, PRODUCTION_TRACK_LABELS, resolveProductionTrackForTab } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -482,6 +482,154 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
       if (!d.inventoryItemId || !d.quantity) return null;
       return { kind: 'INVENTORY_RETAIL', inventoryItemId: d.inventoryItemId, quantity: toNum(d.quantity), ...extra };
   }
+}
+
+/**
+ * Owner (2026-08-17, "عايز لما ادوس على بند في السلة بتاعت الطلبات يفتح
+ * وأقدر أعدل عليه علشان لو نسيت حاجه مش امسحه وأرجع أكتبه من الأول") —
+ * inverse of `buildPricingInput`. Unlike `reconstructPricingInput` below
+ * (which recovers a pricing input from an already-persisted `OrderItem`'s
+ * frozen `breakdown`, with no explicit `kind` for most kinds — hence
+ * needing `inferStoredKind`'s guesswork), a still-in-cart `CartLine`
+ * already carries its exact, fully-typed `pricing: OrderItemPricingInput`
+ * — so this just walks the same fields `buildPricingInput` reads,
+ * backwards, no inference needed.
+ */
+function draftFromCartLine(line: CartLine): DraftItem {
+  const p = line.pricing;
+  const d = emptyDraftItem(p.kind);
+  d.key = line.key;
+  d.itemType = line.itemType;
+  d.notes = line.notes ?? '';
+  d.inkColor = line.inkColor ?? '';
+  d.bindingType = line.bindingType ?? '';
+  d.sellophaneType = line.sellophaneType ?? '';
+  d.description = line.description ?? '';
+  d.readyProductId = line.readyProductId ?? '';
+  d.serviceId = line.serviceId ?? '';
+  d.attachmentId = line.attachmentId ?? '';
+  d.attachmentUrl = line.attachmentUrl ?? '';
+  d.attachmentFileName = line.attachmentUrl ? d.attachmentFileName : '';
+
+  // extraServiceFieldsOf's inverse — every kind may carry these four.
+  const extra = p as Partial<{
+    baggingAmount: number;
+    singleAdhesiveAmount: number;
+    doubleAdhesiveAmount: number;
+    sampleAmount: number;
+  }>;
+  d.baggingEnabled = extra.baggingAmount !== undefined;
+  d.baggingAmount = String(extra.baggingAmount ?? 0);
+  d.singleAdhesiveEnabled = extra.singleAdhesiveAmount !== undefined;
+  d.singleAdhesiveAmount = String(extra.singleAdhesiveAmount ?? 0);
+  d.doubleAdhesiveEnabled = extra.doubleAdhesiveAmount !== undefined;
+  d.doubleAdhesiveAmount = String(extra.doubleAdhesiveAmount ?? 0);
+  d.sampleEnabled = extra.sampleAmount !== undefined;
+  d.sampleAmount = String(extra.sampleAmount ?? 0);
+
+  // margin/zpd/numberingWaste's inverse — only the kinds that ever set
+  // them will have a defined value here, everything else stays disabled.
+  const overrides = p as Partial<{
+    profitPercentOverride: number;
+    zincCostOverride: number;
+    printCostOverride: number;
+    designCostOverride: number;
+    numberingCostOverride: number;
+    wasteSheetsOverride: number;
+  }>;
+  d.profitPercentEnabled = overrides.profitPercentOverride !== undefined;
+  d.profitPercentOverride = String(overrides.profitPercentOverride ?? 0);
+  d.zincCostOverrideEnabled = overrides.zincCostOverride !== undefined;
+  d.zincCostOverrideValue = String(overrides.zincCostOverride ?? 0);
+  d.printCostOverrideEnabled = overrides.printCostOverride !== undefined;
+  d.printCostOverrideValue = String(overrides.printCostOverride ?? 0);
+  d.designCostOverrideEnabled = overrides.designCostOverride !== undefined;
+  d.designCostOverrideValue = String(overrides.designCostOverride ?? 0);
+  d.numberingCostOverrideEnabled = overrides.numberingCostOverride !== undefined;
+  d.numberingCostOverrideValue = String(overrides.numberingCostOverride ?? 0);
+  d.wasteSheetsOverrideEnabled = overrides.wasteSheetsOverride !== undefined;
+  d.wasteSheetsOverrideValue = String(overrides.wasteSheetsOverride ?? 0);
+
+  switch (p.kind) {
+    case 'LOOSE_PAPER':
+      d.sizeFamilyKey = p.sizeFamilyKey;
+      d.realSizeLabel = p.realSizeLabel;
+      d.inventoryItemId = p.inventoryItemId;
+      d.colorCount = String(p.colorCount);
+      d.isNewDesign = p.isNewDesign;
+      d.numberingStartNumber = p.numberingStartNumber !== undefined ? String(p.numberingStartNumber) : '';
+      d.quantity = String(p.quantity);
+      d.sides = p.sides === 2 ? '2' : '1';
+      break;
+    case 'NOTEBOOK': {
+      d.sizeFamilyKey = p.sizeFamilyKey;
+      d.realSizeLabel = p.realSizeLabel;
+      d.inventoryItemId = p.inventoryItemId;
+      d.colorCount = String(p.colorCount);
+      d.isNewDesign = p.isNewDesign;
+      d.numberingStartNumber = p.numberingStartNumber !== undefined ? String(p.numberingStartNumber) : '';
+      d.notebookQuantity = String(p.notebookQuantity);
+      d.contentType = p.contentType;
+      d.copies = p.copies !== undefined ? String(p.copies) : '0';
+      d.bindingPricePerNotebook = String(p.bindingPricePerNotebook);
+      const copyCount = p.contentType === 'ORIGINAL_PLUS_COPIES' ? (p.copies ?? 0) : 0;
+      const copyMaterials = new Array(copyCount).fill('');
+      for (const m of p.materials ?? []) {
+        const idx = Number(m.role.replace('COPY_', '')) - 1;
+        if (idx >= 0 && idx < copyMaterials.length) copyMaterials[idx] = m.inventoryItemId;
+      }
+      d.copyMaterials = copyMaterials;
+      break;
+    }
+    case 'ENVELOPE':
+      d.quantity = String(p.quantity);
+      d.colorCount = String(p.colorCount);
+      d.isNewDesign = p.isNewDesign;
+      d.readyEnvelopePricePerPiece = String(p.readyEnvelopePricePerPiece);
+      break;
+    case 'FOLDER':
+      d.sizeFamilyKey = p.sizeFamilyKey;
+      d.realSizeLabel = p.realSizeLabel;
+      d.inventoryItemId = p.inventoryItemId;
+      d.quantity = String(p.quantity);
+      d.colorCount = String(p.colorCount);
+      d.sides = p.sides === 2 ? '2' : '1';
+      d.isNewDesign = p.isNewDesign;
+      d.sellophaneEnabled = p.sellophaneEnabled;
+      d.riza = p.riza !== undefined ? String(p.riza) : '';
+      d.jarab = p.jarab !== undefined ? String(p.jarab) : '';
+      d.forma = p.forma !== undefined ? String(p.forma) : '';
+      d.taksir = p.taksir !== undefined ? String(p.taksir) : '';
+      break;
+    case 'BOARDS':
+      d.material = p.material;
+      d.widthCm = String(p.widthCm);
+      d.heightCm = String(p.heightCm);
+      d.hasDesign = p.hasDesign ?? false;
+      d.hasSellophane = p.hasSellophane ?? false;
+      break;
+    case 'DIGITAL':
+      d.digitalComponents = p.components.map((c) => ({
+        ...emptyDigitalComponent(c.label),
+        inventoryItemId: c.inventoryItemId,
+        widthCm: String(c.pieceWidthCm),
+        heightCm: String(c.pieceHeightCm),
+        quantity: String(c.quantity),
+        yieldPerQuarter: String(c.yieldPerQuarter),
+        sellophaneEnabled: c.sellophaneEnabled ?? false,
+        boshrPricePerPiece: c.boshrPricePerPiece !== undefined ? String(c.boshrPricePerPiece) : '0',
+      }));
+      break;
+    case 'PRODUCT':
+    case 'SERVICE':
+      d.quantity = String(p.quantity);
+      break;
+    case 'INVENTORY_RETAIL':
+      d.inventoryItemId = p.inventoryItemId;
+      d.quantity = String(p.quantity);
+      break;
+  }
+  return d;
 }
 
 interface PricingCtx {
@@ -1419,6 +1567,8 @@ function NewOrderForm({
   const [activeSubTabId, setActiveSubTabId] = useState<string | undefined>('LOOSE_PAPER');
   const [draft, setDraft] = useState<DraftItem>(() => emptyDraftItem());
   const [itemError, setItemError] = useState<string | null>(null);
+  /** Owner (2026-08-17, "عايز لما ادوس على بند في السلة... أقدر أعدل عليه") — the `CartLine.key` currently loaded into the composer for editing, or null when composing a brand-new item. `addToCart` checks this to decide "update in place" vs "append". */
+  const [editingKey, setEditingKey] = useState<string | null>(null);
 
   // التحصيل — دفعات عند الإنشاء (فاتورة فقط)
   const [payments, setPayments] = useState<PaymentRow[]>([]);
@@ -1575,11 +1725,40 @@ function NewOrderForm({
       productionTrack: resolveProductionTrackForTab(activeParentId),
       breakdown: preview.result ?? undefined,
     };
-    setCart((prev) => [...prev, line]);
+    if (editingKey) {
+      setCart((prev) => prev.map((l) => (l.key === editingKey ? line : l)));
+      setEditingKey(null);
+    } else {
+      setCart((prev) => [...prev, line]);
+    }
     setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER'));
   };
 
-  const removeFromCart = (key: string) => setCart((prev) => prev.filter((line) => line.key !== key));
+  const removeFromCart = (key: string) => {
+    setCart((prev) => prev.filter((line) => line.key !== key));
+    // The line being edited was just deleted out from under the composer — drop back to a fresh item instead of "saving" would silently resurrect it.
+    if (editingKey === key) {
+      setEditingKey(null);
+      setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER'));
+    }
+  };
+
+  /** Owner (2026-08-17) — clicking a cart line re-opens it in the composer, pre-filled, instead of only delete-and-re-add. */
+  const openLineForEdit = (line: CartLine) => {
+    const serviceCategory = line.serviceId ? services.find((s) => s.id === line.serviceId)?.category : undefined;
+    const category = findCategoryForKind(line.pricing.kind, serviceCategory, line.productionTrack);
+    setActiveParentId(category.parentId);
+    setActiveSubTabId(category.subTabId);
+    setDraft(draftFromCartLine(line));
+    setEditingKey(line.key);
+    setItemError(null);
+  };
+
+  const cancelEditingLine = () => {
+    setEditingKey(null);
+    setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER'));
+    setItemError(null);
+  };
 
   // system_specifications_v2.md (2026-08-16, "بضاعة من المخزون") — a HID
   // barcode scanner types the code then Enter, exactly like a very fast
@@ -1775,16 +1954,28 @@ function NewOrderForm({
           <div className="space-y-2">
             {cart.map((line) => {
               const { costRows, materials, totalSheets } = cartLineBreakdownRows(line);
+              const beingEdited = line.key === editingKey;
               return (
-                <div key={line.key} className="border-border rounded-lg border p-2 text-sm">
+                <div
+                  key={line.key}
+                  onClick={() => openLineForEdit(line)}
+                  className={`border-border cursor-pointer rounded-lg border p-2 text-sm transition-colors hover:bg-muted/40 ${beingEdited ? 'border-primary bg-primary/5' : ''}`}
+                >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="font-medium">{money(line.total)} ج.م</p>
+                      <p className="font-medium">{money(line.total)} ج.م {beingEdited && <span className="text-primary text-xs font-normal">(بيتعدل الآن)</span>}</p>
+                      {/* Owner (2026-08-17, "عايزه يطلعلي سعر الدفتر الواحد والإجمالي مش بس سعر الإجمالي") — notebook-only, since that's the unit the owner prices tenders/quotes against. */}
+                      {line.pricing.kind === 'NOTEBOOK' && line.pricing.notebookQuantity > 0 && (
+                        <p className="text-muted-foreground text-xs">سعر الدفتر الواحد: {money(line.total / line.pricing.notebookQuantity)} ج.م</p>
+                      )}
                       <p className="text-muted-foreground truncate text-xs">{line.summary}</p>
                     </div>
                     <button
                       type="button"
-                      onClick={() => removeFromCart(line.key)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFromCart(line.key);
+                      }}
                       className="text-destructive shrink-0 text-xs"
                       aria-label="حذف البند"
                     >
@@ -3073,15 +3264,29 @@ function NewOrderForm({
           </div>
 
           <div className="flex items-center justify-between border-t pt-2">
-            <p className="text-sm font-medium">
-              سعر البند:{' '}
-              <span className={draftPreview.error ? 'text-destructive' : 'text-foreground'}>
-                {draftPreview.error ?? `${money(draftPreview.total)} ج.م`}
-              </span>
-            </p>
-            <Button type="button" onClick={addToCart}>
-              🛒 إضافة للفاتورة
-            </Button>
+            <div>
+              <p className="text-sm font-medium">
+                سعر البند:{' '}
+                <span className={draftPreview.error ? 'text-destructive' : 'text-foreground'}>
+                  {draftPreview.error ?? `${money(draftPreview.total)} ج.م`}
+                </span>
+              </p>
+              {draft.kind === 'NOTEBOOK' && !draftPreview.error && toNum(draft.notebookQuantity) > 0 && (
+                <p className="text-muted-foreground text-xs">
+                  سعر الدفتر الواحد: {money(draftPreview.total / toNum(draft.notebookQuantity))} ج.م
+                </p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {editingKey && (
+                <Button type="button" variant="secondary" onClick={cancelEditingLine}>
+                  إلغاء التعديل
+                </Button>
+              )}
+              <Button type="button" onClick={addToCart}>
+                {editingKey ? '💾 حفظ التعديل' : '🛒 إضافة للفاتورة'}
+              </Button>
+            </div>
           </div>
             </>
           )}
