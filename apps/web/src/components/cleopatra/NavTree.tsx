@@ -11,6 +11,15 @@ function isPermitted(can: (key: string) => boolean, permission: string | string[
   return Array.isArray(permission) ? permission.some(can) : can(permission);
 }
 
+function isEntryVisible(
+  entry: NavEntry,
+  can: (key: string) => boolean,
+  isSuperAdmin: boolean,
+): boolean {
+  if (entry.kind === 'link' && entry.requireSuperAdmin && !isSuperAdmin) return false;
+  return isPermitted(can, entry.permission);
+}
+
 interface NavTreeProps {
   entries: NavEntry[];
   /** Icon-rail mode: labels are hidden, only icons render. */
@@ -21,8 +30,9 @@ interface NavTreeProps {
 }
 
 export function NavTree({ entries, collapsed = false, onNavigate, depth = 0 }: NavTreeProps) {
-  const { can } = useAuth();
-  const visible = entries.filter((entry) => isPermitted(can, entry.permission));
+  const { can, authContext } = useAuth();
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
+  const visible = entries.filter((entry) => isEntryVisible(entry, can, isSuperAdmin));
 
   return (
     <ul className="flex flex-col gap-0.5">
@@ -84,9 +94,10 @@ function NavGroupItem({
   onNavigate?: () => void;
   depth: number;
 }) {
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
   const [open, setOpen] = useState(true);
-  const visibleItems = entry.items.filter((item) => isPermitted(can, item.permission));
+  const visibleItems = entry.items.filter((item) => isEntryVisible(item, can, isSuperAdmin));
   if (visibleItems.length === 0) return null;
 
   return (

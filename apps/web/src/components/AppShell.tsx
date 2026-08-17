@@ -13,6 +13,7 @@ import {
   Package,
   Briefcase,
   Wrench,
+  MonitorSmartphone,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -74,6 +75,13 @@ const NAV_ITEMS: NavEntry[] = [
     icon: ShieldCheck,
     items: [
       { kind: 'link', to: '/users', label: 'الموظفين', icon: UserCog, permission: 'employees.view' },
+      // Owner (2026-08-17): a nav entry point for the attendance Kiosk
+      // (previously URL-only), visible to the Super Admin role only —
+      // mirrors the existing "attendance admin screen restricted to Super
+      // Admin" precedent (UsersPage.tsx's `isSuperAdmin` check). No
+      // `permission` key: this is a role gate, not a grantable permission,
+      // same reasoning as that precedent.
+      { kind: 'link', to: '/attendance/kiosk', label: 'كشك الحضور', icon: MonitorSmartphone, requireSuperAdmin: true },
       { kind: 'link', to: '/roles', label: 'الأدوار', icon: ShieldCheck, permission: 'roles.view' },
       { kind: 'link', to: '/permissions', label: 'الصلاحيات', icon: KeyRound, permission: 'permissions.view' },
       { kind: 'link', to: '/settings', label: 'الإعدادات', icon: SettingsIcon, permission: 'settings.view' },

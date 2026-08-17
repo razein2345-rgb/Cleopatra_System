@@ -27,12 +27,13 @@ interface CommandPaletteProps {
  * that. See REFINEMENTS.md §1.
  */
 export function CommandPalette({ entries, open, onOpenChange }: CommandPaletteProps) {
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
   const navigate = useNavigate();
 
   const providers = useMemo<SearchProvider[]>(
-    () => [buildPagesProvider(entries, can), ...SEARCH_PROVIDERS],
-    [entries, can],
+    () => [buildPagesProvider(entries, can, isSuperAdmin), ...SEARCH_PROVIDERS],
+    [entries, can, isSuperAdmin],
   );
   const [resultsByProvider, setResultsByProvider] = useState<Record<string, SearchResultItem[]>>({});
 

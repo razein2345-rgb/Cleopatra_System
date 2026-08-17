@@ -449,7 +449,11 @@ export async function advanceWorkflowInstance(
  */
 async function queryWorkflowQueue(departmentId: string | { in: string[] }): Promise<WorkflowQueueItem[]> {
   const rows = await prisma.stageInstance.findMany({
-    where: { departmentId, status: { in: ['WAITING', 'IN_PROGRESS'] } },
+    where: {
+      departmentId,
+      status: { in: ['WAITING', 'IN_PROGRESS'] },
+      workflowInstance: { isDeleted: false },
+    },
     include: {
       ...STAGE_INSTANCE_INCLUDE,
       workflowInstance: {
@@ -627,7 +631,11 @@ export async function getWorkflowDashboardSummary(
     departmentIds === 'all' ? {} : { departmentId: { in: departmentIds } };
 
   const rows = await prisma.stageInstance.findMany({
-    where: { status: { in: ['WAITING', 'IN_PROGRESS'] }, ...departmentFilter },
+    where: {
+      status: { in: ['WAITING', 'IN_PROGRESS'] },
+      workflowInstance: { isDeleted: false },
+      ...departmentFilter,
+    },
     include: {
       department: { select: { id: true, name: true } },
       assignedEmployee: { select: { id: true, name: true } },

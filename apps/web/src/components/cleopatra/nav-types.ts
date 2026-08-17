@@ -11,6 +11,8 @@ export interface NavLink {
   icon?: LucideIcon;
   /** A single required permission, or a list where holding any one is enough (e.g. Treasury: `treasury.view` OR `treasury.create`). */
   permission?: string | string[];
+  /** Owner (2026-08-17) — links visible to the Super Admin role only, regardless of permission grants (e.g. the attendance Kiosk entry point). */
+  requireSuperAdmin?: boolean;
   end?: boolean;
   /** FEATURE-005 Sprint 2.5 — an attention count (e.g. delayed jobs), not a status. Omitted or 0 renders no badge. */
   badgeCount?: number;
