@@ -674,6 +674,38 @@ function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Se
 
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
+/**
+ * Owner (2026-08-17, "عايز يظهرلي تحت السلة سعر بنود الحسبة... وعدد الأفرخ من
+ * كل نوع ورق وحساب الورق الكلي") — the cart list's per-line cost/material
+ * breakdown, built from the same `PricingPreviewResult` already computed at
+ * add-time. Purely a display reshape — no recalculation, no new pricing logic.
+ */
+function cartLineBreakdownRows(line: CartLine): { costRows: { label: string; value: number }[]; materials: { role: string; sheetsNeeded: number; sheetPrice: number; paperCost: number }[]; totalSheets: number | null } {
+  const b = line.breakdown;
+  if (!b) return { costRows: [], materials: [], totalSheets: null };
+
+  const costRows: { label: string; value: number }[] = [];
+  if (b.designCost) costRows.push({ label: 'التصميم', value: b.designCost });
+  if (b.zincCost) costRows.push({ label: 'الزنكات', value: b.zincCost });
+  if (b.printCost) costRows.push({ label: 'الطباعة', value: b.printCost });
+  if (b.numberingCost) costRows.push({ label: 'الترقيم', value: b.numberingCost });
+  if (b.paperCost) costRows.push({ label: 'الورق', value: b.paperCost });
+  if (b.selloCost) costRows.push({ label: 'السلوفان', value: b.selloCost });
+  if (b.extraCosts) costRows.push({ label: 'خدمات إضافية', value: b.extraCosts });
+
+  const materials = b.materials ?? [];
+  const totalSheets =
+    materials.length > 0
+      ? materials.reduce((s, m) => s + m.sheetsNeeded, 0)
+      : b.components && b.components.length > 0
+        ? b.components.reduce((s, c) => s + c.sheetsNeeded, 0)
+        : typeof b.sheetsNeeded === 'number'
+          ? b.sheetsNeeded
+          : null;
+
+  return { costRows, materials, totalSheets };
+}
+
 /** Loosely-typed shape of everything `computeItemPricing` might have merged into a frozen `breakdown` — used only when reconstructing an existing item for editing (see `reconstructPricingInput` below). */
 interface StoredBreakdown {
   kind?: 'PRODUCT' | 'SERVICE' | 'INVENTORY_RETAIL';
@@ -1227,6 +1259,8 @@ interface CartLine {
   total: number;
   /** "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — stamped from the composer tab at add-time (see `addToCart`), never manually picked. Null = this item never enters production (INVENTORY_RETAIL). */
   productionTrack: ProductionTrack | null;
+  /** Owner (2026-08-17, "عايز يظهرلي تحت السلة سعر بنود الحسبة... وعدد الأفرخ من كل نوع ورق") — the full pricing-engine result captured at add-time, rendered as a line-item cost/material breakdown under the cart. Frozen the same way `total` already is (never recomputed just for display); undefined for kinds with nothing to break down (PRODUCT/SERVICE/INVENTORY_RETAIL). */
+  breakdown?: PricingPreviewResult;
 }
 
 interface PaymentRow {
@@ -1475,6 +1509,7 @@ function NewOrderForm({
       pricing,
       total: preview.total,
       productionTrack: resolveProductionTrackForTab(activeParentId),
+      breakdown: preview.result ?? undefined,
     };
     setCart((prev) => [...prev, line]);
     setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER'));
@@ -1674,22 +1709,54 @@ function NewOrderForm({
           </p>
         ) : (
           <div className="space-y-2">
-            {cart.map((line) => (
-              <div key={line.key} className="border-border flex items-start justify-between gap-2 rounded-lg border p-2 text-sm">
-                <div className="min-w-0">
-                  <p className="font-medium">{money(line.total)} ج.م</p>
-                  <p className="text-muted-foreground truncate text-xs">{line.summary}</p>
+            {cart.map((line) => {
+              const { costRows, materials, totalSheets } = cartLineBreakdownRows(line);
+              return (
+                <div key={line.key} className="border-border rounded-lg border p-2 text-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-medium">{money(line.total)} ج.م</p>
+                      <p className="text-muted-foreground truncate text-xs">{line.summary}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeFromCart(line.key)}
+                      className="text-destructive shrink-0 text-xs"
+                      aria-label="حذف البند"
+                    >
+                      🗑
+                    </button>
+                  </div>
+                  {/* Owner (2026-08-17) — بنود الحسبة (زنكات/تراج/ترقيم/ورق/تصميم...) وتوزيع الأفرخ على كل خامة، تحت كل بند في السلة مباشرة. */}
+                  {costRows.length > 0 && (
+                    <div className="text-muted-foreground mt-1.5 space-y-0.5 border-t pt-1.5 text-xs">
+                      {costRows.map((r) => (
+                        <div key={r.label} className="flex justify-between">
+                          <span>{r.label}</span>
+                          <span dir="ltr">{money(r.value)} ج.م</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {materials.length > 0 && (
+                    <div className="text-muted-foreground mt-1.5 space-y-0.5 border-t pt-1.5 text-xs">
+                      {materials.map((m, i) => (
+                        <div key={`${m.role}-${i}`} className="flex justify-between">
+                          <span>{notebookMaterialRoleLabel(m.role)}</span>
+                          <span dir="ltr">{m.sheetsNeeded} فرخ × {m.sheetPrice.toFixed(2)} = {money(m.paperCost)} ج.م</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {totalSheets !== null && (
+                    <div className="mt-1 flex justify-between border-t pt-1 text-xs font-medium">
+                      <span>إجمالي الورق</span>
+                      <span dir="ltr">{totalSheets} فرخ</span>
+                    </div>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => removeFromCart(line.key)}
-                  className="text-destructive shrink-0 text-xs"
-                  aria-label="حذف البند"
-                >
-                  🗑
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
