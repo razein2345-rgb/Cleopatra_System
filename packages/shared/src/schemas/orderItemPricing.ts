@@ -29,9 +29,27 @@ const marginOverrideFields = {
   profitPercentOverride: z.number().min(0).max(100).optional(),
 };
 
+/**
+ * Owner (2026-08-17, "عايز أقدر أعدل سعر الزنك وتراج الطبع وترقيم
+ * والتصميم من واجهة الطلبات... ساعات بحتاج أغير لما احب أحسب مناقصة") —
+ * `designCostOverride` extends the same 2026-08-10 override rule
+ * `zincCostOverride`/`printCostOverride` already carried; kept in the same
+ * group since every kind that has zinc/print also has a design cost.
+ */
 const zincPrintOverrideFields = {
   zincCostOverride: z.number().nonnegative().optional(),
   printCostOverride: z.number().nonnegative().optional(),
+  designCostOverride: z.number().nonnegative().optional(),
+};
+
+/** Owner (2026-08-17) — only LOOSE_PAPER/NOTEBOOK have a numbering concept at all. */
+const numberingOverrideFields = {
+  numberingCostOverride: z.number().nonnegative().optional(),
+};
+
+/** Owner (2026-08-17, "أقدر أغير الهالك... الديفولت اللي هو فرخين") — replaces `settings.wasteSheetsDefault` for this item only; only the sheet-tiered kinds (LOOSE_PAPER/NOTEBOOK/FOLDER) have a waste-sheets concept. */
+const wasteSheetsOverrideFields = {
+  wasteSheetsOverride: z.number().int().nonnegative().optional(),
 };
 
 /**
@@ -54,6 +72,8 @@ export const loosePaperPricingInputSchema = z.object({
   sides: z.union([z.literal(1), z.literal(2)]),
   ...marginOverrideFields,
   ...zincPrintOverrideFields,
+  ...numberingOverrideFields,
+  ...wasteSheetsOverrideFields,
   ...extraServiceFields,
 });
 
@@ -83,6 +103,8 @@ export const notebookPricingInputSchema = z.object({
   materials: z.array(notebookMaterialOverrideSchema).max(20).optional(),
   ...marginOverrideFields,
   ...zincPrintOverrideFields,
+  ...numberingOverrideFields,
+  ...wasteSheetsOverrideFields,
   ...extraServiceFields,
 });
 
@@ -114,6 +136,7 @@ export const folderPricingInputSchema = z.object({
   taksir: z.number().nonnegative().optional(),
   ...marginOverrideFields,
   ...zincPrintOverrideFields,
+  ...wasteSheetsOverrideFields,
   ...extraServiceFields,
 });
 

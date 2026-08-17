@@ -128,9 +128,19 @@ export async function listAttendanceForStaff(staffId: string, limit = 30): Promi
   return entries.map(mapAttendanceToDto);
 }
 
-/** Admin manual entry/correction (employees.edit) — upserts by (staffId, date). */
-export async function upsertAttendanceEntry(input: UpsertAttendanceEntryInput, recordedById: string): Promise<AttendanceEntry> {
+/**
+ * Admin manual entry/correction (Super Admin only — see attendance.ts's
+ * own doc comment on why this is restricted beyond `employees.edit`) —
+ * upserts by (staffId, date). Returns the pre-edit state alongside the
+ * result so the caller can record a real before/after audit entry, not
+ * just "something changed."
+ */
+export async function upsertAttendanceEntry(
+  input: UpsertAttendanceEntryInput,
+  recordedById: string,
+): Promise<{ entry: AttendanceEntry; previous: AttendanceEntry | null }> {
   const date = new Date(input.date);
+  const existing = await prisma.attendanceEntry.findUnique({ where: { staffId_date: { staffId: input.staffId, date } } });
   const entry = await prisma.attendanceEntry.upsert({
     where: { staffId_date: { staffId: input.staffId, date } },
     create: {
@@ -149,7 +159,7 @@ export async function upsertAttendanceEntry(input: UpsertAttendanceEntryInput, r
       recordedById,
     },
   });
-  return mapAttendanceToDto(entry);
+  return { entry: mapAttendanceToDto(entry), previous: existing ? mapAttendanceToDto(existing) : null };
 }
 
 // ---------------------------------------------------------------------------

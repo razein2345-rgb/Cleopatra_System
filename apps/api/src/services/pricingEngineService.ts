@@ -259,6 +259,9 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         settings: ctx.pricingConstants,
         zincCostOverride: pricing.zincCostOverride,
         printCostOverride: pricing.printCostOverride,
+        numberingCostOverride: pricing.numberingCostOverride,
+        designCostOverride: pricing.designCostOverride,
+        wasteSheetsOverride: pricing.wasteSheetsOverride,
         profitPercentOverride: pricing.profitPercentOverride,
         extraCosts: sumExtraCosts(pricing),
       });
@@ -325,6 +328,9 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           settings: ctx.pricingConstants,
           zincCostOverride: pricing.zincCostOverride,
           printCostOverride: pricing.printCostOverride,
+          numberingCostOverride: pricing.numberingCostOverride,
+          designCostOverride: pricing.designCostOverride,
+          wasteSheetsOverride: pricing.wasteSheetsOverride,
           profitPercentOverride: pricing.profitPercentOverride,
           extraCosts: sumExtraCosts(pricing),
         },
@@ -371,6 +377,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         settings: ctx.pricingConstants,
         zincCostOverride: pricing.zincCostOverride,
         printCostOverride: pricing.printCostOverride,
+        designCostOverride: pricing.designCostOverride,
         profitPercentOverride: pricing.profitPercentOverride,
         extraCosts: sumExtraCosts(pricing),
       });
@@ -411,6 +418,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         settings: ctx.pricingConstants,
         zincCostOverride: pricing.zincCostOverride,
         printCostOverride: pricing.printCostOverride,
+        designCostOverride: pricing.designCostOverride,
+        wasteSheetsOverride: pricing.wasteSheetsOverride,
         profitPercentOverride: pricing.profitPercentOverride,
         extraCosts: sumExtraCosts(pricing),
       });

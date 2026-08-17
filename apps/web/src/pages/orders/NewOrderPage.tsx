@@ -212,6 +212,24 @@ interface DraftItem {
   // نسبة الربح — تعديل يدوي اختياري بدل النسبة الافتراضية من الإعدادات (LOOSE_PAPER/NOTEBOOK/ENVELOPE/FOLDER فقط — BOARDS/PRODUCT/SERVICE لا هامش ربح فيهم أصلًا).
   profitPercentEnabled: boolean;
   profitPercentOverride: string;
+  /**
+   * Owner (2026-08-17, "عايز أقدر أعدل سعر الزنك وتراج الطبع وترقيم
+   * والتصميم من واجهة الطلبات... ساعات بحتاج أغير لما احب أحسب مناقصة")
+   * — same "toggle + override field, defaults to the Settings value"
+   * pattern as نسبة الربح above, one pair per overridable cost component.
+   * زنك/تراج/تصميم apply to LOOSE_PAPER/NOTEBOOK/ENVELOPE/FOLDER; ترقيم/هالك
+   * only to LOOSE_PAPER/NOTEBOOK (the only two kinds with either concept).
+   */
+  zincCostOverrideEnabled: boolean;
+  zincCostOverrideValue: string;
+  printCostOverrideEnabled: boolean;
+  printCostOverrideValue: string;
+  numberingCostOverrideEnabled: boolean;
+  numberingCostOverrideValue: string;
+  designCostOverrideEnabled: boolean;
+  designCostOverrideValue: string;
+  wasteSheetsOverrideEnabled: boolean;
+  wasteSheetsOverrideValue: string;
   // الخدمات الإضافية — every kind
   baggingEnabled: boolean;
   baggingAmount: string;
@@ -270,6 +288,16 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     digitalComponents: [emptyDigitalComponent()],
     profitPercentEnabled: false,
     profitPercentOverride: '0',
+    zincCostOverrideEnabled: false,
+    zincCostOverrideValue: '0',
+    printCostOverrideEnabled: false,
+    printCostOverrideValue: '0',
+    numberingCostOverrideEnabled: false,
+    numberingCostOverrideValue: '0',
+    designCostOverrideEnabled: false,
+    designCostOverrideValue: '0',
+    wasteSheetsOverrideEnabled: false,
+    wasteSheetsOverrideValue: '0',
     baggingEnabled: false,
     baggingAmount: '0',
     singleAdhesiveEnabled: false,
@@ -317,6 +345,18 @@ function sumExtraCosts(pricing: {
 function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
   const extra = extraServiceFieldsOf(d);
   const margin = d.profitPercentEnabled ? { profitPercentOverride: toNum(d.profitPercentOverride) } : {};
+  // Owner (2026-08-17) — manual formula overrides, "مناقصة" pricing.
+  // زنك/تراج/تصميم apply to every hasPrintSection kind; ترقيم/هالك only to
+  // LOOSE_PAPER/NOTEBOOK (the only two with either concept at all).
+  const zpd = {
+    ...(d.zincCostOverrideEnabled ? { zincCostOverride: toNum(d.zincCostOverrideValue) } : {}),
+    ...(d.printCostOverrideEnabled ? { printCostOverride: toNum(d.printCostOverrideValue) } : {}),
+    ...(d.designCostOverrideEnabled ? { designCostOverride: toNum(d.designCostOverrideValue) } : {}),
+  };
+  const numberingWaste = {
+    ...(d.numberingCostOverrideEnabled ? { numberingCostOverride: toNum(d.numberingCostOverrideValue) } : {}),
+    ...(d.wasteSheetsOverrideEnabled ? { wasteSheetsOverride: toNum(d.wasteSheetsOverrideValue) } : {}),
+  };
   switch (d.kind) {
     case 'LOOSE_PAPER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -332,6 +372,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         sides: d.sides === '2' ? 2 : 1,
         ...extra,
         ...margin,
+        ...zpd,
+        ...numberingWaste,
       };
     case 'NOTEBOOK': {
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.notebookQuantity || !d.colorCount) return null;
@@ -362,6 +404,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         materials: materials.length ? materials : undefined,
         ...extra,
         ...margin,
+        ...zpd,
+        ...numberingWaste,
       };
     }
     case 'ENVELOPE':
@@ -374,6 +418,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         readyEnvelopePricePerPiece: toNum(d.readyEnvelopePricePerPiece),
         ...extra,
         ...margin,
+        ...zpd,
       };
     case 'FOLDER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -393,6 +438,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         taksir: toOptionalNum(d.taksir),
         ...extra,
         ...margin,
+        ...zpd,
+        ...(d.wasteSheetsOverrideEnabled ? { wasteSheetsOverride: toNum(d.wasteSheetsOverrideValue) } : {}),
       };
     case 'BOARDS':
       if (!d.widthCm || !d.heightCm || !d.quantity) return null;
@@ -515,6 +562,11 @@ function previewItemTotal(
           settings: ctx.pricingConstants,
           extraCosts,
           profitPercentOverride: pricing.profitPercentOverride,
+          zincCostOverride: pricing.zincCostOverride,
+          printCostOverride: pricing.printCostOverride,
+          numberingCostOverride: pricing.numberingCostOverride,
+          designCostOverride: pricing.designCostOverride,
+          wasteSheetsOverride: pricing.wasteSheetsOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -544,6 +596,11 @@ function previewItemTotal(
             settings: ctx.pricingConstants,
             extraCosts,
             profitPercentOverride: pricing.profitPercentOverride,
+            zincCostOverride: pricing.zincCostOverride,
+            printCostOverride: pricing.printCostOverride,
+            numberingCostOverride: pricing.numberingCostOverride,
+            designCostOverride: pricing.designCostOverride,
+            wasteSheetsOverride: pricing.wasteSheetsOverride,
           },
           materialOverrides.length ? materialOverrides : undefined,
         );
@@ -558,6 +615,9 @@ function previewItemTotal(
           settings: ctx.pricingConstants,
           extraCosts,
           profitPercentOverride: pricing.profitPercentOverride,
+          zincCostOverride: pricing.zincCostOverride,
+          printCostOverride: pricing.printCostOverride,
+          designCostOverride: pricing.designCostOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -581,6 +641,10 @@ function previewItemTotal(
           settings: ctx.pricingConstants,
           extraCosts,
           profitPercentOverride: pricing.profitPercentOverride,
+          zincCostOverride: pricing.zincCostOverride,
+          printCostOverride: pricing.printCostOverride,
+          designCostOverride: pricing.designCostOverride,
+          wasteSheetsOverride: pricing.wasteSheetsOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -1786,6 +1850,114 @@ function NewOrderForm({
           </div>
         )}
 
+        {/* تعديلات يدوية على بنود التكلفة — للحالات الاستثنائية زي حساب مناقصة (owner, 2026-08-17). كل تعديل بيفضل معطل افتراضيًا ويستخدم قيمة الإعدادات، ويظهر بس للأنواع اللي فيها المفهوم ده أصلًا. */}
+        {hasPrintSection && (
+          <div className="border-border space-y-2 rounded-lg border p-2">
+            <p className="text-muted-foreground text-xs font-medium">تعديل يدوي على بنود التكلفة (لحالات زي المناقصات)</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Checkbox
+                checked={draft.zincCostOverrideEnabled}
+                onCheckedChange={(v) => updateDraft({ zincCostOverrideEnabled: v === true })}
+              />
+              <span className="text-sm">تكلفة الزنك</span>
+              {draft.zincCostOverrideEnabled ? (
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.zincCostOverrideValue}
+                  onChange={(e) => updateDraft({ zincCostOverrideValue: e.target.value })}
+                  className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                />
+              ) : (
+                <span className="text-muted-foreground text-xs">المحسوب تلقائيًا: {money(result?.zincCost ?? 0)} ج.م</span>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Checkbox
+                checked={draft.printCostOverrideEnabled}
+                onCheckedChange={(v) => updateDraft({ printCostOverrideEnabled: v === true })}
+              />
+              <span className="text-sm">تكلفة تراج الطبع</span>
+              {draft.printCostOverrideEnabled ? (
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.printCostOverrideValue}
+                  onChange={(e) => updateDraft({ printCostOverrideValue: e.target.value })}
+                  className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                />
+              ) : (
+                <span className="text-muted-foreground text-xs">المحسوب تلقائيًا: {money(result?.printCost ?? 0)} ج.م</span>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Checkbox
+                checked={draft.designCostOverrideEnabled}
+                onCheckedChange={(v) => updateDraft({ designCostOverrideEnabled: v === true })}
+              />
+              <span className="text-sm">تكلفة التصميم</span>
+              {draft.designCostOverrideEnabled ? (
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.designCostOverrideValue}
+                  onChange={(e) => updateDraft({ designCostOverrideValue: e.target.value })}
+                  className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                />
+              ) : (
+                <span className="text-muted-foreground text-xs">المحسوب تلقائيًا: {money(result?.designCost ?? 0)} ج.م</span>
+              )}
+            </div>
+            {(draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK') && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Checkbox
+                  checked={draft.numberingCostOverrideEnabled}
+                  onCheckedChange={(v) => updateDraft({ numberingCostOverrideEnabled: v === true })}
+                />
+                <span className="text-sm">تكلفة الترقيم</span>
+                {draft.numberingCostOverrideEnabled ? (
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={draft.numberingCostOverrideValue}
+                    onChange={(e) => updateDraft({ numberingCostOverrideValue: e.target.value })}
+                    className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                  />
+                ) : (
+                  <span className="text-muted-foreground text-xs">المحسوب تلقائيًا: {money(result?.numberingCost ?? 0)} ج.م</span>
+                )}
+              </div>
+            )}
+            {(draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK' || draft.kind === 'FOLDER') && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Checkbox
+                  checked={draft.wasteSheetsOverrideEnabled}
+                  onCheckedChange={(v) => updateDraft({ wasteSheetsOverrideEnabled: v === true })}
+                />
+                <span className="text-sm">الهالك (أفرخ)</span>
+                {draft.wasteSheetsOverrideEnabled ? (
+                  <input
+                    type="number"
+                    min={0}
+                    step="1"
+                    value={draft.wasteSheetsOverrideValue}
+                    onChange={(e) => updateDraft({ wasteSheetsOverrideValue: e.target.value })}
+                    className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                  />
+                ) : (
+                  <span className="text-muted-foreground text-xs">
+                    الافتراضي من الإعدادات: {pricingReference.pricingConstants.wasteSheetsDefault} فرخ
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <label className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">تطبيق ضريبة القيمة المضافة ({pricingReference.vatRate}%)</span>
           <input type="checkbox" checked={vatOn} onChange={(e) => setVatOn(e.target.checked)} />
@@ -2187,7 +2359,8 @@ function NewOrderForm({
             <p className="bg-muted/40 rounded-md p-2 text-xs" dir="rtl">
               الكمية ({draft.kind === 'NOTEBOOK' ? draft.notebookQuantity : draft.quantity})
               {selectedEntry ? ` ÷ القطع في الفرخ (${selectedEntry.piecesPerSheet})` : ''} + الهالك (
-              {pricingReference.pricingConstants.wasteSheetsDefault}) = {result.sheetsNeeded} فرخ ×{' '}
+              {draft.wasteSheetsOverrideEnabled ? toNum(draft.wasteSheetsOverrideValue) : pricingReference.pricingConstants.wasteSheetsDefault}
+              ) = {result.sheetsNeeded} فرخ ×{' '}
               {(ctx.sheetPriceByInventoryItemId.get(draft.inventoryItemId) ?? 0).toFixed(2)} = {money(result.paperCost ?? 0)} ج.م
             </p>
           )}

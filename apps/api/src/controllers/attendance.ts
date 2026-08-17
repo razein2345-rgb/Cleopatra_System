@@ -25,6 +25,7 @@ import {
   TooFarFromTargetError,
   upsertAttendanceEntry,
 } from '../services/attendanceService.js';
+import { recordAudit } from '../services/auditService.js';
 
 export async function getMyTodayAttendanceHandler(req: Request, res: Response) {
   const auth = req.auth!;
@@ -77,10 +78,32 @@ export async function listAttendanceForStaffHandler(req: Request<{ staffId: stri
   res.json({ success: true, data: entries });
 }
 
+/**
+ * system_specifications_v2.md §3.1.1 — correcting a worker's recorded
+ * check-in/check-out time is the same sensitivity class as viewing it
+ * (`listAttendanceForStaffHandler` above), so it gets the identical
+ * explicit Super-Admin check — `employees.edit` (the route-level
+ * permission this endpoint still requires) is not enough on its own,
+ * since other roles hold that permission too. Owner (2026-08-17): "عايز
+ * اتأكد إني أقدر أعدل... من عندي فقط."
+ */
 export async function upsertAttendanceEntryHandler(req: Request, res: Response) {
   const auth = req.auth!;
+  if (!auth.roleNames.includes('SUPER_ADMIN')) {
+    res.status(403).json({ success: false, error: { message: 'Editing attendance records is restricted to Super Admin' } });
+    return;
+  }
   const input = upsertAttendanceEntrySchema.parse(req.body);
-  const entry = await upsertAttendanceEntry(input, auth.staffId);
+  const { entry, previous } = await upsertAttendanceEntry(input, auth.staffId);
+  await recordAudit({
+    entityType: 'AttendanceEntry',
+    entityId: entry.id,
+    action: previous ? 'UPDATE' : 'CREATE',
+    performedById: auth.staffId,
+    branchId: entry.branchId,
+    previousValue: previous ? { checkInAt: previous.checkInAt, checkOutAt: previous.checkOutAt, note: previous.note } : null,
+    newValue: { checkInAt: entry.checkInAt, checkOutAt: entry.checkOutAt, note: entry.note },
+  });
   res.status(201).json({ success: true, data: entry });
 }
 

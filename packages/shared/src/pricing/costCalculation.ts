@@ -108,16 +108,24 @@ export interface LoosePaperCostInput {
   settings: PricingConstants;
   /**
    * FEATURE-007 — owner-approved manual overrides (2026-08-10, see
-   * PRICING_ENGINE_SPEC.md §4's amendment). `zincCostOverride`/
-   * `printCostOverride` replace the computed zinc/print cost only —
-   * everything else (paper/numbering/design/margin) stays server-computed
-   * always. `profitPercentOverride` replaces `settings.profitPercent` for
-   * this item only. `extraCosts` is the pre-summed manual "خدمات إضافية"
-   * amount (bagging/adhesive/sample — see orderItemPricing.ts), added to
-   * subtotal before margin, same treatment as §3.7's riza/jarab/forma/taksir.
+   * PRICING_ENGINE_SPEC.md §4's amendment; extended 2026-08-17 to
+   * design/numbering — owner: "عايز أقدر أعدل سعر الزنك وتراج الطبع
+   * وترقيم والتصميم من واجهة الطلبات... ساعات بحتاج أغير لما احب أحسب
+   * مناقصة" — same narrow "replace this one computed cost only" rule as
+   * zinc/print, not a formula change). Each `*CostOverride` replaces that
+   * one computed cost only — everything else (paper/margin) stays
+   * server-computed always. `profitPercentOverride` replaces
+   * `settings.profitPercent` for this item only. `extraCosts` is the
+   * pre-summed manual "خدمات إضافية" amount (bagging/adhesive/sample — see
+   * orderItemPricing.ts), added to subtotal before margin, same treatment
+   * as §3.7's riza/jarab/forma/taksir.
    */
   zincCostOverride?: number;
   printCostOverride?: number;
+  numberingCostOverride?: number;
+  designCostOverride?: number;
+  /** Owner (2026-08-17) — same override treatment for "الهالك" (waste sheets), replacing `settings.wasteSheetsDefault` for this item only. */
+  wasteSheetsOverride?: number;
   profitPercentOverride?: number;
   extraCosts?: number;
 }
@@ -154,7 +162,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
       families: input.families,
       settings: input.settings,
     });
-    sheetsNeeded = Math.ceil(input.quantity / repeat) + input.settings.wasteSheetsDefault;
+    sheetsNeeded = Math.ceil(input.quantity / repeat) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
     printUnits = input.quantity;
   } else {
     const calc = resolveCalcSize({
@@ -166,7 +174,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
       settings: input.settings,
     });
     printUnits = input.quantity / calc.repeat;
-    sheetsNeeded = Math.ceil(printUnits / calc.calcPiecesPerSheet) + input.settings.wasteSheetsDefault;
+    sheetsNeeded = Math.ceil(printUnits / calc.calcPiecesPerSheet) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
   }
 
   const paperCost = sheetsNeeded * input.sheetPrice;
@@ -186,12 +194,12 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
     });
     const numberingUnits = input.quantity / numRepeat;
     numberingRuns = Math.ceil(numberingUnits / 1000);
-    numberingCost = numberingRuns * input.settings.numberingRunPrice;
+    numberingCost = input.numberingCostOverride ?? numberingRuns * input.settings.numberingRunPrice;
     // §3.3 — loose paper: each sheet is its own number.
     numberingEnd = input.numbering.startNumber + input.quantity - 1;
   }
 
-  const designCost = input.isNewDesign ? input.settings.designPrice : 0;
+  const designCost = input.designCostOverride ?? (input.isNewDesign ? input.settings.designPrice : 0);
   const extraCosts = input.extraCosts ?? 0;
   const profitPercentUsed = input.profitPercentOverride ?? input.settings.profitPercent;
 
@@ -231,6 +239,9 @@ export interface NotebookCostInput {
   /** See `LoosePaperCostInput`'s doc comment — same owner-approved override rules. */
   zincCostOverride?: number;
   printCostOverride?: number;
+  numberingCostOverride?: number;
+  designCostOverride?: number;
+  wasteSheetsOverride?: number;
   profitPercentOverride?: number;
   extraCosts?: number;
 }
@@ -273,10 +284,10 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
   const printRuns = Math.ceil(units / 1000) * input.colorCount;
   const printCost = input.printCostOverride ?? printRuns * input.settings.printRunPrice;
 
-  const sheetsNeeded = Math.ceil(units / calc.calcPiecesPerSheet) + input.settings.wasteSheetsDefault;
+  const sheetsNeeded = Math.ceil(units / calc.calcPiecesPerSheet) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
   const paperCost = sheetsNeeded * input.sheetPrice;
   const zincCost = input.zincCostOverride ?? input.settings.zincPrice * input.colorCount;
-  const designCost = input.isNewDesign ? input.settings.designPrice : 0;
+  const designCost = input.designCostOverride ?? (input.isNewDesign ? input.settings.designPrice : 0);
   const bindingCost = input.bindingPricePerNotebook * input.notebookQuantity;
 
   let numberingRuns = 0;
@@ -290,7 +301,7 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
     });
     const numberingUnits = totalSheetsFlat / numRepeat;
     numberingRuns = Math.ceil(numberingUnits / 1000);
-    numberingCost = numberingRuns * input.settings.numberingRunPrice;
+    numberingCost = input.numberingCostOverride ?? numberingRuns * input.settings.numberingRunPrice;
     // §3.3 — original-only: 100 individually-numbered pages per notebook.
     // original+copies: 50 shared "sets" per notebook (carbon copy shares
     // the original's number regardless of copy count).
@@ -417,6 +428,7 @@ export interface EnvelopeCostInput {
   /** See `LoosePaperCostInput`'s doc comment — same owner-approved override rules. */
   zincCostOverride?: number;
   printCostOverride?: number;
+  designCostOverride?: number;
   profitPercentOverride?: number;
   extraCosts?: number;
 }
@@ -435,7 +447,7 @@ export interface EnvelopeCostResult {
 
 /** §3.6 — envelopes. No size tiering at all — the simplest of the six item kinds. */
 export function calculateEnvelopeCost(input: EnvelopeCostInput): EnvelopeCostResult {
-  const designCost = input.isNewDesign ? input.settings.envelopeDesignPrice : 0;
+  const designCost = input.designCostOverride ?? (input.isNewDesign ? input.settings.envelopeDesignPrice : 0);
   const zincCost = input.zincCostOverride ?? input.settings.envelopeZincPrice * input.colorCount;
   const printRuns = Math.ceil(input.quantity / 1000) * input.colorCount;
   const printCost = input.printCostOverride ?? printRuns * input.settings.envelopePrintRunPrice;
@@ -468,6 +480,8 @@ export interface FolderCostInput {
   /** See `LoosePaperCostInput`'s doc comment — same owner-approved override rules. */
   zincCostOverride?: number;
   printCostOverride?: number;
+  designCostOverride?: number;
+  wasteSheetsOverride?: number;
   profitPercentOverride?: number;
   extraCosts?: number;
 }
@@ -512,6 +526,8 @@ export function calculateFolderCost(input: FolderCostInput): FolderCostResult {
     settings: input.settings,
     zincCostOverride: input.zincCostOverride,
     printCostOverride: input.printCostOverride,
+    designCostOverride: input.designCostOverride,
+    wasteSheetsOverride: input.wasteSheetsOverride,
   });
 
   const selloCost = input.sellophaneEnabled ? base.sheetsNeeded * input.settings.sellophanePricePerSheet : 0;

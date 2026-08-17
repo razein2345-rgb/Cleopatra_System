@@ -177,22 +177,12 @@ export function EmployeeProfilePage() {
                   <th className="p-2">الحضور</th>
                   <th className="p-2">الانصراف</th>
                   <th className="p-2">ملاحظة</th>
+                  <th className="p-2"></th>
                 </tr>
               </thead>
               <tbody>
                 {attendance.map((entry) => (
-                  <tr key={entry.id} className="border-border border-b last:border-0">
-                    <td className="p-2">{new Date(entry.date).toLocaleDateString('ar-EG')}</td>
-                    <td className="p-2">
-                      {entry.checkInAt ? new Date(entry.checkInAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '—'}
-                    </td>
-                    <td className="p-2">
-                      {entry.checkOutAt
-                        ? new Date(entry.checkOutAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
-                        : '—'}
-                    </td>
-                    <td className="p-2">{entry.note || '—'}</td>
-                  </tr>
+                  <AttendanceRow key={entry.id} entry={entry} onChanged={load} />
                 ))}
               </tbody>
             </table>
@@ -653,6 +643,129 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Owner (2026-08-17, "اقدر اعدل مواعيد دخول وخروج العمال من عندي فقط") —
+ * correcting a worker's recorded check-in/check-out time. No `canEdit`
+ * check here: this whole page is already gated to `isSuperAdmin` above, and
+ * the backend enforces the identical restriction independently
+ * (`upsertAttendanceEntryHandler`) — never relying on this UI gate alone.
+ */
+function AttendanceRow({ entry, onChanged }: { entry: AttendanceEntry; onChanged: () => void }) {
+  const [editing, setEditing] = useState(false);
+  return (
+    <tr className="border-border border-b last:border-0">
+      <td className="p-2">{new Date(entry.date).toLocaleDateString('ar-EG')}</td>
+      <td className="p-2">
+        {entry.checkInAt ? new Date(entry.checkInAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '—'}
+      </td>
+      <td className="p-2">
+        {entry.checkOutAt ? new Date(entry.checkOutAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) : '—'}
+      </td>
+      <td className="p-2">{entry.note || '—'}</td>
+      <td className="p-2">
+        <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+          تعديل
+        </Button>
+      </td>
+      {editing && (
+        <EditAttendanceDialog
+          entry={entry}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            onChanged();
+          }}
+        />
+      )}
+    </tr>
+  );
+}
+
+/** `datetime-local` reads/writes in the browser's own local time — matches how an admin actually thinks about "الساعة كام" when correcting a record, no separate timezone math needed. */
+function toLocalInputValue(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function EditAttendanceDialog({ entry, onClose, onSaved }: { entry: AttendanceEntry; onClose: () => void; onSaved: () => void }) {
+  const [checkIn, setCheckIn] = useState(toLocalInputValue(entry.checkInAt));
+  const [checkOut, setCheckOut] = useState(toLocalInputValue(entry.checkOutAt));
+  const [note, setNote] = useState(entry.note ?? '');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPost('/api/attendance', {
+        staffId: entry.staffId,
+        branchId: entry.branchId,
+        date: entry.date,
+        checkInAt: checkIn === '' ? null : new Date(checkIn).toISOString(),
+        checkOutAt: checkOut === '' ? null : new Date(checkOut).toISOString(),
+        note: note.trim() === '' ? null : note.trim(),
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تعديل سجل الحضور');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>تعديل حضور يوم {new Date(entry.date).toLocaleDateString('ar-EG')}</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">موعد الحضور</span>
+            <input
+              type="datetime-local"
+              value={checkIn}
+              onChange={(e) => setCheckIn(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">موعد الانصراف</span>
+            <input
+              type="datetime-local"
+              value={checkOut}
+              onChange={(e) => setCheckOut(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">ملاحظة (اختياري)</span>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'حفظ التعديل'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
