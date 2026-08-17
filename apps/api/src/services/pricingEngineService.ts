@@ -294,10 +294,11 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       if (sheetPrice === undefined) {
         throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no linked sheet price`);
       }
-      // Multi-material (2026-08-17) — resolves COPY_1/COPY_2's own sheet
-      // price when overridden; the original's `sheetPrice` above is what
-      // `calculateNotebookMultiMaterialCost` falls back to for any role
-      // without an override, exactly matching its single-material behavior.
+      // Multi-material (2026-08-17) — resolves each copy's own sheet price
+      // when overridden (owner: "هختار نوع الورق لكل نسخة", so any number
+      // of copies can each get their own independently-chosen paper); the
+      // original's `sheetPrice` above is what `calculateNotebookMultiMaterialCost`
+      // falls back to for any copy without an override.
       const inventoryItemIdByRole: Record<string, string> = { ORIGINAL: pricing.inventoryItemId };
       const materialOverrides: NotebookMaterialOverride[] = (pricing.materials ?? []).map((m) => {
         const overridePrice = ctx.sheetPriceByInventoryItemId.get(m.inventoryItemId);

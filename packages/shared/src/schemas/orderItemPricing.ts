@@ -61,12 +61,15 @@ export const loosePaperPricingInputSchema = z.object({
  * Multi-material notebooks (2026-08-17, owner-approved — CLAUDE.md rule 4).
  * `inventoryItemId` (from `sheetJobFields` above) stays required and is
  * always the "original" page's material, exactly as before. `materials` is
- * an optional override supplying a different material for the copy pages —
- * omitted entirely (the common case) means "same paper as the original",
- * byte-identical to today's single-material behavior.
+ * an optional override supplying a different, independently-chosen material
+ * per copy (owner: "هختار نوع الورق لكل نسخة في الدفتر" — no fixed "first/
+ * middle/last" naming) — `role` is `COPY_1`..`COPY_${copies}`, 1-indexed. A
+ * copy with no matching override entry just uses the original's paper.
+ * Omitted entirely (the common case) means "same paper as the original for
+ * every copy", byte-identical to today's single-material behavior.
  */
 const notebookMaterialOverrideSchema = z.object({
-  role: z.enum(['COPY_1', 'COPY_2']),
+  role: z.string().regex(/^COPY_[1-9]\d*$/),
   inventoryItemId: z.string().uuid(),
 });
 
@@ -77,7 +80,7 @@ export const notebookPricingInputSchema = z.object({
   contentType: z.enum(['ORIGINAL_ONLY', 'ORIGINAL_PLUS_COPIES']),
   copies: z.number().int().nonnegative().optional(),
   bindingPricePerNotebook: z.number().nonnegative(),
-  materials: z.array(notebookMaterialOverrideSchema).max(2).optional(),
+  materials: z.array(notebookMaterialOverrideSchema).max(20).optional(),
   ...marginOverrideFields,
   ...zincPrintOverrideFields,
   ...extraServiceFields,

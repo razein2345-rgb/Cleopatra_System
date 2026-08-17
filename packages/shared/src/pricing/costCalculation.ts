@@ -329,18 +329,21 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
  * CLAUDE.md rule 4). `calculateNotebookCost` above is never touched by this
  * function — it's called exactly once, unmodified, and its `sheetsNeeded`/
  * `zincCost`/`printCost`/`numberingCost`/`bindingCost`/`designCost` are used
- * as-is. Only `paperCost` is redistributed across up to 3 materials
- * (original/copy/second copy), each getting its exact proportional share of
- * the SAME total `sheetsNeeded` (a notebook is built of equal "sets" — one
- * original page + one page per copy — so each present role gets exactly
- * `1/(1+copies)` of the pages). The last present role absorbs the rounding
- * remainder so the three shares always sum to `sheetsNeeded` exactly, never
- * drifting from the unmodified total.
+ * as-is. Only `paperCost` is redistributed across the materials actually in
+ * use — one role per copy, freely named/priced by the caller (owner,
+ * 2026-08-17: "هختار نوع الورق لكل نسخة في الدفتر" — no fixed "first/
+ * middle/last" naming, a genuinely independent material per copy). A
+ * notebook is built of equal "sets" (one original page + one page per
+ * copy), so every present role — the original and each of the `copies`
+ * copies — gets exactly the same weight, `1/(1+copies)` of the pages. The
+ * last role absorbs the rounding remainder so the shares always sum to
+ * `sheetsNeeded` exactly, never drifting from the unmodified total.
  */
-export type NotebookMaterialRole = 'ORIGINAL' | 'COPY_1' | 'COPY_2';
+export type NotebookMaterialRole = string;
 
 export interface NotebookMaterialOverride {
-  role: 'COPY_1' | 'COPY_2';
+  /** `COPY_${n}`, 1-indexed (`COPY_1` is the first copy after the original, ..., `COPY_${copies}` the last). */
+  role: NotebookMaterialRole;
   sheetPrice: number;
 }
 
@@ -356,9 +359,10 @@ export interface NotebookMultiMaterialCostResult extends NotebookCostResult {
 }
 
 /**
- * `materialOverrides` supplies COPY_1/COPY_2's own sheet price when they
- * differ from the original's `input.sheetPrice`. Omitted entirely (the
- * common case today — one paper for the whole notebook) returns `base`
+ * `materialOverrides` supplies a subset of `COPY_1..COPY_${copies}`'s own
+ * sheet price when they differ from the original's `input.sheetPrice`; a
+ * copy with no override simply uses the original's price. Omitted entirely
+ * (the common case today — one paper for the whole notebook) returns `base`
  * untouched, wrapped in a single-role `materials` array — byte-identical to
  * calling `calculateNotebookCost` directly.
  */
@@ -377,28 +381,22 @@ export function calculateNotebookMultiMaterialCost(
 
   const copies = input.copies ?? 0;
   const roles: NotebookMaterialRole[] = ['ORIGINAL'];
-  if (copies >= 1) roles.push('COPY_1');
-  if (copies >= 2) roles.push('COPY_2');
+  for (let i = 1; i <= copies; i++) roles.push(`COPY_${i}`);
 
-  const weights: Record<NotebookMaterialRole, number> = {
-    ORIGINAL: 1,
-    COPY_1: copies >= 1 ? 1 : 0,
-    COPY_2: copies >= 2 ? copies - 1 : 0,
-  };
-  const totalWeight = roles.reduce((sum, role) => sum + weights[role], 0);
+  // Every role (original + each copy) represents exactly one 50-page "set"
+  // slot, so they all carry equal weight — no role is bigger than another.
+  const totalWeight = roles.length;
 
-  const priceByRole: Record<NotebookMaterialRole, number> = {
-    ORIGINAL: input.sheetPrice,
-    COPY_1: materialOverrides.find((m) => m.role === 'COPY_1')?.sheetPrice ?? input.sheetPrice,
-    COPY_2: materialOverrides.find((m) => m.role === 'COPY_2')?.sheetPrice ?? input.sheetPrice,
-  };
+  const priceByRole = new Map<NotebookMaterialRole, number>();
+  priceByRole.set('ORIGINAL', input.sheetPrice);
+  for (const override of materialOverrides) priceByRole.set(override.role, override.sheetPrice);
 
   let allocated = 0;
   const materials: NotebookMaterialBreakdown[] = roles.map((role, idx) => {
     const isLast = idx === roles.length - 1;
-    const sheetsNeeded = isLast ? base.sheetsNeeded - allocated : Math.floor((base.sheetsNeeded * weights[role]) / totalWeight);
+    const sheetsNeeded = isLast ? base.sheetsNeeded - allocated : Math.floor(base.sheetsNeeded / totalWeight);
     allocated += sheetsNeeded;
-    const sheetPrice = priceByRole[role];
+    const sheetPrice = priceByRole.get(role) ?? input.sheetPrice;
     return { role, sheetsNeeded, sheetPrice, paperCost: sheetsNeeded * sheetPrice };
   });
 

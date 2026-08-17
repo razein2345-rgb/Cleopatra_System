@@ -57,12 +57,17 @@ interface OffsetItemBreakdown {
   materials?: { role: string; paperName: string | null; sheetsNeeded: number }[];
 }
 
-/** Multi-material NOTEBOOK (2026-08-17) — Arabic labels for the fixed material roles, same mapping `NewOrderPage.tsx` uses for its live preview. */
-const NOTEBOOK_MATERIAL_ROLE_LABELS: Record<string, string> = {
-  ORIGINAL: 'الأصل',
-  COPY_1: 'الصورة',
-  COPY_2: 'الصورة التانية',
-};
+/**
+ * Multi-material NOTEBOOK (2026-08-17, owner: "هختار نوع الورق لكل نسخة")
+ * — Arabic label for a material role, same rule `NewOrderPage.tsx` uses for
+ * its live preview. `role` is either `'ORIGINAL'` or `COPY_${n}` (1-indexed,
+ * one per copy — no fixed count/naming).
+ */
+function notebookMaterialRoleLabel(role: string): string {
+  if (role === 'ORIGINAL') return 'الأصل';
+  const match = /^COPY_(\d+)$/.exec(role);
+  return match ? `نسخة ${match[1]}` : role;
+}
 
 function offsetBreakdown(item: OrderItem): OffsetItemBreakdown {
   return (item.breakdown as OffsetItemBreakdown | null) ?? {};
@@ -132,7 +137,7 @@ function OffsetItemCard({
         b.materials.map((m, i) => (
           <div key={`${m.role}-${i}`} className="border-border flex flex-wrap gap-4 border-b py-1.5">
             <span>
-              <span className="text-muted-foreground">نوع ورق {NOTEBOOK_MATERIAL_ROLE_LABELS[m.role] ?? m.role} :</span>{' '}
+              <span className="text-muted-foreground">نوع ورق {notebookMaterialRoleLabel(m.role)} :</span>{' '}
               <span className="font-medium">{m.paperName ?? '—'}</span>
             </span>
             <span>

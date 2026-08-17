@@ -73,12 +73,17 @@ const KIND_LABELS: Record<PricingKind, string> = {
  */
 const SKIPPABLE_DESIGN_TRACKS: ReadonlySet<ProductionTrack> = new Set(['OFFSET', 'DIGITAL', 'SUBLIMATION_GIFTS']);
 
-/** Multi-material notebooks (2026-08-17) — Arabic labels for the fixed NOTEBOOK material roles, shown on the live preview and (via WorkOrderDocumentPage) the printed job-card. */
-const NOTEBOOK_MATERIAL_ROLE_LABELS: Record<string, string> = {
-  ORIGINAL: 'الأصل',
-  COPY_1: 'الصورة',
-  COPY_2: 'الصورة التانية',
-};
+/**
+ * Multi-material notebooks (2026-08-17, owner: "هختار نوع الورق لكل نسخة")
+ * — Arabic label for a NOTEBOOK material role, shown on the live preview
+ * and (via WorkOrderDocumentPage) the printed job-card. `role` is either
+ * `'ORIGINAL'` or `COPY_${n}` (1-indexed, one per copy — no fixed count).
+ */
+function notebookMaterialRoleLabel(role: string): string {
+  if (role === 'ORIGINAL') return 'الأصل';
+  const match = /^COPY_(\d+)$/.exec(role);
+  return match ? `نسخة ${match[1]}` : role;
+}
 
 const BOARD_MATERIAL_LABELS: Record<BoardMaterial, string> = {
   BANNER: 'بنر',
@@ -178,14 +183,14 @@ interface DraftItem {
   copies: string;
   bindingPricePerNotebook: string;
   /**
-   * Multi-material notebooks (2026-08-17, owner: "الاصل خامة والصورة خامة
-   * والصورة التالته خامة تالتة") — empty means "same paper as the
-   * original" (`inventoryItemId` above), matching today's single-material
-   * behavior exactly. Only shown/used when `contentType ===
-   * 'ORIGINAL_PLUS_COPIES'` and `copies` is high enough for that role to exist.
+   * Multi-material notebooks (2026-08-17, owner: "هختار نوع الورق لكل نسخة
+   * في الدفتر") — one independently-choosable paper per copy, `copyMaterials[i]`
+   * is copy #`i+1`'s override (empty = "same paper as the original"
+   * `inventoryItemId` above, matching today's single-material behavior
+   * exactly). Kept in sync with `copies` (resized whenever it changes) —
+   * see `resizeCopyMaterials` below.
    */
-  copy1InventoryItemId: string;
-  copy2InventoryItemId: string;
+  copyMaterials: string[];
   // ENVELOPE
   readyEnvelopePricePerPiece: string;
   // FOLDER
@@ -250,8 +255,7 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     contentType: 'ORIGINAL_ONLY',
     copies: '0',
     bindingPricePerNotebook: '0',
-    copy1InventoryItemId: '',
-    copy2InventoryItemId: '',
+    copyMaterials: [],
     readyEnvelopePricePerPiece: '0',
     sellophaneEnabled: false,
     riza: '',
@@ -332,14 +336,16 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
     case 'NOTEBOOK': {
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.notebookQuantity || !d.colorCount) return null;
       const copies = d.contentType === 'ORIGINAL_PLUS_COPIES' ? toNum(d.copies) : undefined;
-      // Multi-material (2026-08-17) — empty picker = "same paper as the
-      // original", so it's simply omitted rather than sent as an override.
-      const materials: { role: 'COPY_1' | 'COPY_2'; inventoryItemId: string }[] = [];
-      if (d.contentType === 'ORIGINAL_PLUS_COPIES' && (copies ?? 0) >= 1 && d.copy1InventoryItemId) {
-        materials.push({ role: 'COPY_1', inventoryItemId: d.copy1InventoryItemId });
-      }
-      if (d.contentType === 'ORIGINAL_PLUS_COPIES' && (copies ?? 0) >= 2 && d.copy2InventoryItemId) {
-        materials.push({ role: 'COPY_2', inventoryItemId: d.copy2InventoryItemId });
+      // Multi-material (2026-08-17, owner: "هختار نوع الورق لكل نسخة") —
+      // one independent picker per copy; an empty picker = "same paper as
+      // the original", so it's simply omitted rather than sent as an
+      // override (keeps the byte-identical-to-single-material guarantee).
+      const materials: { role: string; inventoryItemId: string }[] = [];
+      if (d.contentType === 'ORIGINAL_PLUS_COPIES') {
+        for (let i = 0; i < (copies ?? 0); i++) {
+          const paperId = d.copyMaterials[i];
+          if (paperId) materials.push({ role: `COPY_${i + 1}`, inventoryItemId: paperId });
+        }
       }
       return {
         kind: 'NOTEBOOK',
@@ -697,8 +703,9 @@ interface StoredBreakdown {
   costPerPiece?: number;
   boshrCostPerPiece?: number;
   extraCosts?: number;
-  // Multi-material NOTEBOOK (2026-08-17) — COPY_1/COPY_2 overrides (and
-  // ORIGINAL itself) frozen by `pricingEngineService.ts`'s NOTEBOOK case.
+  // Multi-material NOTEBOOK (2026-08-17) — one entry per role actually in
+  // use ('ORIGINAL' + one 'COPY_n' per copy that got its own paper), frozen
+  // by `pricingEngineService.ts`'s NOTEBOOK case.
   materials?: { role: string; inventoryItemId: string; sheetsNeeded: number; sheetPrice: number; paperName: string | null }[];
   // Multi-component DIGITAL (2026-08-17) — replaces the single
   // pieceWidthCm/pieceHeightCm/yieldPerQuarter/... fields above for DIGITAL
@@ -783,10 +790,10 @@ function reconstructPricingInput(
       };
     case 'NOTEBOOK': {
       if (!sizeFamilyKey || !realSizeLabel || !inventoryItemId) return null;
-      // Multi-material (2026-08-17) — only COPY_1/COPY_2 become an
+      // Multi-material (2026-08-17) — only the COPY_n roles become an
       // override; ORIGINAL's own material is already `inventoryItemId` above.
       const materials = (b.materials ?? [])
-        .filter((m): m is typeof m & { role: 'COPY_1' | 'COPY_2' } => m.role === 'COPY_1' || m.role === 'COPY_2')
+        .filter((m) => m.role !== 'ORIGINAL')
         .map((m) => ({ role: m.role, inventoryItemId: m.inventoryItemId }));
       return {
         kind: 'NOTEBOOK',
@@ -2164,15 +2171,25 @@ function NewOrderForm({
                   className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 />
               </label>
-              {/* تعدد المواد الخام (2026-08-17، صاحب المشروع: "الاصل خامة
-                  والصورة خامة والصورة التالته خامة تالتة") — فاضي = نفس ورق
-                  الأصل، بالظبط زي السلوك القديم. */}
-              {draft.contentType === 'ORIGINAL_PLUS_COPIES' && toNum(draft.copies) >= 1 && (
-                <label className="space-y-1 text-sm">
-                  <span className="text-muted-foreground">ورق الصورة (لو مختلف عن الأصل)</span>
+            </div>
+          )}
+
+          {/* تعدد المواد الخام (2026-08-17، صاحب المشروع: "هختار نوع الورق
+              لكل نسخة في الدفتر") — خانة مستقلة لكل نسخة كربون، مش أسامي
+              ثابتة (أول/وسط/أخير). فاضي = نفس ورق الأصل، بالظبط زي السلوك
+              القديم لو محدش لمس الخانات دي. */}
+          {draft.kind === 'NOTEBOOK' && draft.contentType === 'ORIGINAL_PLUS_COPIES' && toNum(draft.copies) >= 1 && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {Array.from({ length: toNum(draft.copies) }, (_, i) => (
+                <label key={i} className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">ورق نسخة {i + 1} (لو مختلف عن الأصل)</span>
                   <select
-                    value={draft.copy1InventoryItemId}
-                    onChange={(e) => updateDraft({ copy1InventoryItemId: e.target.value })}
+                    value={draft.copyMaterials[i] ?? ''}
+                    onChange={(e) => {
+                      const next = [...draft.copyMaterials];
+                      next[i] = e.target.value;
+                      updateDraft({ copyMaterials: next });
+                    }}
                     className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                   >
                     <option value="">— زي ورق الأصل —</option>
@@ -2183,24 +2200,7 @@ function NewOrderForm({
                     ))}
                   </select>
                 </label>
-              )}
-              {draft.contentType === 'ORIGINAL_PLUS_COPIES' && toNum(draft.copies) >= 2 && (
-                <label className="space-y-1 text-sm">
-                  <span className="text-muted-foreground">ورق الصورة التانية (لو مختلف)</span>
-                  <select
-                    value={draft.copy2InventoryItemId}
-                    onChange={(e) => updateDraft({ copy2InventoryItemId: e.target.value })}
-                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                  >
-                    <option value="">— زي ورق الأصل —</option>
-                    {paperInventoryItems.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
+              ))}
             </div>
           )}
 
@@ -2208,7 +2208,7 @@ function NewOrderForm({
           {draft.kind === 'NOTEBOOK' && result?.materials && result.materials.length > 1 && (
             <p className="bg-muted/40 rounded-md p-2 text-xs" dir="rtl">
               {result.materials
-                .map((m) => `${NOTEBOOK_MATERIAL_ROLE_LABELS[m.role] ?? m.role}: ${m.sheetsNeeded} فرخ × ${m.sheetPrice.toFixed(2)} = ${money(m.paperCost)} ج.م`)
+                .map((m) => `${notebookMaterialRoleLabel(m.role)}: ${m.sheetsNeeded} فرخ × ${m.sheetPrice.toFixed(2)} = ${money(m.paperCost)} ج.م`)
                 .join(' — ')}
             </p>
           )}
