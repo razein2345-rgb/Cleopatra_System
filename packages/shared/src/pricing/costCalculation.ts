@@ -72,16 +72,41 @@ const NUMBERING_GROUP2_MAP: Record<string, string> = {
  * batching benefit) instead of hard-failing — the exact same graceful
  * degradation `resolveCalcSize` already applies for printing when a family
  * has no group.
+ *
+ * `targetLabelOverride` (owner, 2026-08-17: "بالنسبة للترقيم عايز بردو
+ * انا اللي اقولك مقاس الترقيم وانت تشوف مقاس الورق ده هياخد كام قطعة")
+ * — optional manual override of the numbering target, same "toggle +
+ * value, defaults to automatic" pattern as `resolveCalcSize`'s
+ * `calcLabelOverride`. `repeat` is computed with the exact same
+ * area-ratio/piece-ratio formulas the automatic path already uses.
  */
 export function resolveNumbering(params: {
   familyKey: string;
   realLabel: string;
   families: SizeFamilyInput[];
+  targetLabelOverride?: string;
 }): { repeat: number; targetLabel: string } {
   const family = findFamily(params.families, params.familyKey);
   const realEntry = findEntry(family, params.realLabel);
   if (!realEntry) {
     throw new SizeCalculationError(`Unknown size "${params.realLabel}" in family "${params.familyKey}"`);
+  }
+
+  if (params.targetLabelOverride) {
+    const targetEntry = findEntry(family, params.targetLabelOverride);
+    if (!targetEntry) {
+      throw new SizeCalculationError(`Numbering size "${params.targetLabelOverride}" not found in family "${params.familyKey}"`);
+    }
+    if (params.targetLabelOverride === params.realLabel) {
+      return { repeat: 1, targetLabel: params.targetLabelOverride };
+    }
+    const realAreaOv = parseAreaLabel(params.realLabel);
+    const targetAreaOv = parseAreaLabel(params.targetLabelOverride);
+    const repeatOv =
+      realAreaOv !== null && targetAreaOv !== null
+        ? Math.round(targetAreaOv / realAreaOv)
+        : Math.round(realEntry.piecesPerSheet / targetEntry.piecesPerSheet);
+    return { repeat: repeatOv, targetLabel: params.targetLabelOverride };
   }
 
   const groupKey = getTieringGroupKey(params.familyKey);
@@ -141,6 +166,14 @@ export interface LoosePaperCostInput {
   designCostOverride?: number;
   /** Owner (2026-08-17) — same override treatment for "الهالك" (waste sheets), replacing `settings.wasteSheetsDefault` for this item only. */
   wasteSheetsOverride?: number;
+  /**
+   * Owner (2026-08-17) — manual print/numbering size overrides (see
+   * `resolveCalcSize`/`resolveNumbering`'s own doc comments for the full
+   * rationale). Neither changes any formula — only which size feeds the
+   * existing repeat/sheetsNeeded/printRuns/numberingRuns calculations.
+   */
+  calcSizeOverride?: string;
+  numberingSizeOverride?: string;
   profitPercentOverride?: number;
   extraCosts?: number;
 }
@@ -176,6 +209,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
       jobKind: 'LOOSE_PAPER',
       families: input.families,
       settings: input.settings,
+      calcLabelOverride: input.calcSizeOverride,
     });
     sheetsNeeded = Math.ceil(input.quantity / repeat) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
     printUnits = input.quantity;
@@ -187,6 +221,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
       jobKind: 'LOOSE_PAPER',
       families: input.families,
       settings: input.settings,
+      calcLabelOverride: input.calcSizeOverride,
     });
     printUnits = input.quantity / calc.repeat;
     sheetsNeeded = Math.ceil(printUnits / calc.calcPiecesPerSheet) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
@@ -206,6 +241,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
       familyKey: input.familyKey,
       realLabel: input.realLabel,
       families: input.families,
+      targetLabelOverride: input.numberingSizeOverride,
     });
     const numberingUnits = input.quantity / numRepeat;
     numberingRuns = Math.ceil(numberingUnits / 1000);
@@ -257,6 +293,8 @@ export interface NotebookCostInput {
   numberingCostOverride?: number;
   designCostOverride?: number;
   wasteSheetsOverride?: number;
+  calcSizeOverride?: string;
+  numberingSizeOverride?: string;
   profitPercentOverride?: number;
   extraCosts?: number;
 }
@@ -293,6 +331,7 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
     jobKind: 'NOTEBOOK',
     families: input.families,
     settings: input.settings,
+    calcLabelOverride: input.calcSizeOverride,
   });
 
   const units = totalSheetsFlat / calc.repeat;
@@ -313,6 +352,7 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
       familyKey: input.familyKey,
       realLabel: input.realLabel,
       families: input.families,
+      targetLabelOverride: input.numberingSizeOverride,
     });
     const numberingUnits = totalSheetsFlat / numRepeat;
     numberingRuns = Math.ceil(numberingUnits / 1000);
@@ -497,6 +537,7 @@ export interface FolderCostInput {
   printCostOverride?: number;
   designCostOverride?: number;
   wasteSheetsOverride?: number;
+  calcSizeOverride?: string;
   profitPercentOverride?: number;
   extraCosts?: number;
 }
@@ -543,6 +584,7 @@ export function calculateFolderCost(input: FolderCostInput): FolderCostResult {
     printCostOverride: input.printCostOverride,
     designCostOverride: input.designCostOverride,
     wasteSheetsOverride: input.wasteSheetsOverride,
+    calcSizeOverride: input.calcSizeOverride,
   });
 
   const selloCost = input.sellophaneEnabled ? base.sheetsNeeded * input.settings.sellophanePricePerSheet : 0;

@@ -230,6 +230,20 @@ interface DraftItem {
   designCostOverrideValue: string;
   wasteSheetsOverrideEnabled: boolean;
   wasteSheetsOverrideValue: string;
+  /**
+   * Owner (2026-08-17, "عايز انا اللي اقولك مقاس الطباعة... وتحسب بناءا
+   * عليه عدد الأفرخ وكذلك عدد التراجات" / "بالنسبة للترقيم عايز بردو
+   * انا اللي اقولك مقاس الترقيم") — manual print-size / numbering-size
+   * overrides, same "toggle + value, defaults to automatic" pattern as
+   * the cost overrides above. Values are one of the same size family's
+   * real-size labels (`entries` below), never freeform. مقاس الطباعة
+   * applies to LOOSE_PAPER/NOTEBOOK/FOLDER; مقاس الترقيم only to
+   * LOOSE_PAPER/NOTEBOOK (the only kinds with a numbering concept).
+   */
+  calcSizeOverrideEnabled: boolean;
+  calcSizeOverrideValue: string;
+  numberingSizeOverrideEnabled: boolean;
+  numberingSizeOverrideValue: string;
   // الخدمات الإضافية — every kind
   baggingEnabled: boolean;
   baggingAmount: string;
@@ -298,6 +312,10 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     designCostOverrideValue: '0',
     wasteSheetsOverrideEnabled: false,
     wasteSheetsOverrideValue: '0',
+    calcSizeOverrideEnabled: false,
+    calcSizeOverrideValue: '',
+    numberingSizeOverrideEnabled: false,
+    numberingSizeOverrideValue: '',
     baggingEnabled: false,
     baggingAmount: '0',
     singleAdhesiveEnabled: false,
@@ -357,6 +375,12 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
     ...(d.numberingCostOverrideEnabled ? { numberingCostOverride: toNum(d.numberingCostOverrideValue) } : {}),
     ...(d.wasteSheetsOverrideEnabled ? { wasteSheetsOverride: toNum(d.wasteSheetsOverrideValue) } : {}),
   };
+  // Owner (2026-08-17) — manual print/numbering size overrides. مقاس
+  // الطباعة applies to every isSheetKind kind; مقاس الترقيم only where
+  // numbering exists (LOOSE_PAPER/NOTEBOOK).
+  const calcSize = d.calcSizeOverrideEnabled && d.calcSizeOverrideValue ? { calcSizeOverride: d.calcSizeOverrideValue } : {};
+  const numberingSize =
+    d.numberingSizeOverrideEnabled && d.numberingSizeOverrideValue ? { numberingSizeOverride: d.numberingSizeOverrideValue } : {};
   switch (d.kind) {
     case 'LOOSE_PAPER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -374,6 +398,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...margin,
         ...zpd,
         ...numberingWaste,
+        ...calcSize,
+        ...numberingSize,
       };
     case 'NOTEBOOK': {
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.notebookQuantity || !d.colorCount) return null;
@@ -406,6 +432,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...margin,
         ...zpd,
         ...numberingWaste,
+        ...calcSize,
+        ...numberingSize,
       };
     }
     case 'ENVELOPE':
@@ -440,6 +468,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...margin,
         ...zpd,
         ...(d.wasteSheetsOverrideEnabled ? { wasteSheetsOverride: toNum(d.wasteSheetsOverrideValue) } : {}),
+        ...calcSize,
       };
     case 'BOARDS':
       if (!d.widthCm || !d.heightCm || !d.quantity) return null;
@@ -549,6 +578,12 @@ function draftFromCartLine(line: CartLine): DraftItem {
   d.numberingCostOverrideValue = String(overrides.numberingCostOverride ?? 0);
   d.wasteSheetsOverrideEnabled = overrides.wasteSheetsOverride !== undefined;
   d.wasteSheetsOverrideValue = String(overrides.wasteSheetsOverride ?? 0);
+
+  const sizeOverrides = p as Partial<{ calcSizeOverride: string; numberingSizeOverride: string }>;
+  d.calcSizeOverrideEnabled = sizeOverrides.calcSizeOverride !== undefined;
+  d.calcSizeOverrideValue = sizeOverrides.calcSizeOverride ?? '';
+  d.numberingSizeOverrideEnabled = sizeOverrides.numberingSizeOverride !== undefined;
+  d.numberingSizeOverrideValue = sizeOverrides.numberingSizeOverride ?? '';
 
   switch (p.kind) {
     case 'LOOSE_PAPER':
@@ -715,6 +750,8 @@ function previewItemTotal(
           numberingCostOverride: pricing.numberingCostOverride,
           designCostOverride: pricing.designCostOverride,
           wasteSheetsOverride: pricing.wasteSheetsOverride,
+          calcSizeOverride: pricing.calcSizeOverride,
+          numberingSizeOverride: pricing.numberingSizeOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -749,6 +786,8 @@ function previewItemTotal(
             numberingCostOverride: pricing.numberingCostOverride,
             designCostOverride: pricing.designCostOverride,
             wasteSheetsOverride: pricing.wasteSheetsOverride,
+            calcSizeOverride: pricing.calcSizeOverride,
+            numberingSizeOverride: pricing.numberingSizeOverride,
           },
           materialOverrides.length ? materialOverrides : undefined,
         );
@@ -793,6 +832,7 @@ function previewItemTotal(
           printCostOverride: pricing.printCostOverride,
           designCostOverride: pricing.designCostOverride,
           wasteSheetsOverride: pricing.wasteSheetsOverride,
+          calcSizeOverride: pricing.calcSizeOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -2490,6 +2530,47 @@ function NewOrderForm({
             </div>
           )}
 
+          {/* Owner (2026-08-17, "عايز انا اللي اقولك مقاس الطباعة وانت تشوف المقاس الفعلي هيبقى كام قطعة في مقاس الطباعه... وتحسب بناءا عليه عدد الأفرخ وكذلك عدد التراجات") — manual override of the print/calc size, right after "المقاس" since it's the same sizing concept. Defaults to the system's automatic tiering when off. */}
+          {isSheetKind && (
+            <div
+              className={`space-y-2 rounded-xl border p-3 transition-colors ${
+                draft.calcSizeOverrideEnabled ? 'border-primary/50 bg-primary/5' : 'border-border bg-muted/20 hover:bg-muted/30'
+              }`}
+            >
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                <Checkbox
+                  checked={draft.calcSizeOverrideEnabled}
+                  onCheckedChange={(v) =>
+                    updateDraft({
+                      calcSizeOverrideEnabled: v === true,
+                      calcSizeOverrideValue: v === true ? draft.calcSizeOverrideValue : '',
+                    })
+                  }
+                />
+                <span aria-hidden className="text-base leading-none">🖨️</span>
+                <span>مقاس الطباعة (اختياري)</span>
+              </label>
+              {draft.calcSizeOverrideEnabled ? (
+                <select
+                  value={draft.calcSizeOverrideValue}
+                  onChange={(e) => updateDraft({ calcSizeOverrideValue: e.target.value })}
+                  className="border-primary/40 bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— اختر المقاس اللي هيتطبع عليه —</option>
+                  {entries.map((en) => (
+                    <option key={en.label} value={en.label}>
+                      {en.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-muted-foreground text-xs">
+                  النظام هيحدد الفرخ المناسب تلقائيًا حسب الكمية والمقاس الحقيقي — فعّل ده لو عايز تختاره بنفسك
+                </p>
+              )}
+            </div>
+          )}
+
           {draft.kind === 'LOOSE_PAPER' && (
             <label className="block max-w-xs space-y-1 text-sm">
               <span className="text-muted-foreground">الكمية المطلوبة</span>
@@ -2542,6 +2623,47 @@ function NewOrderForm({
                   className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 />
               </label>
+            </div>
+          )}
+
+          {/* Owner (2026-08-17, "بالنسبة للترقيم عايز بردو انا اللي اقولك مقاس الترقيم وانت تشوف مقاس الورق ده هياخد كام قطعة") — مباشرة بعد "بداية الترقيم" بما إنه امتداد لنفس فكرة الترقيم. LOOSE_PAPER/NOTEBOOK فقط — الوحيدين اللي فيهم ترقيم أصلًا. */}
+          {(draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK') && (
+            <div
+              className={`space-y-2 rounded-xl border p-3 transition-colors ${
+                draft.numberingSizeOverrideEnabled ? 'border-primary/50 bg-primary/5' : 'border-border bg-muted/20 hover:bg-muted/30'
+              }`}
+            >
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                <Checkbox
+                  checked={draft.numberingSizeOverrideEnabled}
+                  onCheckedChange={(v) =>
+                    updateDraft({
+                      numberingSizeOverrideEnabled: v === true,
+                      numberingSizeOverrideValue: v === true ? draft.numberingSizeOverrideValue : '',
+                    })
+                  }
+                />
+                <span aria-hidden className="text-base leading-none">🔢</span>
+                <span>مقاس الترقيم (اختياري)</span>
+              </label>
+              {draft.numberingSizeOverrideEnabled ? (
+                <select
+                  value={draft.numberingSizeOverrideValue}
+                  onChange={(e) => updateDraft({ numberingSizeOverrideValue: e.target.value })}
+                  className="border-primary/40 bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— اختر مقاس الترقيم —</option>
+                  {entries.map((en) => (
+                    <option key={en.label} value={en.label}>
+                      {en.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="text-muted-foreground text-xs">
+                  النظام هيحدد مقاس الترقيم تلقائيًا — فعّل ده لو عايز تختاره بنفسك
+                </p>
+              )}
             </div>
           )}
 

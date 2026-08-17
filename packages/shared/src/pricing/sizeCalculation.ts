@@ -92,6 +92,41 @@ export function findFamily(families: SizeFamilyInput[], familyKey: string): Size
 }
 
 /**
+ * Manual override for `resolveCalcSize`'s automatic calc-size selection
+ * (owner, 2026-08-17: "عايز انا اللي اقولك مقاس الطباعة وانت تشوف المقاس
+ * الفعلي هيبقى كام قطعة... وتحسب بناءا عليه عدد الأفرخ وكذلك عدد
+ * التراجات") — an optional override, defaulting to today's automatic
+ * threshold-based tiering when not set, same "toggle + override value"
+ * pattern as the zinc/print/design/numbering/waste cost overrides. Ignored
+ * for GAYER families (§3.4 — no tiering concept to override there at all).
+ * `repeat`/`calcPiecesPerSheet` downstream are computed with the exact
+ * same two formulas the automatic path already uses (area-ratio, or
+ * piece-count ratio when the labels aren't parseable "WxH" — e.g. A-series)
+ * — only which `calcLabel` feeds them changes.
+ */
+function resolveManualCalcSize(
+  family: SizeFamilyInput,
+  realLabel: string,
+  realEntry: SizeFamilyEntryInput,
+  calcLabel: string,
+): { calcLabel: string; repeat: number; calcPiecesPerSheet: number } {
+  const calcEntry = findEntry(family, calcLabel);
+  if (!calcEntry) {
+    throw new SizeCalculationError(`Print size "${calcLabel}" not found in family "${family.key}"`);
+  }
+  if (calcLabel === realLabel) {
+    return { calcLabel, repeat: 1, calcPiecesPerSheet: calcEntry.piecesPerSheet };
+  }
+  const realArea = parseAreaLabel(realLabel);
+  const calcArea = parseAreaLabel(calcLabel);
+  const repeat =
+    realArea !== null && calcArea !== null
+      ? Math.round(calcArea / realArea)
+      : Math.round(realEntry.piecesPerSheet / calcEntry.piecesPerSheet);
+  return { calcLabel, repeat, calcPiecesPerSheet: calcEntry.piecesPerSheet };
+}
+
+/**
  * Resolves the size a job actually gets produced on ("calc size") and the
  * repeat factor — how many copies of the real (customer-facing) size fit
  * per calc-size unit. This calc size and the internal breakdown must never
@@ -105,6 +140,7 @@ export function resolveCalcSize(params: {
   jobKind: JobKind;
   families: SizeFamilyInput[];
   settings: TieringSettings;
+  calcLabelOverride?: string;
 }): { calcLabel: string; repeat: number; calcPiecesPerSheet: number } {
   const family = findFamily(params.families, params.familyKey);
   const realEntry = findEntry(family, params.realLabel);
@@ -121,6 +157,10 @@ export function resolveCalcSize(params: {
       repeat: realEntry.piecesPerSheet,
       calcPiecesPerSheet: realEntry.piecesPerSheet,
     };
+  }
+
+  if (params.calcLabelOverride) {
+    return resolveManualCalcSize(family, params.realLabel, realEntry, params.calcLabelOverride);
   }
 
   const groupKey = FAMILY_KEY_TO_GROUP[params.familyKey];

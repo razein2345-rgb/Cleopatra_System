@@ -262,6 +262,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         numberingCostOverride: pricing.numberingCostOverride,
         designCostOverride: pricing.designCostOverride,
         wasteSheetsOverride: pricing.wasteSheetsOverride,
+        calcSizeOverride: pricing.calcSizeOverride,
+        numberingSizeOverride: pricing.numberingSizeOverride,
         profitPercentOverride: pricing.profitPercentOverride,
         extraCosts: sumExtraCosts(pricing),
       });
@@ -331,6 +333,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           numberingCostOverride: pricing.numberingCostOverride,
           designCostOverride: pricing.designCostOverride,
           wasteSheetsOverride: pricing.wasteSheetsOverride,
+          calcSizeOverride: pricing.calcSizeOverride,
+          numberingSizeOverride: pricing.numberingSizeOverride,
           profitPercentOverride: pricing.profitPercentOverride,
           extraCosts: sumExtraCosts(pricing),
         },
@@ -420,6 +424,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         printCostOverride: pricing.printCostOverride,
         designCostOverride: pricing.designCostOverride,
         wasteSheetsOverride: pricing.wasteSheetsOverride,
+        calcSizeOverride: pricing.calcSizeOverride,
         profitPercentOverride: pricing.profitPercentOverride,
         extraCosts: sumExtraCosts(pricing),
       });

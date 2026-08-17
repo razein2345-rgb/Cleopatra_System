@@ -53,6 +53,22 @@ const wasteSheetsOverrideFields = {
 };
 
 /**
+ * Owner (2026-08-17, "عايز انا اللي اقولك مقاس الطباعة... وتحسب بناءا
+ * عليه عدد الأفرخ وكذلك عدد التراجات") — manual print-size override,
+ * replacing the automatic tiering-group threshold selection for this item
+ * only; must be one of the same size family's real-size labels. Every
+ * sheet-tiered kind (LOOSE_PAPER/NOTEBOOK/FOLDER) has this concept.
+ */
+const calcSizeOverrideFields = {
+  calcSizeOverride: z.string().trim().min(1).optional(),
+};
+
+/** Owner (2026-08-17, "بالنسبة للترقيم عايز بردو انا اللي اقولك مقاس الترقيم") — manual numbering-target-size override, same treatment as `calcSizeOverrideFields`; only LOOSE_PAPER/NOTEBOOK have a numbering concept at all. */
+const numberingSizeOverrideFields = {
+  numberingSizeOverride: z.string().trim().min(1).optional(),
+};
+
+/**
  * Manual "خدمات إضافية" amounts — تكيس/لاصق بنطة واحدة/لاصق 2 بنطة/نموذج.
  * No fixed price exists for any of these anywhere in the reference docs,
  * so — same treatment as §3.7's riza/jarab/forma/taksir — they're always
@@ -74,6 +90,8 @@ export const loosePaperPricingInputSchema = z.object({
   ...zincPrintOverrideFields,
   ...numberingOverrideFields,
   ...wasteSheetsOverrideFields,
+  ...calcSizeOverrideFields,
+  ...numberingSizeOverrideFields,
   ...extraServiceFields,
 });
 
@@ -105,6 +123,8 @@ export const notebookPricingInputSchema = z.object({
   ...zincPrintOverrideFields,
   ...numberingOverrideFields,
   ...wasteSheetsOverrideFields,
+  ...calcSizeOverrideFields,
+  ...numberingSizeOverrideFields,
   ...extraServiceFields,
 });
 
@@ -137,6 +157,7 @@ export const folderPricingInputSchema = z.object({
   ...marginOverrideFields,
   ...zincPrintOverrideFields,
   ...wasteSheetsOverrideFields,
+  ...calcSizeOverrideFields,
   ...extraServiceFields,
 });
 
