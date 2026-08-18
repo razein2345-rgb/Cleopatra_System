@@ -31,14 +31,16 @@ const marginOverrideFields = {
 
 /**
  * Owner (2026-08-17, "عايز أقدر أعدل سعر الزنك وتراج الطبع وترقيم
- * والتصميم من واجهة الطلبات... ساعات بحتاج أغير لما احب أحسب مناقصة") —
- * `designCostOverride` extends the same 2026-08-10 override rule
- * `zincCostOverride`/`printCostOverride` already carried; kept in the same
- * group since every kind that has zinc/print also has a design cost.
+ * والتصميم من واجهة الطلبات... ساعات بحتاج أغير لما احب أحسب مناقصة",
+ * same-day refinement: "يكون بيحط سعر الزنكاية الواحدة، سعر تراج الطباعة
+ * الواحد") — `zincPriceOverride`/`printRunPriceOverride` replace the
+ * PER-UNIT price (colorCount/printRuns still multiply it, same as the
+ * automatic path), not a pre-multiplied total — less error-prone than
+ * requiring the caller to compute a total by hand.
  */
 const zincPrintOverrideFields = {
-  zincCostOverride: z.number().nonnegative().optional(),
-  printCostOverride: z.number().nonnegative().optional(),
+  zincPriceOverride: z.number().nonnegative().optional(),
+  printRunPriceOverride: z.number().nonnegative().optional(),
   designCostOverride: z.number().nonnegative().optional(),
 };
 
@@ -69,16 +71,19 @@ const numberingSizeOverrideFields = {
 };
 
 /**
- * Manual "خدمات إضافية" amounts — تكيس/لاصق بنطة واحدة/لاصق 2 بنطة/نموذج.
- * No fixed price exists for any of these anywhere in the reference docs,
- * so — same treatment as §3.7's riza/jarab/forma/taksir — they're always
- * caller-entered per item, never a stored constant.
+ * Manual "خدمات إضافية" amounts (owner-managed catalog — see
+ * `ExtraServiceOption` — تغليف/لصق/تكسير/فورمة/whatever the owner adds).
+ * Owner (2026-08-17, "عايز في الإعدادات أقدر أضيف على الخدمات الإضافية
+ * خدمة") — was 4 hardcoded named fields, now a free-form array so a newly
+ * added catalog option needs no schema/code change. No fixed price exists
+ * for any of these anywhere in the reference docs — same treatment as
+ * §3.7's riza/jarab/forma/taksir, always caller-entered per item, never a
+ * stored constant. `label` is a frozen snapshot (same reasoning as
+ * `OrderItem.breakdown`'s other frozen display fields) — renaming a
+ * catalog option later doesn't retroactively change past orders.
  */
 const extraServiceFields = {
-  baggingAmount: z.number().nonnegative().optional(),
-  singleAdhesiveAmount: z.number().nonnegative().optional(),
-  doubleAdhesiveAmount: z.number().nonnegative().optional(),
-  sampleAmount: z.number().nonnegative().optional(),
+  extraServices: z.array(z.object({ label: z.string().min(1), amount: z.number().nonnegative() })).optional(),
 };
 
 export const loosePaperPricingInputSchema = z.object({

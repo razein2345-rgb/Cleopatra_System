@@ -715,6 +715,8 @@ export async function getWorkflowDashboardSummary(
     },
   });
 
+  const avgDeliveryDurationByTrack = await computeAvgDeliveryDurationByTrack();
+
   return {
     totals: {
       activeWorkOrders: activeWorkOrderIds.size,
@@ -727,5 +729,55 @@ export async function getWorkflowDashboardSummary(
     supplierDelays: Array.from(supplierDelays.values()),
     dailyProductionCount,
     failedToday,
+    avgDeliveryDurationByTrack,
   };
+}
+
+/**
+ * Owner (2026-08-17, "متوسط مدة تسليم الاوردر مثلا الاوفست من 3 أيام
+ * لإسبوع، الديجيتال من يوم ليومين") — a read-only aggregate over data that
+ * already exists: how long a WorkflowInstance takes from creation to its
+ * `INSTANCE_COMPLETED` event, grouped by the owning WorkOrder's
+ * `productionTrack`. Global (not department-scoped) — a track spans
+ * several departments, so per-department filtering doesn't apply here the
+ * way it does to the queue-based totals above.
+ */
+async function computeAvgDeliveryDurationByTrack(): Promise<
+  { productionTrack: ProductionTrack; avgHours: number; sampleSize: number }[]
+> {
+  const completed = await prisma.workflowInstance.findMany({
+    where: {
+      status: 'COMPLETED',
+      isDeleted: false,
+      workOrder: { isNot: null },
+    },
+    select: {
+      createdAt: true,
+      workOrder: { select: { productionTrack: true } },
+      events: {
+        where: { eventType: 'INSTANCE_COMPLETED' },
+        orderBy: { occurredAt: 'asc' },
+        take: 1,
+        select: { occurredAt: true },
+      },
+    },
+  });
+
+  const byTrack = new Map<ProductionTrack, { totalHours: number; count: number }>();
+  for (const instance of completed) {
+    const completedEvent = instance.events[0];
+    if (!completedEvent || !instance.workOrder) continue;
+    const hours = (completedEvent.occurredAt.getTime() - instance.createdAt.getTime()) / (1000 * 60 * 60);
+    if (hours < 0) continue;
+    const entry = byTrack.get(instance.workOrder.productionTrack) ?? { totalHours: 0, count: 0 };
+    entry.totalHours += hours;
+    entry.count += 1;
+    byTrack.set(instance.workOrder.productionTrack, entry);
+  }
+
+  return Array.from(byTrack.entries()).map(([productionTrack, { totalHours, count }]) => ({
+    productionTrack,
+    avgHours: totalHours / count,
+    sampleSize: count,
+  }));
 }

@@ -8,6 +8,7 @@ import type {
   CreateOrderInput,
   CreatePaymentInput,
   CreateQuotationInput,
+  ExtraServiceOption,
   Gender,
   InventoryItem,
   Order,
@@ -103,21 +104,14 @@ const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
 const PAYMENT_METHOD_OPTIONS = Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[];
 
 /**
- * The video's "الخدمات الإضافية" checkbox grid — maps 1:1 onto the four
- * manual amount fields every pricing kind's schema already accepts
- * (`extraServiceFields` in orderItemPricing.ts) and every `calculate*Cost`
- * function already sums into `extraCosts` (pricingEngineService.ts's
- * `sumExtraCosts`, mirrored client-side below). No fixed catalog price
- * exists for any of these — a checkbox just reveals the amount field
- * instead of it always being visible, closer to the video's look than a
- * bare number input always on screen.
+ * The "الخدمات الإضافية" checkbox grid — owner (2026-08-17, "عايز في
+ * الإعدادات أقدر أضيف على الخدمات الإضافية خدمة") — was a hardcoded
+ * 4-option array here, now rendered from `draft.extraServices`, itself
+ * built from the admin-managed `ExtraServiceOption` catalog (`extraServiceOptions`
+ * state, fetched from `/api/extra-service-options`). No fixed catalog
+ * price exists for any option — a checkbox just reveals the amount field,
+ * always caller-entered per item, same as before this change.
  */
-const EXTRA_SERVICE_DEFS = [
-  { enabledKey: 'baggingEnabled', amountKey: 'baggingAmount', label: 'تغليف / تكييس' },
-  { enabledKey: 'singleAdhesiveEnabled', amountKey: 'singleAdhesiveAmount', label: 'لصق بنطة واحدة' },
-  { enabledKey: 'doubleAdhesiveEnabled', amountKey: 'doubleAdhesiveAmount', label: 'لصق بنطتين' },
-  { enabledKey: 'sampleEnabled', amountKey: 'sampleAmount', label: 'عينة / نموذج' },
-] as const;
 
 /** One DIGITAL component's own draft fields (2026-08-17) — a magazine's cover/interior each get their own size/Yield/paper, computed fully independently then summed. */
 interface DraftDigitalComponent {
@@ -220,10 +214,10 @@ interface DraftItem {
    * زنك/تراج/تصميم apply to LOOSE_PAPER/NOTEBOOK/ENVELOPE/FOLDER; ترقيم/هالك
    * only to LOOSE_PAPER/NOTEBOOK (the only two kinds with either concept).
    */
-  zincCostOverrideEnabled: boolean;
-  zincCostOverrideValue: string;
-  printCostOverrideEnabled: boolean;
-  printCostOverrideValue: string;
+  zincPriceOverrideEnabled: boolean;
+  zincPriceOverrideValue: string;
+  printRunPriceOverrideEnabled: boolean;
+  printRunPriceOverrideValue: string;
   numberingCostOverrideEnabled: boolean;
   numberingCostOverrideValue: string;
   designCostOverrideEnabled: boolean;
@@ -235,9 +229,11 @@ interface DraftItem {
    * عليه عدد الأفرخ وكذلك عدد التراجات" / "بالنسبة للترقيم عايز بردو
    * انا اللي اقولك مقاس الترقيم") — manual print-size / numbering-size
    * overrides, same "toggle + value, defaults to automatic" pattern as
-   * the cost overrides above. Values are one of the same size family's
-   * real-size labels (`entries` below), never freeform. مقاس الطباعة
-   * applies to LOOSE_PAPER/NOTEBOOK/FOLDER; مقاس الترقيم only to
+   * the cost overrides above. Same-day follow-up ("لا يحصرني في المقاسات
+   * الموجودة"): free-text, not limited to the family's own real-size
+   * labels — any "عرض×ارتفاع" string works (`entries` below is offered
+   * as `<datalist>` suggestions only, not a hard constraint). مقاس
+   * الطباعة applies to LOOSE_PAPER/NOTEBOOK/FOLDER; مقاس الترقيم only to
    * LOOSE_PAPER/NOTEBOOK (the only kinds with a numbering concept).
    */
   calcSizeOverrideEnabled: boolean;
@@ -255,15 +251,15 @@ interface DraftItem {
   originalPagesOverrideValue: string;
   copyPagesOverrideEnabled: boolean;
   copyPagesOverrideValue: string;
-  // الخدمات الإضافية — every kind
-  baggingEnabled: boolean;
-  baggingAmount: string;
-  singleAdhesiveEnabled: boolean;
-  singleAdhesiveAmount: string;
-  doubleAdhesiveEnabled: boolean;
-  doubleAdhesiveAmount: string;
-  sampleEnabled: boolean;
-  sampleAmount: string;
+  /**
+   * الخدمات الإضافية — every kind. Owner (2026-08-17, "عايز في الإعدادات
+   * أقدر أضيف على الخدمات الإضافية خدمة") — was 4 fixed checkboxes, now
+   * one row per active `ExtraServiceOption` from the admin-managed catalog
+   * (`extraServiceOptions`), built fresh in `emptyDraftItem`/on catalog
+   * load so a newly added option shows up without a page reload once
+   * re-fetched.
+   */
+  extraServices: { optionId: string; label: string; enabled: boolean; amount: string }[];
   // صورة المنتج (اختياري)
   attachmentId: string;
   attachmentUrl: string;
@@ -273,7 +269,7 @@ interface DraftItem {
 }
 
 let draftKeySeq = 0;
-function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
+function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: ExtraServiceOption[] = []): DraftItem {
   draftKeySeq += 1;
   return {
     key: `item-${draftKeySeq}`,
@@ -313,10 +309,10 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     digitalComponents: [emptyDigitalComponent()],
     profitPercentEnabled: false,
     profitPercentOverride: '0',
-    zincCostOverrideEnabled: false,
-    zincCostOverrideValue: '0',
-    printCostOverrideEnabled: false,
-    printCostOverrideValue: '0',
+    zincPriceOverrideEnabled: false,
+    zincPriceOverrideValue: '0',
+    printRunPriceOverrideEnabled: false,
+    printRunPriceOverrideValue: '0',
     numberingCostOverrideEnabled: false,
     numberingCostOverrideValue: '0',
     designCostOverrideEnabled: false,
@@ -331,14 +327,7 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER'): DraftItem {
     originalPagesOverrideValue: '',
     copyPagesOverrideEnabled: false,
     copyPagesOverrideValue: '',
-    baggingEnabled: false,
-    baggingAmount: '0',
-    singleAdhesiveEnabled: false,
-    singleAdhesiveAmount: '0',
-    doubleAdhesiveEnabled: false,
-    doubleAdhesiveAmount: '0',
-    sampleEnabled: false,
-    sampleAmount: '0',
+    extraServices: extraServiceOptions.map((o) => ({ optionId: o.id, label: o.label, enabled: false, amount: '0' })),
     attachmentId: '',
     attachmentUrl: '',
     attachmentFileName: '',
@@ -351,27 +340,13 @@ const toNum = (v: string): number => (v.trim() === '' ? 0 : Number(v));
 const toOptionalNum = (v: string): number | undefined => (v.trim() === '' ? undefined : Number(v));
 
 function extraServiceFieldsOf(d: DraftItem) {
-  return {
-    baggingAmount: d.baggingEnabled ? toNum(d.baggingAmount) : undefined,
-    singleAdhesiveAmount: d.singleAdhesiveEnabled ? toNum(d.singleAdhesiveAmount) : undefined,
-    doubleAdhesiveAmount: d.doubleAdhesiveEnabled ? toNum(d.doubleAdhesiveAmount) : undefined,
-    sampleAmount: d.sampleEnabled ? toNum(d.sampleAmount) : undefined,
-  };
+  const enabled = d.extraServices.filter((s) => s.enabled && toNum(s.amount) > 0);
+  return { extraServices: enabled.length > 0 ? enabled.map((s) => ({ label: s.label, amount: toNum(s.amount) })) : undefined };
 }
 
-/** Client mirror of `pricingEngineService.ts`'s `sumExtraCosts` — same four fields, same summing, used only for the live preview. */
-function sumExtraCosts(pricing: {
-  baggingAmount?: number;
-  singleAdhesiveAmount?: number;
-  doubleAdhesiveAmount?: number;
-  sampleAmount?: number;
-}): number {
-  return (
-    (pricing.baggingAmount ?? 0) +
-    (pricing.singleAdhesiveAmount ?? 0) +
-    (pricing.doubleAdhesiveAmount ?? 0) +
-    (pricing.sampleAmount ?? 0)
-  );
+/** Client mirror of `pricingEngineService.ts`'s `sumExtraCosts`, used only for the live preview. */
+function sumExtraCosts(pricing: { extraServices?: { label: string; amount: number }[] }): number {
+  return (pricing.extraServices ?? []).reduce((sum, s) => sum + s.amount, 0);
 }
 
 /** Narrows a `DraftItem` into a real `OrderItemPricingInput` — returns null while required fields for that kind aren't filled in yet (not an error, just "not priceable yet"). */
@@ -382,8 +357,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
   // زنك/تراج/تصميم apply to every hasPrintSection kind; ترقيم/هالك only to
   // LOOSE_PAPER/NOTEBOOK (the only two with either concept at all).
   const zpd = {
-    ...(d.zincCostOverrideEnabled ? { zincCostOverride: toNum(d.zincCostOverrideValue) } : {}),
-    ...(d.printCostOverrideEnabled ? { printCostOverride: toNum(d.printCostOverrideValue) } : {}),
+    ...(d.zincPriceOverrideEnabled ? { zincPriceOverride: toNum(d.zincPriceOverrideValue) } : {}),
+    ...(d.printRunPriceOverrideEnabled ? { printRunPriceOverride: toNum(d.printRunPriceOverrideValue) } : {}),
     ...(d.designCostOverrideEnabled ? { designCostOverride: toNum(d.designCostOverrideValue) } : {}),
   };
   const numberingWaste = {
@@ -545,9 +520,9 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
  * — so this just walks the same fields `buildPricingInput` reads,
  * backwards, no inference needed.
  */
-function draftFromCartLine(line: CartLine): DraftItem {
+function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOption[]): DraftItem {
   const p = line.pricing;
-  const d = emptyDraftItem(p.kind);
+  const d = emptyDraftItem(p.kind, extraServiceOptions);
   d.key = line.key;
   d.itemType = line.itemType;
   d.notes = line.notes ?? '';
@@ -561,38 +536,43 @@ function draftFromCartLine(line: CartLine): DraftItem {
   d.attachmentUrl = line.attachmentUrl ?? '';
   d.attachmentFileName = line.attachmentUrl ? d.attachmentFileName : '';
 
-  // extraServiceFieldsOf's inverse — every kind may carry these four.
-  const extra = p as Partial<{
-    baggingAmount: number;
-    singleAdhesiveAmount: number;
-    doubleAdhesiveAmount: number;
-    sampleAmount: number;
-  }>;
-  d.baggingEnabled = extra.baggingAmount !== undefined;
-  d.baggingAmount = String(extra.baggingAmount ?? 0);
-  d.singleAdhesiveEnabled = extra.singleAdhesiveAmount !== undefined;
-  d.singleAdhesiveAmount = String(extra.singleAdhesiveAmount ?? 0);
-  d.doubleAdhesiveEnabled = extra.doubleAdhesiveAmount !== undefined;
-  d.doubleAdhesiveAmount = String(extra.doubleAdhesiveAmount ?? 0);
-  d.sampleEnabled = extra.sampleAmount !== undefined;
-  d.sampleAmount = String(extra.sampleAmount ?? 0);
+  // extraServiceFields's inverse — matches stored entries back to the
+  // current catalog by label. A stored entry whose label no longer exists
+  // in the catalog (renamed/deleted since) is kept as its own row anyway —
+  // dropping it would silently lose real money off the item's total.
+  const storedExtraServices = (p as Partial<{ extraServices: { label: string; amount: number }[] }>).extraServices ?? [];
+  const matchedLabels = new Set<string>();
+  for (const stored of storedExtraServices) {
+    const row = d.extraServices.find((r) => r.label === stored.label);
+    if (row) {
+      row.enabled = true;
+      row.amount = String(stored.amount);
+      matchedLabels.add(stored.label);
+    }
+  }
+  for (const stored of storedExtraServices) {
+    if (!matchedLabels.has(stored.label)) {
+      d.extraServices.push({ optionId: '', label: stored.label, enabled: true, amount: String(stored.amount) });
+      matchedLabels.add(stored.label);
+    }
+  }
 
   // margin/zpd/numberingWaste's inverse — only the kinds that ever set
   // them will have a defined value here, everything else stays disabled.
   const overrides = p as Partial<{
     profitPercentOverride: number;
-    zincCostOverride: number;
-    printCostOverride: number;
+    zincPriceOverride: number;
+    printRunPriceOverride: number;
     designCostOverride: number;
     numberingCostOverride: number;
     wasteSheetsOverride: number;
   }>;
   d.profitPercentEnabled = overrides.profitPercentOverride !== undefined;
   d.profitPercentOverride = String(overrides.profitPercentOverride ?? 0);
-  d.zincCostOverrideEnabled = overrides.zincCostOverride !== undefined;
-  d.zincCostOverrideValue = String(overrides.zincCostOverride ?? 0);
-  d.printCostOverrideEnabled = overrides.printCostOverride !== undefined;
-  d.printCostOverrideValue = String(overrides.printCostOverride ?? 0);
+  d.zincPriceOverrideEnabled = overrides.zincPriceOverride !== undefined;
+  d.zincPriceOverrideValue = String(overrides.zincPriceOverride ?? 0);
+  d.printRunPriceOverrideEnabled = overrides.printRunPriceOverride !== undefined;
+  d.printRunPriceOverrideValue = String(overrides.printRunPriceOverride ?? 0);
   d.designCostOverrideEnabled = overrides.designCostOverride !== undefined;
   d.designCostOverrideValue = String(overrides.designCostOverride ?? 0);
   d.numberingCostOverrideEnabled = overrides.numberingCostOverride !== undefined;
@@ -771,8 +751,8 @@ function previewItemTotal(
           settings: ctx.pricingConstants,
           extraCosts,
           profitPercentOverride: pricing.profitPercentOverride,
-          zincCostOverride: pricing.zincCostOverride,
-          printCostOverride: pricing.printCostOverride,
+          zincPriceOverride: pricing.zincPriceOverride,
+          printRunPriceOverride: pricing.printRunPriceOverride,
           numberingCostOverride: pricing.numberingCostOverride,
           designCostOverride: pricing.designCostOverride,
           wasteSheetsOverride: pricing.wasteSheetsOverride,
@@ -807,8 +787,8 @@ function previewItemTotal(
             settings: ctx.pricingConstants,
             extraCosts,
             profitPercentOverride: pricing.profitPercentOverride,
-            zincCostOverride: pricing.zincCostOverride,
-            printCostOverride: pricing.printCostOverride,
+            zincPriceOverride: pricing.zincPriceOverride,
+            printRunPriceOverride: pricing.printRunPriceOverride,
             numberingCostOverride: pricing.numberingCostOverride,
             designCostOverride: pricing.designCostOverride,
             wasteSheetsOverride: pricing.wasteSheetsOverride,
@@ -830,8 +810,8 @@ function previewItemTotal(
           settings: ctx.pricingConstants,
           extraCosts,
           profitPercentOverride: pricing.profitPercentOverride,
-          zincCostOverride: pricing.zincCostOverride,
-          printCostOverride: pricing.printCostOverride,
+          zincPriceOverride: pricing.zincPriceOverride,
+          printRunPriceOverride: pricing.printRunPriceOverride,
           designCostOverride: pricing.designCostOverride,
         });
         return { total: r.total, error: null, result: r };
@@ -856,8 +836,8 @@ function previewItemTotal(
           settings: ctx.pricingConstants,
           extraCosts,
           profitPercentOverride: pricing.profitPercentOverride,
-          zincCostOverride: pricing.zincCostOverride,
-          printCostOverride: pricing.printCostOverride,
+          zincPriceOverride: pricing.zincPriceOverride,
+          printRunPriceOverride: pricing.printRunPriceOverride,
           designCostOverride: pricing.designCostOverride,
           wasteSheetsOverride: pricing.wasteSheetsOverride,
           calcSizeOverride: pricing.calcSizeOverride,
@@ -1059,9 +1039,9 @@ interface StoredBreakdown {
  * `bindingPricePerNotebook` rate — approximated from `bindingCost`) and
  * are lost on edit; acceptable given the chosen semantics recompute
  * against current settings anyway, not preserve a frozen calculation
- * verbatim. The four extra-service amounts collapse into one
- * `sampleAmount` bucket — their sum survives, which original checkbox
- * they were under doesn't.
+ * verbatim. The extra-service amounts collapse into one generic row —
+ * their sum survives (as a single `extraServices` entry), which named
+ * catalog option(s) they were originally split across doesn't.
  */
 function inferStoredKind(sizeFamilyKey: string | null, breakdown: StoredBreakdown): PricingKind | null {
   if (breakdown.kind === 'PRODUCT' || breakdown.kind === 'SERVICE' || breakdown.kind === 'INVENTORY_RETAIL') return breakdown.kind;
@@ -1084,7 +1064,7 @@ function reconstructPricingInput(
   realSizeLabel: string | null,
   inventoryItemId: string | null,
 ): OrderItemPricingInput | null {
-  const extra = b.extraCosts ? { sampleAmount: b.extraCosts } : {};
+  const extra = b.extraCosts ? { extraServices: [{ label: 'خدمات إضافية', amount: b.extraCosts }] } : {};
   switch (kind) {
     case 'LOOSE_PAPER':
       if (!sizeFamilyKey || !realSizeLabel || !inventoryItemId) return null;
@@ -1296,6 +1276,7 @@ export function NewOrderPage() {
   const [services, setServices] = useState<Service[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [pricingReference, setPricingReference] = useState<PricingReference | null>(null);
+  const [extraServiceOptions, setExtraServiceOptions] = useState<ExtraServiceOption[]>([]);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
   const [editQuotation, setEditQuotation] = useState<Quotation | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1310,16 +1291,18 @@ export function NewOrderPage() {
       apiGet<Service[]>('/api/services').catch(() => []),
       apiGet<InventoryItem[]>('/api/inventory-items').catch(() => []),
       apiGet<PricingReference>('/api/pricing-reference'),
+      apiGet<ExtraServiceOption[]>('/api/extra-service-options').catch(() => []),
       editOrderId ? apiGet<Order>(`/api/orders/${editOrderId}`) : Promise.resolve(null),
       editQuotationId ? apiGet<Quotation>(`/api/quotations/${editQuotationId}`) : Promise.resolve(null),
     ])
-      .then(([p, b, rp, s, inv, pricing, order, quotation]) => {
+      .then(([p, b, rp, s, inv, pricing, extraServices, order, quotation]) => {
         setPartners(p);
         setBranches(b);
         setReadyProducts(rp);
         setServices(s);
         setInventoryItems(inv);
         setPricingReference(pricing);
+        setExtraServiceOptions(extraServices.filter((o) => o.isActive));
         setEditOrder(order);
         setEditQuotation(quotation);
       })
@@ -1402,6 +1385,7 @@ export function NewOrderPage() {
       services={services}
       inventoryItems={inventoryItems}
       pricingReference={pricingReference}
+      extraServiceOptions={extraServiceOptions}
       onCreated={setCreated}
       editOrder={editOrder}
       editQuotation={editQuotation}
@@ -1562,6 +1546,7 @@ function NewOrderForm({
   services,
   inventoryItems,
   pricingReference,
+  extraServiceOptions,
   onCreated,
   editOrder,
   editQuotation,
@@ -1573,6 +1558,7 @@ function NewOrderForm({
   services: Service[];
   inventoryItems: InventoryItem[];
   pricingReference: PricingReference;
+  extraServiceOptions: ExtraServiceOption[];
   onCreated: (result: CreatedResult) => void;
   /** FEATURE-007 — full item-replacement edit (owner, 2026-08-12: "استبدال كامل للأصناف"). Present only when reached via `/orders/new?editOrder=<id>`. */
   editOrder?: Order | null;
@@ -1633,7 +1619,7 @@ function NewOrderForm({
   // FEATURE-009 (2026-08-13) — الأقسام الرئيسية والفرعية، مبنية على ORDER_ITEM_CATEGORIES.
   const [activeParentId, setActiveParentId] = useState('OFFSET');
   const [activeSubTabId, setActiveSubTabId] = useState<string | undefined>('LOOSE_PAPER');
-  const [draft, setDraft] = useState<DraftItem>(() => emptyDraftItem());
+  const [draft, setDraft] = useState<DraftItem>(() => emptyDraftItem('LOOSE_PAPER', extraServiceOptions));
   const [itemError, setItemError] = useState<string | null>(null);
   /** Owner (2026-08-17, "عايز لما ادوس على بند في السلة... أقدر أعدل عليه") — the `CartLine.key` currently loaded into the composer for editing, or null when composing a brand-new item. `addToCart` checks this to decide "update in place" vs "append". */
   const [editingKey, setEditingKey] = useState<string | null>(null);
@@ -1727,7 +1713,7 @@ function NewOrderForm({
     setActiveSubTabId(resolvedSubTabId);
     if (parent.status === 'pending') return;
     const kind = parent.kind ?? parent.subTabs?.find((s) => s.id === resolvedSubTabId)?.kind;
-    if (kind) setDraft(emptyDraftItem(kind));
+    if (kind) setDraft(emptyDraftItem(kind, extraServiceOptions));
   };
 
   const familyEntries = (familyKey: string): SizeFamily['entries'] =>
@@ -1799,7 +1785,7 @@ function NewOrderForm({
     } else {
       setCart((prev) => [...prev, line]);
     }
-    setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER'));
+    setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER', extraServiceOptions));
   };
 
   const removeFromCart = (key: string) => {
@@ -1807,7 +1793,7 @@ function NewOrderForm({
     // The line being edited was just deleted out from under the composer — drop back to a fresh item instead of "saving" would silently resurrect it.
     if (editingKey === key) {
       setEditingKey(null);
-      setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER'));
+      setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER', extraServiceOptions));
     }
   };
 
@@ -1817,14 +1803,14 @@ function NewOrderForm({
     const category = findCategoryForKind(line.pricing.kind, serviceCategory, line.productionTrack);
     setActiveParentId(category.parentId);
     setActiveSubTabId(category.subTabId);
-    setDraft(draftFromCartLine(line));
+    setDraft(draftFromCartLine(line, extraServiceOptions));
     setEditingKey(line.key);
     setItemError(null);
   };
 
   const cancelEditingLine = () => {
     setEditingKey(null);
-    setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER'));
+    setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER', extraServiceOptions));
     setItemError(null);
   };
 
@@ -2115,40 +2101,44 @@ function NewOrderForm({
             <p className="text-muted-foreground text-xs font-medium">تعديل يدوي على بنود التكلفة (لحالات زي المناقصات)</p>
             <div className="flex flex-wrap items-center gap-2">
               <Checkbox
-                checked={draft.zincCostOverrideEnabled}
-                onCheckedChange={(v) => updateDraft({ zincCostOverrideEnabled: v === true })}
+                checked={draft.zincPriceOverrideEnabled}
+                onCheckedChange={(v) => updateDraft({ zincPriceOverrideEnabled: v === true })}
               />
-              <span className="text-sm">تكلفة الزنك</span>
-              {draft.zincCostOverrideEnabled ? (
+              <span className="text-sm">سعر الزنكاية الواحدة</span>
+              {draft.zincPriceOverrideEnabled ? (
                 <input
                   type="number"
                   min={0}
                   step="0.01"
-                  value={draft.zincCostOverrideValue}
-                  onChange={(e) => updateDraft({ zincCostOverrideValue: e.target.value })}
+                  value={draft.zincPriceOverrideValue}
+                  onChange={(e) => updateDraft({ zincPriceOverrideValue: e.target.value })}
                   className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
                 />
               ) : (
-                <span className="text-muted-foreground text-xs">المحسوب تلقائيًا: {money(result?.zincCost ?? 0)} ج.م</span>
+                <span className="text-muted-foreground text-xs">
+                  الافتراضي من الإعدادات: {pricingReference.pricingConstants.zincPrice} ج.م
+                </span>
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Checkbox
-                checked={draft.printCostOverrideEnabled}
-                onCheckedChange={(v) => updateDraft({ printCostOverrideEnabled: v === true })}
+                checked={draft.printRunPriceOverrideEnabled}
+                onCheckedChange={(v) => updateDraft({ printRunPriceOverrideEnabled: v === true })}
               />
-              <span className="text-sm">تكلفة تراج الطبع</span>
-              {draft.printCostOverrideEnabled ? (
+              <span className="text-sm">سعر تراج الطباعة الواحد</span>
+              {draft.printRunPriceOverrideEnabled ? (
                 <input
                   type="number"
                   min={0}
                   step="0.01"
-                  value={draft.printCostOverrideValue}
-                  onChange={(e) => updateDraft({ printCostOverrideValue: e.target.value })}
+                  value={draft.printRunPriceOverrideValue}
+                  onChange={(e) => updateDraft({ printRunPriceOverrideValue: e.target.value })}
                   className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
                 />
               ) : (
-                <span className="text-muted-foreground text-xs">المحسوب تلقائيًا: {money(result?.printCost ?? 0)} ج.م</span>
+                <span className="text-muted-foreground text-xs">
+                  الافتراضي من الإعدادات: {pricingReference.pricingConstants.printRunPrice} ج.م
+                </span>
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -2579,18 +2569,21 @@ function NewOrderForm({
                 <span>مقاس الطباعة (اختياري)</span>
               </label>
               {draft.calcSizeOverrideEnabled ? (
-                <select
-                  value={draft.calcSizeOverrideValue}
-                  onChange={(e) => updateDraft({ calcSizeOverrideValue: e.target.value })}
-                  className="border-primary/40 bg-background w-full rounded-md border px-3 py-2 text-sm"
-                >
-                  <option value="">— اختر المقاس اللي هيتطبع عليه —</option>
-                  {entries.map((en) => (
-                    <option key={en.label} value={en.label}>
-                      {en.label}
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <input
+                    type="text"
+                    list="calc-size-suggestions"
+                    value={draft.calcSizeOverrideValue}
+                    onChange={(e) => updateDraft({ calcSizeOverrideValue: e.target.value })}
+                    placeholder="اكتب المقاس — مثال: 33×48"
+                    className="border-primary/40 bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                  <datalist id="calc-size-suggestions">
+                    {entries.map((en) => (
+                      <option key={en.label} value={en.label} />
+                    ))}
+                  </datalist>
+                </>
               ) : (
                 <p className="text-muted-foreground text-xs">
                   النظام هيحدد الفرخ المناسب تلقائيًا حسب الكمية والمقاس الحقيقي — فعّل ده لو عايز تختاره بنفسك
@@ -2675,18 +2668,21 @@ function NewOrderForm({
                 <span>مقاس الترقيم (اختياري)</span>
               </label>
               {draft.numberingSizeOverrideEnabled ? (
-                <select
-                  value={draft.numberingSizeOverrideValue}
-                  onChange={(e) => updateDraft({ numberingSizeOverrideValue: e.target.value })}
-                  className="border-primary/40 bg-background w-full rounded-md border px-3 py-2 text-sm"
-                >
-                  <option value="">— اختر مقاس الترقيم —</option>
-                  {entries.map((en) => (
-                    <option key={en.label} value={en.label}>
-                      {en.label}
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <input
+                    type="text"
+                    list="numbering-size-suggestions"
+                    value={draft.numberingSizeOverrideValue}
+                    onChange={(e) => updateDraft({ numberingSizeOverrideValue: e.target.value })}
+                    placeholder="اكتب مقاس الترقيم — مثال: 33×48"
+                    className="border-primary/40 bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                  <datalist id="numbering-size-suggestions">
+                    {entries.map((en) => (
+                      <option key={en.label} value={en.label} />
+                    ))}
+                  </datalist>
+                </>
               ) : (
                 <p className="text-muted-foreground text-xs">
                   النظام هيحدد مقاس الترقيم تلقائيًا — فعّل ده لو عايز تختاره بنفسك
@@ -3364,32 +3360,45 @@ function NewOrderForm({
             </p>
           )}
 
-          {/* الخدمات الإضافية */}
+          {/* الخدمات الإضافية — قائمة قابلة للإدارة من الإعدادات (owner, 2026-08-17) */}
           <div className="space-y-2">
             <p className="text-sm font-medium">الخدمات الإضافية</p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {EXTRA_SERVICE_DEFS.map((def) => {
-                const enabled = draft[def.enabledKey];
-                return (
-                  <div key={def.enabledKey} className="border-border flex flex-col gap-1 rounded-lg border p-2">
-                    <label className="flex items-center gap-2 text-sm">
-                      <Checkbox checked={enabled} onCheckedChange={(v) => updateDraft({ [def.enabledKey]: v === true } as Partial<DraftItem>)} />
-                      {def.label}
-                    </label>
-                    {enabled && (
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        placeholder="المبلغ"
-                        value={draft[def.amountKey]}
-                        onChange={(e) => updateDraft({ [def.amountKey]: e.target.value } as Partial<DraftItem>)}
-                        className="border-input bg-background w-full rounded-md border px-2 py-1 text-end text-xs"
-                      />
-                    )}
-                  </div>
-                );
-              })}
+              {draft.extraServices.map((row, idx) => (
+                <div key={row.optionId || row.label} className="border-border flex flex-col gap-1 rounded-lg border p-2">
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={row.enabled}
+                      onCheckedChange={(v) =>
+                        updateDraft({
+                          extraServices: draft.extraServices.map((s, i) => (i === idx ? { ...s, enabled: v === true } : s)),
+                        })
+                      }
+                    />
+                    {row.label}
+                  </label>
+                  {row.enabled && (
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      placeholder="المبلغ"
+                      value={row.amount}
+                      onChange={(e) =>
+                        updateDraft({
+                          extraServices: draft.extraServices.map((s, i) => (i === idx ? { ...s, amount: e.target.value } : s)),
+                        })
+                      }
+                      className="border-input bg-background w-full rounded-md border px-2 py-1 text-end text-xs"
+                    />
+                  )}
+                </div>
+              ))}
+              {draft.extraServices.length === 0 && (
+                <p className="text-muted-foreground col-span-full text-xs">
+                  مفيش خدمات إضافية معرّفة — ضيفها من الإعدادات → إعدادات الطباعة.
+                </p>
+              )}
             </div>
           </div>
 

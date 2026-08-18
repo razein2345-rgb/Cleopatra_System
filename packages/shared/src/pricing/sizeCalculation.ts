@@ -95,14 +95,24 @@ export function findFamily(families: SizeFamilyInput[], familyKey: string): Size
  * Manual override for `resolveCalcSize`'s automatic calc-size selection
  * (owner, 2026-08-17: "عايز انا اللي اقولك مقاس الطباعة وانت تشوف المقاس
  * الفعلي هيبقى كام قطعة... وتحسب بناءا عليه عدد الأفرخ وكذلك عدد
- * التراجات") — an optional override, defaulting to today's automatic
- * threshold-based tiering when not set, same "toggle + override value"
- * pattern as the zinc/print/design/numbering/waste cost overrides. Ignored
- * for GAYER families (§3.4 — no tiering concept to override there at all).
- * `repeat`/`calcPiecesPerSheet` downstream are computed with the exact
- * same two formulas the automatic path already uses (area-ratio, or
- * piece-count ratio when the labels aren't parseable "WxH" — e.g. A-series)
- * — only which `calcLabel` feeds them changes.
+ * التراجات"; extended same day: "لا يحصرني في المقاسات الموجودة" — the
+ * typed size no longer has to be one of the family's catalog entries) —
+ * an optional override, defaulting to today's automatic threshold-based
+ * tiering when not set, same "toggle + override value" pattern as the
+ * zinc/print/design/numbering/waste cost overrides. Ignored for GAYER
+ * families (§3.4 — no tiering concept to override there at all).
+ *
+ * `repeat` is always area-ratio (`parseAreaLabel`, requires a "WxH"-format
+ * label) when the typed size isn't a known catalog entry — the exact same
+ * formula the automatic path already uses for real sizes with a parseable
+ * area, just with no catalog lookup gating it. `calcPiecesPerSheet` for a
+ * genuinely custom size is derived the same way (`realEntry.piecesPerSheet
+ * / repeat`) — this is not a new approximation invented here: it's the
+ * same area-ratio simplification `repeat` itself already relies on,
+ * applied consistently to the one other value that depends on it. A typed
+ * size that DOES match a real catalog entry still uses that entry's own
+ * `piecesPerSheet` (reflects actual cutting-layout knowledge, more
+ * accurate than the ratio) — same as before this extension.
  */
 function resolveManualCalcSize(
   family: SizeFamilyInput,
@@ -111,19 +121,26 @@ function resolveManualCalcSize(
   calcLabel: string,
 ): { calcLabel: string; repeat: number; calcPiecesPerSheet: number } {
   const calcEntry = findEntry(family, calcLabel);
-  if (!calcEntry) {
-    throw new SizeCalculationError(`Print size "${calcLabel}" not found in family "${family.key}"`);
-  }
   if (calcLabel === realLabel) {
-    return { calcLabel, repeat: 1, calcPiecesPerSheet: calcEntry.piecesPerSheet };
+    return { calcLabel, repeat: 1, calcPiecesPerSheet: calcEntry?.piecesPerSheet ?? realEntry.piecesPerSheet };
   }
   const realArea = parseAreaLabel(realLabel);
   const calcArea = parseAreaLabel(calcLabel);
-  const repeat =
-    realArea !== null && calcArea !== null
-      ? Math.round(calcArea / realArea)
-      : Math.round(realEntry.piecesPerSheet / calcEntry.piecesPerSheet);
-  return { calcLabel, repeat, calcPiecesPerSheet: calcEntry.piecesPerSheet };
+
+  if (calcEntry) {
+    const repeat =
+      realArea !== null && calcArea !== null
+        ? Math.round(calcArea / realArea)
+        : Math.round(realEntry.piecesPerSheet / calcEntry.piecesPerSheet);
+    return { calcLabel, repeat, calcPiecesPerSheet: calcEntry.piecesPerSheet };
+  }
+
+  if (realArea === null || calcArea === null) {
+    throw new SizeCalculationError(`مقاس الطباعة "${calcLabel}" — لازم يكون بصيغة "عرض×ارتفاع" لو مش من المقاسات الجاهزة`);
+  }
+  const repeat = Math.max(1, Math.round(calcArea / realArea));
+  const calcPiecesPerSheet = Math.max(1, Math.round(realEntry.piecesPerSheet / repeat));
+  return { calcLabel, repeat, calcPiecesPerSheet };
 }
 
 /**

@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Ban, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
-import type { Department, Machine, ProductionTrack, User, WorkflowPriority, WorkflowQueueItem } from '@cleopatra/shared';
+import type {
+  Department,
+  Machine,
+  ProductionTrack,
+  User,
+  WorkflowDashboardSummary,
+  WorkflowPriority,
+  WorkflowQueueItem,
+} from '@cleopatra/shared';
 import { apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -117,6 +125,18 @@ interface TrackSummary {
   machinesRunning: number;
   machinesTotal: number;
   machinesInMaintenance: number;
+  /** Owner (2026-08-17, "متوسط مدة تسليم الاوردر لكل مسار") — null for DESIGN (not a ProductionTrack) or a track with zero completed jobs yet. */
+  avgDeliveryHours: number | null;
+}
+
+/** e.g. 30 → "يوم و6 ساعات", 4 → "4 ساعات" — matches how the owner phrased it ("من 3 أيام لإسبوع"). */
+function formatDeliveryDuration(hours: number): string {
+  const totalHours = Math.round(hours);
+  const days = Math.floor(totalHours / 24);
+  const remainingHours = totalHours % 24;
+  if (days === 0) return `${remainingHours} ساعة`;
+  if (remainingHours === 0) return `${days} يوم`;
+  return `${days} يوم و${remainingHours} ساعة`;
 }
 
 const PRIORITY_RANK: Record<WorkflowPriority, number> = { LOW: 0, NORMAL: 1, HIGH: 2, URGENT: 3 };
@@ -149,10 +169,16 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
     Promise.all([
       apiGet<Department[]>('/api/departments'),
       apiGet<Machine[]>('/api/machines').catch(() => [] as Machine[]),
+      apiGet<WorkflowDashboardSummary>('/api/workflow-instances/dashboard-summary').catch(
+        () => null as WorkflowDashboardSummary | null,
+      ),
     ])
-      .then(async ([depts, machines]) => {
+      .then(async ([depts, machines, dashboardSummary]) => {
         const designDeptId = depts.find((d) => d.code === 'DESIGN')?.id;
         const trackByDeptId = new Map(depts.map((d) => [d.id, d.productionTrack]));
+        const avgHoursByTrack = new Map(
+          (dashboardSummary?.avgDeliveryDurationByTrack ?? []).map((t) => [t.productionTrack, t.avgHours]),
+        );
         const results = await Promise.all(
           TRACK_TAB_ORDER.map(async (key): Promise<TrackSummary> => {
             const trackMachines = machines.filter((m) =>
@@ -163,15 +189,23 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
               machinesRunning: trackMachines.filter((m) => m.status === 'RUNNING').length,
               machinesInMaintenance: trackMachines.filter((m) => m.status === 'MAINTENANCE').length,
             };
+            const avgDeliveryHours = key === 'DESIGN' ? null : (avgHoursByTrack.get(key) ?? null);
 
             const query = key === 'DESIGN' ? (designDeptId ? `departmentId=${designDeptId}` : null) : `productionTrack=${key}`;
-            if (!query) return { key, running: 0, delayed: 0, topPriority: null, ...machineCounts };
+            if (!query) return { key, running: 0, delayed: 0, topPriority: null, avgDeliveryHours, ...machineCounts };
             const items = await apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?${query}`);
             const topPriority = items.reduce<WorkflowPriority | null>(
               (top, item) => (top === null || PRIORITY_RANK[item.priority] > PRIORITY_RANK[top] ? item.priority : top),
               null,
             );
-            return { key, running: items.length, delayed: items.filter((i) => i.isDelayed).length, topPriority, ...machineCounts };
+            return {
+              key,
+              running: items.length,
+              delayed: items.filter((i) => i.isDelayed).length,
+              topPriority,
+              avgDeliveryHours,
+              ...machineCounts,
+            };
           }),
         );
         setSummaries(results);
@@ -228,6 +262,11 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
               <p className={cn('mt-1 text-sm', s.machinesInMaintenance > 0 ? 'text-warning' : 'text-muted-foreground')}>
                 🔧 {s.machinesRunning}/{s.machinesTotal} ماكينة شغالة
                 {s.machinesInMaintenance > 0 ? ` — ${s.machinesInMaintenance} تحت الصيانة` : ''}
+              </p>
+            )}
+            {s.avgDeliveryHours !== null && (
+              <p className="text-muted-foreground mt-1 text-sm">
+                ⏱ متوسط مدة التسليم: {formatDeliveryDuration(s.avgDeliveryHours)}
               </p>
             )}
             {s.topPriority && (

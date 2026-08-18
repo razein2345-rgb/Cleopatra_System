@@ -210,19 +210,9 @@ export interface ItemPricingResult {
   materials?: ItemPricingMaterial[];
 }
 
-/** Sums the four manual "خدمات إضافية" amounts (bagging/adhesive/sample) — see orderItemPricing.ts's own doc comment. Never a fixed price, always caller-entered. */
-function sumExtraCosts(pricing: {
-  baggingAmount?: number;
-  singleAdhesiveAmount?: number;
-  doubleAdhesiveAmount?: number;
-  sampleAmount?: number;
-}): number {
-  return (
-    (pricing.baggingAmount ?? 0) +
-    (pricing.singleAdhesiveAmount ?? 0) +
-    (pricing.doubleAdhesiveAmount ?? 0) +
-    (pricing.sampleAmount ?? 0)
-  );
+/** Sums the manual "خدمات إضافية" amounts (owner-managed catalog — see orderItemPricing.ts's own doc comment). Never a fixed price, always caller-entered. */
+function sumExtraCosts(pricing: { extraServices?: { label: string; amount: number }[] }): number {
+  return (pricing.extraServices ?? []).reduce((sum, s) => sum + s.amount, 0);
 }
 
 /**
@@ -233,7 +223,7 @@ function sumExtraCosts(pricing: {
  * `packages/shared/src/pricing/*` with real reference data resolved by
  * `buildPricingContext` above.
  *
- * `zincCostOverride`/`printCostOverride`/`profitPercentOverride` are the
+ * `zincPriceOverride`/`printRunPriceOverride`/`profitPercentOverride` are the
  * owner-approved manual-override fields (2026-08-10) — threaded straight
  * through to the pure functions, which already know how to apply them.
  */
@@ -257,8 +247,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         sheetPrice,
         families: ctx.families,
         settings: ctx.pricingConstants,
-        zincCostOverride: pricing.zincCostOverride,
-        printCostOverride: pricing.printCostOverride,
+        zincPriceOverride: pricing.zincPriceOverride,
+        printRunPriceOverride: pricing.printRunPriceOverride,
         numberingCostOverride: pricing.numberingCostOverride,
         designCostOverride: pricing.designCostOverride,
         wasteSheetsOverride: pricing.wasteSheetsOverride,
@@ -328,8 +318,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           sheetPrice,
           families: ctx.families,
           settings: ctx.pricingConstants,
-          zincCostOverride: pricing.zincCostOverride,
-          printCostOverride: pricing.printCostOverride,
+          zincPriceOverride: pricing.zincPriceOverride,
+          printRunPriceOverride: pricing.printRunPriceOverride,
           numberingCostOverride: pricing.numberingCostOverride,
           designCostOverride: pricing.designCostOverride,
           wasteSheetsOverride: pricing.wasteSheetsOverride,
@@ -381,8 +371,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         isNewDesign: pricing.isNewDesign,
         readyEnvelopePricePerPiece: pricing.readyEnvelopePricePerPiece,
         settings: ctx.pricingConstants,
-        zincCostOverride: pricing.zincCostOverride,
-        printCostOverride: pricing.printCostOverride,
+        zincPriceOverride: pricing.zincPriceOverride,
+        printRunPriceOverride: pricing.printRunPriceOverride,
         designCostOverride: pricing.designCostOverride,
         profitPercentOverride: pricing.profitPercentOverride,
         extraCosts: sumExtraCosts(pricing),
@@ -422,8 +412,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         taksir: pricing.taksir,
         families: ctx.families,
         settings: ctx.pricingConstants,
-        zincCostOverride: pricing.zincCostOverride,
-        printCostOverride: pricing.printCostOverride,
+        zincPriceOverride: pricing.zincPriceOverride,
+        printRunPriceOverride: pricing.printRunPriceOverride,
         designCostOverride: pricing.designCostOverride,
         wasteSheetsOverride: pricing.wasteSheetsOverride,
         calcSizeOverride: pricing.calcSizeOverride,

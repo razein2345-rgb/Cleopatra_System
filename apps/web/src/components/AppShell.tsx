@@ -76,12 +76,14 @@ const NAV_ITEMS: NavEntry[] = [
     items: [
       { kind: 'link', to: '/users', label: 'الموظفين', icon: UserCog, permission: 'employees.view' },
       // Owner (2026-08-17): a nav entry point for the attendance Kiosk
-      // (previously URL-only), visible to the Super Admin role only —
-      // mirrors the existing "attendance admin screen restricted to Super
-      // Admin" precedent (UsersPage.tsx's `isSuperAdmin` check). No
-      // `permission` key: this is a role gate, not a grantable permission,
-      // same reasoning as that precedent.
-      { kind: 'link', to: '/attendance/kiosk', label: 'كشك الحضور', icon: MonitorSmartphone, requireSuperAdmin: true },
+      // (previously URL-only). Gated by the existing `attendance.kiosk`
+      // permission (already enforced server-side on the kiosk endpoints,
+      // already grantable to any staff account/role via الأدوار —
+      // e.g. a "مبيعات"/"مخازن" account can be given a kiosk-only role) —
+      // NOT restricted to Super Admin. That's a different, unrelated
+      // precedent (the attendance *admin* screen, which edits payroll-
+      // linked records for every employee and stays Super-Admin-only).
+      { kind: 'link', to: '/attendance/kiosk', label: 'كشك الحضور', icon: MonitorSmartphone, permission: 'attendance.kiosk' },
       { kind: 'link', to: '/roles', label: 'الأدوار', icon: ShieldCheck, permission: 'roles.view' },
       { kind: 'link', to: '/permissions', label: 'الصلاحيات', icon: KeyRound, permission: 'permissions.view' },
       { kind: 'link', to: '/settings', label: 'الإعدادات', icon: SettingsIcon, permission: 'settings.view' },

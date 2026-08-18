@@ -1,10 +1,13 @@
-import { useState } from 'react';
-import { MapContainer, Marker, TileLayer, useMapEvents } from 'react-leaflet';
+import { useEffect, useState } from 'react';
+import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
+import { Search } from 'lucide-react';
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import 'leaflet/dist/leaflet.css';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 // Vite bundles Leaflet's default marker icon URLs incorrectly out of the
 // box (a long-standing leaflet+bundler issue) — pointing them at the
@@ -28,6 +31,69 @@ function ClickToPlacePin({ onPick }: { onPick: (lat: number, lng: number) => voi
   return null;
 }
 
+/** Owner (2026-08-17, "زرار بحث... يركز على المكان أوتوماتيك") — pans/zooms the live map instance whenever a search result lands, without re-mounting `MapContainer` (which would reset the user's own pan/zoom on every render). */
+function FlyToOnSearch({ target }: { target: [number, number] | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (target) map.flyTo(target, 15);
+  }, [target, map]);
+  return null;
+}
+
+/**
+ * Owner (2026-08-17, "زرار بحث... يقدر يكتب اسم مكان ويركز عليه أوتوماتيك")
+ * — free-text place-name search via Nominatim (OpenStreetMap's own
+ * geocoder), matching this component's existing "no API key/billing"
+ * constraint (FEATURE-013) exactly — same reasoning as the tile layer
+ * above, not a new external dependency. A found result both pans the map
+ * AND calls `onPick` — searching for a place IS picking it, same as
+ * clicking the map directly.
+ */
+function LocationSearchBar({ onFound }: { onFound: (lat: number, lng: number) => void }) {
+  const [query, setQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const search = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = query.trim();
+    if (!trimmed || searching) return;
+    setSearching(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(trimmed)}`,
+      );
+      if (!res.ok) throw new Error('تعذر البحث عن الموقع');
+      const results = (await res.json()) as { lat: string; lon: string }[];
+      if (results.length === 0) {
+        setError('مفيش نتايج لـ"' + trimmed + '"');
+        return;
+      }
+      onFound(parseFloat(results[0].lat), parseFloat(results[0].lon));
+    } catch {
+      setError('تعذر البحث عن الموقع — تأكد من الاتصال بالإنترنت');
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  return (
+    <form onSubmit={(e) => void search(e)} className="flex gap-2 p-2">
+      <Input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="ابحث عن اسم مكان… مثال: ميدان التحرير، القاهرة"
+        className="flex-1"
+      />
+      <Button type="submit" variant="secondary" size="icon" disabled={searching} aria-label="بحث">
+        <Search className="size-4" />
+      </Button>
+      {error && <p className="text-destructive absolute mt-10 text-xs">{error}</p>}
+    </form>
+  );
+}
+
 /**
  * FEATURE-013 (2026-08-14, owner: "يكون في خريطة تفاعلية اقدر احدد المكان
  * منها") — click-to-drop-a-pin location picker, no API key/billing
@@ -46,15 +112,25 @@ export function LocationPickerMap({
   const [center] = useState<[number, number]>(
     latitude !== null && longitude !== null ? [latitude, longitude] : DEFAULT_CENTER,
   );
+  const [flyTarget, setFlyTarget] = useState<[number, number] | null>(null);
+
+  const handleSearchResult = (lat: number, lng: number) => {
+    onChange(lat, lng);
+    setFlyTarget([lat, lng]);
+  };
 
   return (
     <div className="border-input overflow-hidden rounded-md border">
+      <div className="border-input relative border-b">
+        <LocationSearchBar onFound={handleSearchResult} />
+      </div>
       <MapContainer center={center} zoom={13} style={{ height: '280px', width: '100%' }}>
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <ClickToPlacePin onPick={onChange} />
+        <FlyToOnSearch target={flyTarget} />
         {latitude !== null && longitude !== null && (
           <Marker position={[latitude, longitude]} icon={markerIconDefault} />
         )}
@@ -62,7 +138,7 @@ export function LocationPickerMap({
       <div className="text-muted-foreground bg-muted/30 p-2 text-xs">
         {latitude !== null && longitude !== null
           ? `الموقع المختار: ${latitude.toFixed(5)}, ${longitude.toFixed(5)}`
-          : 'دوس على الخريطة لتحديد المكان'}
+          : 'دوس على الخريطة أو ابحث عن اسم مكان لتحديد الموقع'}
       </div>
     </div>
   );

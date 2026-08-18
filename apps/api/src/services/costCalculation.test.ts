@@ -319,7 +319,7 @@ describe('owner-approved manual overrides — profitPercentOverride/zincCostOver
     expect(withOverride.total).toBeCloseTo(withDefault.subtotal * 1.4, 5);
   });
 
-  it('zincCostOverride/printCostOverride replace only those two figures, rest of the formula unaffected', () => {
+  it('zincPriceOverride/printRunPriceOverride replace the per-unit price, still multiplied by colorCount/printRuns like the automatic path', () => {
     const result = calculateLoosePaperCost({
       familyKey: 'koshiaGayer',
       realLabel: '22×33',
@@ -330,13 +330,15 @@ describe('owner-approved manual overrides — profitPercentOverride/zincCostOver
       sheetPrice: 5,
       families: FAMILIES,
       settings: SETTINGS,
-      zincCostOverride: 999,
-      printCostOverride: 111,
+      zincPriceOverride: 999,
+      printRunPriceOverride: 111,
     });
-    expect(result.zincCost).toBe(999);
-    expect(result.printCost).toBe(111);
+    // GAYER, quantity 100, sides 1, colorCount 2 → printRuns = ceil(100/1000) * 2 * 1 = 2.
+    expect(result.printRuns).toBe(2);
+    expect(result.zincCost).toBe(999 * 2);
+    expect(result.printCost).toBe(111 * 2);
     expect(result.paperCost).toBe(75); // unaffected — same as the non-override test above
-    expect(result.subtotal).toBe(999 + 111 + 75); // + numberingCost(0) + designCost(0) + extraCosts(0)
+    expect(result.subtotal).toBe(999 * 2 + 111 * 2 + 75); // + numberingCost(0) + designCost(0) + extraCosts(0)
   });
 
   it('extraCosts (manual خدمات إضافية) is added to subtotal before margin', () => {

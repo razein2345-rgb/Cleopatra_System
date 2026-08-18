@@ -8,6 +8,7 @@ import {
   deleteQuotation,
   getQuotation,
   listQuotations,
+  recordQuotationPrintHandler,
   setQuotationApprovalState,
   setQuotationStatus,
   updateQuotation,
@@ -22,6 +23,11 @@ quotationsRouter.use(requireAuth);
 // Contacts/Addresses/Notes are (01_ANALYSIS.md's Service Boundaries note).
 quotationsRouter.get('/', requirePermission('quotations.view'), listQuotations);
 quotationsRouter.get('/:id', requirePermission('quotations.view'), getQuotation);
+quotationsRouter.post(
+  '/:id/record-print',
+  requirePermission('quotations.view'),
+  recordQuotationPrintHandler,
+);
 quotationsRouter.post('/', requirePermission('quotations.create'), createQuotation);
 quotationsRouter.put('/:id', requirePermission('quotations.edit'), updateQuotation);
 quotationsRouter.put(

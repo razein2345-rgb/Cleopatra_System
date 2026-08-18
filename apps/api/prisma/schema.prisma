@@ -355,6 +355,7 @@ model Branch {
   fieldAssignments    FieldAssignment[]
   treasuryDayClosures TreasuryDayClosure[]
   machines            Machine[]
+  orderTemplates      OrderTemplate[]
 
   @@index([isDeleted])
 }
@@ -708,6 +709,7 @@ model StaffProfile {
   fieldAssignments           FieldAssignment[]          @relation("FieldAssignmentStaff")
   fieldAssignmentsCreated    FieldAssignment[]          @relation("FieldAssignmentCreatedBy")
   treasuryDayClosures        TreasuryDayClosure[]
+  orderTemplatesCreated      OrderTemplate[]
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -881,6 +883,7 @@ model BusinessPartner {
   // See AuditLog.partnerId's doc comment for why this denormalized
   // back-relation exists (Timeline Preparation / Activity Feed Ready).
   auditLogs              AuditLog[]
+  orderTemplates         OrderTemplate[]
 
   @@index([isDeleted])
   @@index([status])
@@ -937,6 +940,31 @@ model PartnerTag {
   updatedAt DateTime @updatedAt
 
   partnerTags BusinessPartnerTag[]
+
+  @@index([isDeleted])
+  @@index([isActive])
+}
+
+/// Owner (2026-08-17, "عايز في الإعدادات أقدر أضيف على الخدمات الإضافية
+/// خدمة... مفيهاش تكسير ولزق، ومفيهاش فورمة تكسير") — the "الخدمات
+/// الإضافية" checklist on the order composer (bagging/adhesive/sample and
+/// whatever the owner adds) was hardcoded; this makes it an admin-managed
+/// catalog instead (rule 15), same shape/pattern as `PartnerTag` above.
+/// `sortOrder` controls display order in the composer's checklist —
+/// options aren't alphabetized, they're grouped by how an operator
+/// actually scans them.
+model ExtraServiceOption {
+  id        String  @id @default(uuid()) @db.Uuid
+  label     String  @unique
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([isDeleted])
   @@index([isActive])
@@ -1210,6 +1238,45 @@ model PartnerCommercialProfile {
   @@index([status])
 }
 
+/// Owner (2026-08-17, "بعد ما الاوردر يتحفظ يسألني هل احفظه كقالب دوري")
+/// — a reusable snapshot of an order's line-item configuration, offered
+/// right after an order is saved. `itemsSnapshot` stores the same
+/// pricing-input shape `NewOrderPage.tsx` already builds per line (the
+/// `OrderItemPricingInput` config), reused verbatim to repopulate the
+/// composer — no separate/duplicated item-shape logic (rule 5). Deliberately
+/// NOT bound to a specific customer (`partnerId` optional) — a template is
+/// "this exact order configuration," reusable for any customer who wants
+/// the same recurring job, not just the one who first ordered it.
+model OrderTemplate {
+  id String @id @default(uuid()) @db.Uuid
+
+  name String
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  createdById String       @db.Uuid
+  createdBy   StaffProfile @relation(fields: [createdById], references: [id])
+
+  /// The customer this template was first saved from — optional context only,
+  /// never restricts which customer it may be reused for.
+  partnerId String?          @db.Uuid
+  partner   BusinessPartner? @relation(fields: [partnerId], references: [id])
+
+  itemsSnapshot Json
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([branchId])
+  @@index([partnerId])
+  @@index([isDeleted])
+}
+
 // ---------------------------------------------------------------------------
 // Orders & Invoices (schema only — API/UI in Phase 6).
 // Order rows double as invoices in this system, exactly as in legacy.
@@ -1458,6 +1525,11 @@ model Quotation {
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
+
+  /// Owner (2026-08-17, "تتبع العدد بس، من غير منع") — tracked for
+  /// visibility only, never enforced as a hard limit. Incremented by
+  /// `recordQuotationPrint`, never touched anywhere else.
+  printCount Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

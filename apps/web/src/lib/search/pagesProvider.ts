@@ -10,17 +10,12 @@ import type { SearchProvider } from './types';
  * filtering happens inside `fetch()` using the `can()` passed in at build
  * time rather than via `SearchProvider.permission`.
  */
-export function buildPagesProvider(
-  entries: NavEntry[],
-  can: (permission: string) => boolean,
-  isSuperAdmin: boolean,
-): SearchProvider {
+export function buildPagesProvider(entries: NavEntry[], can: (permission: string) => boolean): SearchProvider {
   return {
     id: 'pages',
     groupLabel: 'الصفحات',
     async fetch() {
       return flattenNavLinks(entries)
-        .filter((link) => !link.requireSuperAdmin || isSuperAdmin)
         .filter((link) => !link.permission || (Array.isArray(link.permission) ? link.permission.some(can) : can(link.permission)))
         .map((link) => ({
           id: link.to,

@@ -65,6 +65,7 @@ export function mapQuotationToDto(quotation: QuotationRecord, canSeeInternal: bo
     previousVersionId: quotation.previousVersionId,
     nextVersionExists: quotation.nextVersion !== null,
     convertedOrderId: quotation.convertedOrderId,
+    printCount: quotation.printCount,
     items: quotation.items.map(mapQuotationItemToDto),
     createdAt: quotation.createdAt.toISOString(),
     updatedAt: quotation.updatedAt.toISOString(),
@@ -88,6 +89,19 @@ const LEGAL_STATUS_TRANSITIONS: Record<QuotationStatus, QuotationStatus[]> = {
   EXPIRED: [],
   CONVERTED: [],
 };
+
+/**
+ * Owner (2026-08-17, "تتبع العدد بس، من غير منع") — increments the
+ * visibility-only print counter. Never throws/blocks on any count; the
+ * whole point is this can never stop someone from printing.
+ */
+export async function recordQuotationPrint(id: string): Promise<QuotationRecord> {
+  return prisma.quotation.update({
+    where: { id },
+    data: { printCount: { increment: 1 } },
+    include: QUOTATION_INCLUDE,
+  });
+}
 
 export class IllegalStatusTransitionError extends Error {
   constructor(from: QuotationStatus, to: QuotationStatus) {

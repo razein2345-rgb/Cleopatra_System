@@ -42,6 +42,8 @@ export const quotationSchema = z.object({
   nextVersionExists: z.boolean(),
   /** Set by `POST /:id/convert` (FEATURE-003 M2) once this Quotation has become an Order. */
   convertedOrderId: z.string().uuid().nullable(),
+  /** Owner (2026-08-17) — tracked for visibility only, never enforced as a limit. Incremented by `POST /:id/record-print`. */
+  printCount: z.number().int(),
   items: z.array(quotationItemSchema),
   createdAt: z.string(),
   updatedAt: z.string(),

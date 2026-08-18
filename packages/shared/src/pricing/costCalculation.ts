@@ -93,20 +93,28 @@ export function resolveNumbering(params: {
   }
 
   if (params.targetLabelOverride) {
-    const targetEntry = findEntry(family, params.targetLabelOverride);
-    if (!targetEntry) {
-      throw new SizeCalculationError(`Numbering size "${params.targetLabelOverride}" not found in family "${params.familyKey}"`);
-    }
     if (params.targetLabelOverride === params.realLabel) {
       return { repeat: 1, targetLabel: params.targetLabelOverride };
     }
+    // Owner (2026-08-17, "لا يحصرني في المقاسات الموجودة") — the typed
+    // numbering size no longer has to be a known catalog entry; area-ratio
+    // (same formula the automatic path already uses) works for any
+    // "WxH"-format label. A label that DOES match a real entry (or isn't
+    // "WxH" parseable, e.g. A-series) still falls back to the piece-ratio
+    // formula, exactly as before this extension.
     const realAreaOv = parseAreaLabel(params.realLabel);
     const targetAreaOv = parseAreaLabel(params.targetLabelOverride);
-    const repeatOv =
-      realAreaOv !== null && targetAreaOv !== null
-        ? Math.round(targetAreaOv / realAreaOv)
-        : Math.round(realEntry.piecesPerSheet / targetEntry.piecesPerSheet);
-    return { repeat: repeatOv, targetLabel: params.targetLabelOverride };
+    if (realAreaOv !== null && targetAreaOv !== null) {
+      return { repeat: Math.max(1, Math.round(targetAreaOv / realAreaOv)), targetLabel: params.targetLabelOverride };
+    }
+    const targetEntry = findEntry(family, params.targetLabelOverride);
+    if (!targetEntry) {
+      throw new SizeCalculationError(`مقاس الترقيم "${params.targetLabelOverride}" — لازم يكون بصيغة "عرض×ارتفاع" لو مش من المقاسات الجاهزة`);
+    }
+    return {
+      repeat: Math.round(realEntry.piecesPerSheet / targetEntry.piecesPerSheet),
+      targetLabel: params.targetLabelOverride,
+    };
   }
 
   const groupKey = getTieringGroupKey(params.familyKey);
@@ -152,18 +160,29 @@ export interface LoosePaperCostInput {
    * design/numbering — owner: "عايز أقدر أعدل سعر الزنك وتراج الطبع
    * وترقيم والتصميم من واجهة الطلبات... ساعات بحتاج أغير لما احب أحسب
    * مناقصة" — same narrow "replace this one computed cost only" rule as
-   * zinc/print, not a formula change). Each `*CostOverride` replaces that
-   * one computed cost only — everything else (paper/margin) stays
-   * server-computed always. `profitPercentOverride` replaces
-   * `settings.profitPercent` for this item only. `extraCosts` is the
-   * pre-summed manual "خدمات إضافية" amount (bagging/adhesive/sample — see
-   * orderItemPricing.ts), added to subtotal before margin, same treatment
-   * as §3.7's riza/jarab/forma/taksir.
+   * zinc/print, not a formula change). `numberingCostOverride`/
+   * `designCostOverride` replace that one computed TOTAL cost only.
+   * `profitPercentOverride` replaces `settings.profitPercent` for this
+   * item only. `extraCosts` is the pre-summed manual "خدمات إضافية" amount
+   * (bagging/adhesive/sample — see orderItemPricing.ts), added to subtotal
+   * before margin, same treatment as §3.7's riza/jarab/forma/taksir.
    */
-  zincCostOverride?: number;
-  printCostOverride?: number;
   numberingCostOverride?: number;
   designCostOverride?: number;
+  /**
+   * Owner (2026-08-17, "عايز زرار التعديل... يكون بيحط سعر الزنكاية
+   * الواحدة، سعر تراج الطباعة الواحد") — same-day refinement of the zinc/
+   * print overrides above: replaces the PER-UNIT price
+   * (`settings.zincPrice`/`settings.printRunPrice`) that feeds the
+   * existing multiplication, not the final total — `zincCost`/`printCost`
+   * are still `colorCount`/`printRuns` × this price, exactly as the
+   * automatic path already computes them. Less error-prone than typing a
+   * pre-multiplied total by hand (the previous `zincCostOverride`/
+   * `printCostOverride` shape, replaced here — not kept alongside this,
+   * to avoid two different ways of overriding the same number).
+   */
+  zincPriceOverride?: number;
+  printRunPriceOverride?: number;
   /** Owner (2026-08-17) — same override treatment for "الهالك" (waste sheets), replacing `settings.wasteSheetsDefault` for this item only. */
   wasteSheetsOverride?: number;
   /**
@@ -228,10 +247,10 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
   }
 
   const paperCost = sheetsNeeded * input.sheetPrice;
-  const zincCost = input.zincCostOverride ?? input.settings.zincPrice * input.colorCount;
+  const zincCost = (input.zincPriceOverride ?? input.settings.zincPrice) * input.colorCount;
   // §3.4 — "وجهين" doubles the run count only, not the sheet count.
   const printRuns = Math.ceil(printUnits / 1000) * input.colorCount * input.sides;
-  const printCost = input.printCostOverride ?? printRuns * input.settings.printRunPrice;
+  const printCost = printRuns * (input.printRunPriceOverride ?? input.settings.printRunPrice);
 
   let numberingRuns = 0;
   let numberingCost = 0;
@@ -288,8 +307,8 @@ export interface NotebookCostInput {
   families: SizeFamilyInput[];
   settings: PricingConstants;
   /** See `LoosePaperCostInput`'s doc comment — same owner-approved override rules. */
-  zincCostOverride?: number;
-  printCostOverride?: number;
+  zincPriceOverride?: number;
+  printRunPriceOverride?: number;
   numberingCostOverride?: number;
   designCostOverride?: number;
   wasteSheetsOverride?: number;
@@ -354,11 +373,11 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
 
   const units = totalSheetsFlat / calc.repeat;
   const printRuns = Math.ceil(units / 1000) * input.colorCount;
-  const printCost = input.printCostOverride ?? printRuns * input.settings.printRunPrice;
+  const printCost = printRuns * (input.printRunPriceOverride ?? input.settings.printRunPrice);
 
   const sheetsNeeded = Math.ceil(units / calc.calcPiecesPerSheet) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
   const paperCost = sheetsNeeded * input.sheetPrice;
-  const zincCost = input.zincCostOverride ?? input.settings.zincPrice * input.colorCount;
+  const zincCost = (input.zincPriceOverride ?? input.settings.zincPrice) * input.colorCount;
   const designCost = input.designCostOverride ?? (input.isNewDesign ? input.settings.designPrice : 0);
   const bindingCost = input.bindingPricePerNotebook * input.notebookQuantity;
 
@@ -499,8 +518,8 @@ export interface EnvelopeCostInput {
   readyEnvelopePricePerPiece: number;
   settings: PricingConstants;
   /** See `LoosePaperCostInput`'s doc comment — same owner-approved override rules. */
-  zincCostOverride?: number;
-  printCostOverride?: number;
+  zincPriceOverride?: number;
+  printRunPriceOverride?: number;
   designCostOverride?: number;
   profitPercentOverride?: number;
   extraCosts?: number;
@@ -521,9 +540,9 @@ export interface EnvelopeCostResult {
 /** §3.6 — envelopes. No size tiering at all — the simplest of the six item kinds. */
 export function calculateEnvelopeCost(input: EnvelopeCostInput): EnvelopeCostResult {
   const designCost = input.designCostOverride ?? (input.isNewDesign ? input.settings.envelopeDesignPrice : 0);
-  const zincCost = input.zincCostOverride ?? input.settings.envelopeZincPrice * input.colorCount;
+  const zincCost = (input.zincPriceOverride ?? input.settings.envelopeZincPrice) * input.colorCount;
   const printRuns = Math.ceil(input.quantity / 1000) * input.colorCount;
-  const printCost = input.printCostOverride ?? printRuns * input.settings.envelopePrintRunPrice;
+  const printCost = printRuns * (input.printRunPriceOverride ?? input.settings.envelopePrintRunPrice);
   const envelopesCost = input.quantity * input.readyEnvelopePricePerPiece;
   const extraCosts = input.extraCosts ?? 0;
   const profitPercentUsed = input.profitPercentOverride ?? input.settings.profitPercent;
@@ -551,8 +570,8 @@ export interface FolderCostInput {
   families: SizeFamilyInput[];
   settings: PricingConstants;
   /** See `LoosePaperCostInput`'s doc comment — same owner-approved override rules. */
-  zincCostOverride?: number;
-  printCostOverride?: number;
+  zincPriceOverride?: number;
+  printRunPriceOverride?: number;
   designCostOverride?: number;
   wasteSheetsOverride?: number;
   calcSizeOverride?: string;
@@ -598,8 +617,8 @@ export function calculateFolderCost(input: FolderCostInput): FolderCostResult {
     sheetPrice: input.sheetPrice,
     families: input.families,
     settings: input.settings,
-    zincCostOverride: input.zincCostOverride,
-    printCostOverride: input.printCostOverride,
+    zincPriceOverride: input.zincPriceOverride,
+    printRunPriceOverride: input.printRunPriceOverride,
     designCostOverride: input.designCostOverride,
     wasteSheetsOverride: input.wasteSheetsOverride,
     calcSizeOverride: input.calcSizeOverride,

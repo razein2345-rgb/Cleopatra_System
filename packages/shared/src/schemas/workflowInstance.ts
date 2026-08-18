@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { productionTrackSchema } from './order.js';
 
 export const workflowInstanceStatusSchema = z.enum(['IN_PROGRESS', 'COMPLETED', 'CANCELLED']);
 export const stageInstanceStatusSchema = z.enum(['WAITING', 'IN_PROGRESS', 'DONE', 'SKIPPED', 'FAILED']);
@@ -153,6 +154,20 @@ export const supplierDelaySummarySchema = z.object({
   delayedCount: z.number().int(),
 });
 
+/**
+ * Owner (2026-08-17, "متوسط مدة تسليم الاوردر مثلا الاوفست من 3 أيام
+ * لإسبوع، الديجيتال من يوم ليومين") — average time from a WorkflowInstance
+ * being created to its `INSTANCE_COMPLETED` WorkflowEvent, grouped by the
+ * owning WorkOrder's `productionTrack`. Read-only aggregate over data that
+ * already exists (WorkflowInstance.createdAt + WorkflowEvent.occurredAt) —
+ * no new tracking field, no change to how a track advances or completes.
+ */
+export const trackDeliveryDurationSchema = z.object({
+  productionTrack: productionTrackSchema,
+  avgHours: z.number(),
+  sampleSize: z.number().int(),
+});
+
 export const workflowDashboardSummarySchema = z.object({
   totals: z.object({
     activeWorkOrders: z.number().int(),
@@ -166,6 +181,7 @@ export const workflowDashboardSummarySchema = z.object({
   dailyProductionCount: z.number().int(),
   /** FEATURE-005 Sprint 2.5 — STAGE_FAILED events today, same window/pattern as `dailyProductionCount`. */
   failedToday: z.number().int(),
+  avgDeliveryDurationByTrack: z.array(trackDeliveryDurationSchema),
 });
 
 export type WorkflowInstanceStatus = z.infer<typeof workflowInstanceStatusSchema>;
@@ -181,3 +197,4 @@ export type DepartmentJobSummary = z.infer<typeof departmentJobSummarySchema>;
 export type OperatorJobSummary = z.infer<typeof operatorJobSummarySchema>;
 export type SupplierDelaySummary = z.infer<typeof supplierDelaySummarySchema>;
 export type WorkflowDashboardSummary = z.infer<typeof workflowDashboardSummarySchema>;
+export type TrackDeliveryDuration = z.infer<typeof trackDeliveryDurationSchema>;

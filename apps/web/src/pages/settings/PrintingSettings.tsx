@@ -4,6 +4,7 @@ import { apiGet } from '@/lib/api';
 import { Section } from './Section';
 import { SheetTypesEditor } from './SheetTypesEditor';
 import { SizeFamiliesEditor } from './SizeFamiliesEditor';
+import { ExtraServicesManagement } from './ExtraServicesManagement';
 
 export function PrintingSettings() {
   const [sheetTypes, setSheetTypes] = useState<SheetType[] | null>(null);
@@ -38,6 +39,10 @@ export function PrintingSettings() {
 
       <Section title="دليل المقاسات">
         <SizeFamiliesEditor sizeFamilies={sizeFamilies} onChanged={load} />
+      </Section>
+
+      <Section title="الخدمات الإضافية" subtitle="خيارات الخدمات الإضافية اللي بتظهر في نموذج الطلب (تغليف، لصق، تكسير، إلخ)">
+        <ExtraServicesManagement />
       </Section>
     </>
   );

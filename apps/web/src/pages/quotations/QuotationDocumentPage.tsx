@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { BranchSummary, BusinessIdentity, BusinessPartner, Quotation } from '@cleopatra/shared';
-import { apiDelete, apiGet } from '@/lib/api';
+import { apiDelete, apiGet, apiPost } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
@@ -47,6 +47,19 @@ export function QuotationDocumentPage() {
 
   if (error) return <div className="text-destructive">{error}</div>;
   if (!quotation || !partner || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+
+  /**
+   * Owner (2026-08-17, "تتبع العدد بس، من غير منع") — visibility-only
+   * counter, never blocks the print itself. Fired alongside `window.print()`,
+   * not awaited before it — a failed count-increment must never stop a
+   * real print.
+   */
+  const printQuotation = () => {
+    window.print();
+    void apiPost(`/api/quotations/${quotation.id}/record-print`, {})
+      .then((updated) => setQuotation(updated as Quotation))
+      .catch(() => {});
+  };
 
   // Mirrors WorkOrderDocumentPage.tsx's removeWorkOrder exactly (confirm → delete → leave).
   const removeQuotation = async () => {
@@ -98,12 +111,17 @@ export function QuotationDocumentPage() {
               {deleting ? 'جارٍ الحذف…' : 'حذف عرض السعر'}
             </Button>
           )}
-          <Button type="button" onClick={() => window.print()}>
+          <Button type="button" onClick={printQuotation}>
             طباعة عرض السعر
           </Button>
         </div>
       </div>
       {deleteError && <p className="text-destructive text-sm print:hidden">{deleteError}</p>}
+      {quotation.printCount > 0 && (
+        <p className="text-muted-foreground text-xs print:hidden">
+          {quotation.printCount === 1 ? 'اتطبع مرة واحدة' : `اتطبع ${quotation.printCount} مرات`}
+        </p>
+      )}
 
       <DocumentRenderer
         snapshot={snapshot}

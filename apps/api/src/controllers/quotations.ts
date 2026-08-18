@@ -16,6 +16,7 @@ import {
   nextQuotationNumber,
   QUOTATION_INCLUDE,
   QuotationItemValidationError,
+  recordQuotationPrint,
   validateQuotationItemRefs,
 } from '../services/quotationService.js';
 import {
@@ -85,6 +86,17 @@ export async function getQuotation(req: Request<{ id: string }>, res: Response) 
   }
 
   res.json({ success: true, data: mapQuotationToDto(quotation, canSeeInternal(req)) });
+}
+
+/** Owner (2026-08-17, "تتبع العدد بس، من غير منع") — called from the print button; visibility-only, never blocks. */
+export async function recordQuotationPrintHandler(req: Request<{ id: string }>, res: Response) {
+  const existing = await prisma.quotation.findUnique({ where: { id: req.params.id }, select: { isDeleted: true } });
+  if (!existing || existing.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
+    return;
+  }
+  const updated = await recordQuotationPrint(req.params.id);
+  res.json({ success: true, data: mapQuotationToDto(updated, canSeeInternal(req)) });
 }
 
 /**
