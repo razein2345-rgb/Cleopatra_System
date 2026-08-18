@@ -163,12 +163,12 @@ export function ContactsTab({
                         value={contact.isActive}
                         onSave={(next) => updateContactField(contact, { isActive: next })}
                       />
-                      <span className={contact.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                      <span className={contact.isActive ? 'text-success' : 'text-muted-foreground'}>
                         {contact.isActive ? 'نشط' : 'غير نشط'}
                       </span>
                     </div>
                   ) : (
-                    <span className={contact.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                    <span className={contact.isActive ? 'text-success' : 'text-muted-foreground'}>
                       {contact.isActive ? 'نشط' : 'غير نشط'}
                     </span>
                   )}

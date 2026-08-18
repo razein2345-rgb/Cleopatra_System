@@ -103,12 +103,12 @@ export function CategoriesManagement() {
                         value={category.isActive}
                         onSave={(next) => updateCategoryField(category, { isActive: next })}
                       />
-                      <span className={category.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                      <span className={category.isActive ? 'text-success' : 'text-muted-foreground'}>
                         {category.isActive ? 'نشط' : 'غير نشط'}
                       </span>
                     </div>
                   ) : (
-                    <span className={category.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                    <span className={category.isActive ? 'text-success' : 'text-muted-foreground'}>
                       {category.isActive ? 'نشط' : 'غير نشط'}
                     </span>
                   )}

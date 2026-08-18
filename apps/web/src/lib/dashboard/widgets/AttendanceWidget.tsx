@@ -106,7 +106,7 @@ function AttendanceWidgetComponent() {
             {entry?.checkInAt ? `وقت الحضور: ${time(entry.checkInAt)}` : 'لم يتم تسجيل الحضور اليوم بعد — سجّل من كشك الفرع'}
           </p>
           {entry?.checkOutAt && <p className="text-muted-foreground">وقت الانصراف: {time(entry.checkOutAt)}</p>}
-          {entry?.checkInAt && entry.checkOutAt && <p className="text-green-600">تم تسجيل الحضور والانصراف اليوم</p>}
+          {entry?.checkInAt && entry.checkOutAt && <p className="text-success">تم تسجيل الحضور والانصراف اليوم</p>}
         </div>
       )}
     </Card>

@@ -173,7 +173,7 @@ export function UsersPage() {
                     </div>
                   </td>
                   <td className="p-3">
-                    <span className={user.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                    <span className={user.isActive ? 'text-success' : 'text-muted-foreground'}>
                       {user.isActive ? 'نشط' : 'غير نشط'}
                     </span>
                   </td>

@@ -66,7 +66,7 @@ export function EmployeeAdvancesReportPage() {
                     <span dir="ltr">{money(s.totalOutstanding)}</span>
                   </td>
                   <td className="p-3">
-                    <span dir="ltr" className={s.attendanceAdjustment > 0 ? 'text-green-600' : s.attendanceAdjustment < 0 ? 'text-destructive' : ''}>
+                    <span dir="ltr" className={s.attendanceAdjustment > 0 ? 'text-success' : s.attendanceAdjustment < 0 ? 'text-destructive' : ''}>
                       {s.attendanceAdjustment !== 0 ? `${s.attendanceAdjustment > 0 ? '+' : ''}${money(s.attendanceAdjustment)}` : '—'}
                     </span>
                   </td>

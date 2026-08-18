@@ -11,39 +11,50 @@
  */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
+  /*
+   * Owner (2026-08-17, found live on an old Windows 7 machine: "الألوان
+   * بتاعته بتختفي") — these were originally authored in oklch(), which
+   * only shipped in browsers from ~2022-2023 onward (Chrome 111+, Firefox
+   * 113+); Chrome/Firefox both dropped Windows 7 support before that, so a
+   * Win7 machine's browser silently fails to parse oklch() and the custom
+   * property falls back to nothing — exactly this symptom. Converted to
+   * hex/8-digit-hex (RRGGBBAA, supported since ~2016) below — same exact
+   * sRGB colors, computed via the OKLab spec, just a universally-supported
+   * syntax. Do not reintroduce oklch()/lab()/lch()/color() here.
+   */
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
 
   /* Brand — matches the Cleopatra Press logo (black "P" mark, red wordmark) — owner, 2026-08-12: "محتاج الثيم يكون شبه اللوجو". Replaces the earlier teal/gold "Nile" palette. */
-  --primary: oklch(0.47 0.19 25);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.2 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
+  --primary: #ac011a;
+  --primary-foreground: #fafafa;
+  --secondary: #161616;
+  --secondary-foreground: #fafafa;
 
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.94 0.03 25);
-  --accent-foreground: oklch(0.35 0.15 25);
+  --muted: #f5f5f5;
+  --muted-foreground: #737373;
+  --accent: #ffe4e1;
+  --accent-foreground: #760009;
 
   /* Semantic status colors — used by StatusBadge and Dashboard widgets */
-  --success: oklch(0.6 0.15 145);
-  --success-foreground: oklch(0.985 0 0);
-  --warning: oklch(0.78 0.16 80);
-  --warning-foreground: oklch(0.24 0.05 80);
-  --info: oklch(0.6 0.12 235);
-  --info-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
+  --success: #3a9742;
+  --success-foreground: #fafafa;
+  --warning: #ecaa0b;
+  --warning-foreground: #2b1c00;
+  --info: #1b8abd;
+  --info-foreground: #fafafa;
+  --destructive: #e7000b;
+  --destructive-foreground: #fafafa;
   --danger: var(--destructive);
   --danger-foreground: var(--destructive-foreground);
 
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.47 0.19 25 / 50%);
+  --border: #e5e5e5;
+  --input: #e5e5e5;
+  --ring: #ac011a80;
 
   /* Spacing scale */
   --spacing-xs: 0.25rem;
@@ -64,47 +75,47 @@
   --text-3xl: 1.875rem;
 
   /* Elevation scale */
-  --shadow-sm: 0 1px 2px 0 oklch(0.145 0 0 / 6%);
-  --shadow-md: 0 4px 10px -2px oklch(0.145 0 0 / 10%);
-  --shadow-lg: 0 12px 24px -4px oklch(0.145 0 0 / 14%);
+  --shadow-sm: 0 1px 2px 0 #0a0a0a0f;
+  --shadow-md: 0 4px 10px -2px #0a0a0a1a;
+  --shadow-lg: 0 12px 24px -4px #0a0a0a24;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
+  --background: #0a0a0a;
+  --foreground: #fafafa;
+  --card: #171717;
+  --card-foreground: #fafafa;
+  --popover: #171717;
+  --popover-foreground: #fafafa;
 
-  --primary: oklch(0.65 0.2 25);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.8 0 0);
-  --secondary-foreground: oklch(0.145 0 0);
+  --primary: #f14d4c;
+  --primary-foreground: #fafafa;
+  --secondary: #bebebe;
+  --secondary-foreground: #0a0a0a;
 
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.28 0.06 25);
-  --accent-foreground: oklch(0.9 0.05 25);
+  --muted: #262626;
+  --muted-foreground: #a1a1a1;
+  --accent: #421c19;
+  --accent-foreground: #fed2cd;
 
-  --success: oklch(0.65 0.15 145);
-  --success-foreground: oklch(0.145 0 0);
-  --warning: oklch(0.75 0.15 80);
-  --warning-foreground: oklch(0.145 0 0);
-  --info: oklch(0.65 0.12 235);
-  --info-foreground: oklch(0.145 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.145 0 0);
+  --success: #4aa651;
+  --success-foreground: #0a0a0a;
+  --warning: #dfa11a;
+  --warning-foreground: #0a0a0a;
+  --info: #329acd;
+  --info-foreground: #0a0a0a;
+  --destructive: #ff6467;
+  --destructive-foreground: #0a0a0a;
   --danger: var(--destructive);
   --danger-foreground: var(--destructive-foreground);
 
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.65 0.2 25 / 50%);
+  --border: #ffffff1a;
+  --input: #ffffff26;
+  --ring: #f14d4c80;
 
-  --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 30%);
-  --shadow-md: 0 4px 10px -2px oklch(0 0 0 / 40%);
-  --shadow-lg: 0 12px 24px -4px oklch(0 0 0 / 50%);
+  --shadow-sm: 0 1px 2px 0 #0000004d;
+  --shadow-md: 0 4px 10px -2px #00000066;
+  --shadow-lg: 0 12px 24px -4px #00000080;
 }
 
 @theme inline {

@@ -126,7 +126,7 @@ export function EmployeeProfilePage() {
                   — متبقي من المرتب:{' '}
                   <span className="font-medium">{money(user.baseSalary - totalOutstanding + attendanceAdjustment)}</span>
                   {attendanceAdjustment !== 0 && (
-                    <span className={attendanceAdjustment > 0 ? 'text-green-600' : 'text-destructive'}>
+                    <span className={attendanceAdjustment > 0 ? 'text-success' : 'text-destructive'}>
                       {' '}
                       ({attendanceAdjustment > 0 ? '+' : ''}
                       {money(attendanceAdjustment)} حضور)
@@ -261,7 +261,7 @@ export function EmployeeProfilePage() {
                         <td className="p-2">{d.lateMinutes > 0 ? Math.round(d.lateMinutes) : '—'}</td>
                         <td className="p-2">{d.earlyLeaveMinutes > 0 ? Math.round(d.earlyLeaveMinutes) : '—'}</td>
                         <td className="p-2">{d.overtimeMinutes > 0 ? Math.round(d.overtimeMinutes) : '—'}</td>
-                        <td className={`p-2 ${d.adjustment > 0 ? 'text-green-600' : d.adjustment < 0 ? 'text-destructive' : ''}`}>
+                        <td className={`p-2 ${d.adjustment > 0 ? 'text-success' : d.adjustment < 0 ? 'text-destructive' : ''}`}>
                           {d.adjustment !== 0 ? `${d.adjustment > 0 ? '+' : ''}${money(d.adjustment)}` : '—'}
                         </td>
                       </tr>
@@ -272,7 +272,7 @@ export function EmployeeProfilePage() {
             )}
             <p className="text-sm font-medium">
               إجمالي التسوية:{' '}
-              <span className={attendanceAdjustment > 0 ? 'text-green-600' : attendanceAdjustment < 0 ? 'text-destructive' : ''}>
+              <span className={attendanceAdjustment > 0 ? 'text-success' : attendanceAdjustment < 0 ? 'text-destructive' : ''}>
                 {attendanceAdjustment > 0 ? '+' : ''}
                 {money(attendanceAdjustment)}
               </span>

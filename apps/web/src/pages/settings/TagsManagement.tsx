@@ -82,12 +82,12 @@ export function TagsManagement() {
                         value={tag.isActive}
                         onSave={(next) => updateTagField(tag, { isActive: next })}
                       />
-                      <span className={tag.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                      <span className={tag.isActive ? 'text-success' : 'text-muted-foreground'}>
                         {tag.isActive ? 'نشط' : 'غير نشط'}
                       </span>
                     </div>
                   ) : (
-                    <span className={tag.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                    <span className={tag.isActive ? 'text-success' : 'text-muted-foreground'}>
                       {tag.isActive ? 'نشط' : 'غير نشط'}
                     </span>
                   )}

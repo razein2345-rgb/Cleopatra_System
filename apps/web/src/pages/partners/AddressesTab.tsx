@@ -148,12 +148,12 @@ export function AddressesTab({
                         value={address.isActive}
                         onSave={(next) => updateAddressField(address, { isActive: next })}
                       />
-                      <span className={address.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                      <span className={address.isActive ? 'text-success' : 'text-muted-foreground'}>
                         {address.isActive ? 'نشط' : 'غير نشط'}
                       </span>
                     </div>
                   ) : (
-                    <span className={address.isActive ? 'text-green-600' : 'text-muted-foreground'}>
+                    <span className={address.isActive ? 'text-success' : 'text-muted-foreground'}>
                       {address.isActive ? 'نشط' : 'غير نشط'}
                     </span>
                   )}
