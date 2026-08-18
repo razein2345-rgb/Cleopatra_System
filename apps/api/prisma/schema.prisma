@@ -708,7 +708,8 @@ model StaffProfile {
   attendanceEntriesRecorded  AttendanceEntry[]          @relation("AttendanceRecordedBy")
   fieldAssignments           FieldAssignment[]          @relation("FieldAssignmentStaff")
   fieldAssignmentsCreated    FieldAssignment[]          @relation("FieldAssignmentCreatedBy")
-  treasuryDayClosures        TreasuryDayClosure[]
+  treasuryDayClosuresClosed  TreasuryDayClosure[]       @relation("TreasuryDayClosureClosedBy")
+  treasuryDayClosuresReopened TreasuryDayClosure[]       @relation("TreasuryDayClosureReopenedBy")
   orderTemplatesCreated      OrderTemplate[]
 
   @@unique([email], where: { isDeleted: false })
@@ -2100,22 +2101,46 @@ model TreasuryEntry {
   @@index([date])
 }
 
-/// FEATURE-016 (2026-08-16, owner: "زرار تقفيل حساب اليوم علشان يقدر
-/// ينجز ويراجع حسابه آخر اليوم") — a review/summary marker only, per the
-/// owner's own clarification: closing a day does NOT lock further entries
-/// for it, it just records that a review happened and what the totals
-/// were at that moment. One row per (branch, date) — `@@unique` so a day
-/// can only be closed once; a second attempt is a 409, not a second row.
+/// FEATURE-016, rebuilt 2026-08-18 (owner: "The goal is to have a proper
+/// daily cash register closing system... Opening Balance + Total Inflows -
+/// Total Outflows = Expected Closing Balance") — a real cash-drawer
+/// reconciliation, not just a review marker anymore. Reconciliation is
+/// CASH-method only (`method: 'CASH'` entries) since `actualCountedCash` is
+/// physical cash counted by hand — Vodafone Cash/InstaPay/bank entries are
+/// still tracked on `TreasuryEntry` as always, just outside this drawer
+/// count. `openingBalance` carries forward from the most recent prior
+/// closed (not reopened) day for the same branch; 0 if none exists yet.
+/// One row per (branch, date) — `@@unique`; closing again while
+/// `isOpen: false` is a 409 (`closeTreasuryDay`'s own doc comment).
+/// `isOpen: true` means the day was reopened after closing (an authorized
+/// correction) and new entries are allowed again until it is closed once
+/// more — see `assertBranchDayNotClosed`/`reopenTreasuryDay`. Every
+/// close/reopen is also written to `AuditLog` (STATUS_CHANGE), so the full
+/// history survives even though this row only ever holds the latest state.
 model TreasuryDayClosure {
-  id                String       @id @default(uuid()) @db.Uuid
-  branchId          String       @db.Uuid
-  branch            Branch       @relation(fields: [branchId], references: [id])
-  date              DateTime     @db.Date
-  closedById        String       @db.Uuid
-  closedBy          StaffProfile @relation(fields: [closedById], references: [id])
-  closedAt          DateTime     @default(now())
-  totalAtClose      Decimal      @db.Decimal(12, 2)
-  entryCountAtClose Int
+  id       String   @id @default(uuid()) @db.Uuid
+  branchId String   @db.Uuid
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  date     DateTime @db.Date
+
+  openingBalance         Decimal @db.Decimal(12, 2)
+  totalInflows           Decimal @db.Decimal(12, 2)
+  totalOutflows          Decimal @db.Decimal(12, 2)
+  expectedClosingBalance Decimal @db.Decimal(12, 2)
+  actualCountedCash      Decimal @db.Decimal(12, 2)
+  difference             Decimal @db.Decimal(12, 2)
+  entryCountAtClose      Int
+  notes                  String?
+
+  closedById String       @db.Uuid
+  closedBy   StaffProfile @relation("TreasuryDayClosureClosedBy", fields: [closedById], references: [id])
+  closedAt   DateTime     @default(now())
+
+  isOpen       Boolean       @default(false)
+  reopenedById String?       @db.Uuid
+  reopenedBy   StaffProfile? @relation("TreasuryDayClosureReopenedBy", fields: [reopenedById], references: [id])
+  reopenedAt   DateTime?
+  reopenReason String?
 
   @@unique([branchId, date])
   @@index([branchId])

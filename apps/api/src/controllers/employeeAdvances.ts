@@ -12,6 +12,7 @@ import {
   MissingWalletMethodError,
 } from '../services/employeeAdvanceService.js';
 import { computeEmployeePayroll } from '../services/employeePayrollService.js';
+import { DayClosedError } from '../services/treasuryService.js';
 
 export async function listAdvancesForStaffHandler(req: Request<{ staffId: string }>, res: Response) {
   const advances = await listAdvancesForStaff(req.params.staffId);
@@ -27,7 +28,16 @@ export async function createAdvanceHandler(req: Request, res: Response) {
     return;
   }
 
-  const advance = await createAdvance(input, auth.staffId);
+  let advance;
+  try {
+    advance = await createAdvance(input, auth.staffId);
+  } catch (err) {
+    if (err instanceof DayClosedError) {
+      res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
+      return;
+    }
+    throw err;
+  }
 
   await recordAudit({
     entityType: 'EmployeeAdvance',
@@ -65,6 +75,10 @@ export async function createAdvanceRepaymentHandler(req: Request<{ advanceId: st
     }
     if (err instanceof AdvanceRepaymentExceedsBalanceError || err instanceof MissingWalletMethodError) {
       res.status(400).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof DayClosedError) {
+      res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
       return;
     }
     throw err;

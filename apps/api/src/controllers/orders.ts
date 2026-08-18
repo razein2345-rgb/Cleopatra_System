@@ -18,6 +18,7 @@ import {
 import { QuotationItemValidationError, validateQuotationItemRefs } from '../services/quotationService.js';
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
+import { DayClosedError } from '../services/treasuryService.js';
 
 /**
  * FEATURE-007 — the "المستندات" (Documents) unified list needs every
@@ -92,6 +93,10 @@ export async function createOrderHandler(req: Request, res: Response) {
     }
     if (err instanceof DeliveryDateBeforeOrderDateError) {
       res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_DELIVERY_DATE' } });
+      return;
+    }
+    if (err instanceof DayClosedError) {
+      res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
       return;
     }
     throw err;
@@ -221,6 +226,10 @@ export async function recordPaymentHandler(req: Request<{ id: string }>, res: Re
   } catch (err) {
     if (err instanceof OrderNotFoundError) {
       res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof DayClosedError) {
+      res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
       return;
     }
     throw err;

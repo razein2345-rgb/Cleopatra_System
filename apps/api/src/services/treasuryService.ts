@@ -4,6 +4,7 @@ import type {
   MyTreasurySummary,
   TreasuryBalance,
   TreasuryDayClosure,
+  TreasuryDayClosurePreview,
   TreasuryEntry,
   UpdateTreasuryEntryInput,
 } from '@cleopatra/shared';
@@ -156,6 +157,8 @@ export async function createManualTreasuryEntry(
   input: CreateTreasuryEntryInput,
   staffId: string,
 ): Promise<TreasuryEntry> {
+  await assertBranchDayNotClosed(input.branchId, input.date);
+
   const created = await prisma.treasuryEntry.create({
     data: {
       type: input.type,
@@ -210,63 +213,192 @@ function mapDayClosureToDto(record: Prisma.TreasuryDayClosureGetPayload<object>)
     id: record.id,
     branchId: record.branchId,
     date: record.date.toISOString().slice(0, 10),
+    openingBalance: record.openingBalance.toNumber(),
+    totalInflows: record.totalInflows.toNumber(),
+    totalOutflows: record.totalOutflows.toNumber(),
+    expectedClosingBalance: record.expectedClosingBalance.toNumber(),
+    actualCountedCash: record.actualCountedCash.toNumber(),
+    difference: record.difference.toNumber(),
+    entryCountAtClose: record.entryCountAtClose,
+    notes: record.notes,
     closedById: record.closedById,
     closedAt: record.closedAt.toISOString(),
-    totalAtClose: record.totalAtClose.toNumber(),
-    entryCountAtClose: record.entryCountAtClose,
+    isOpen: record.isOpen,
+    reopenedById: record.reopenedById,
+    reopenedAt: record.reopenedAt?.toISOString() ?? null,
+    reopenReason: record.reopenReason,
   };
 }
 
-/** UTC midnight of "today" — matches the `@db.Date` column's own storage, no time-of-day component. */
-function todayDateOnly(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+/** UTC midnight of a given date (defaults to today) — matches the `@db.Date` column's own storage, no time-of-day component. */
+function dateOnly(input?: Date | string): Date {
+  const source = input ? new Date(input) : new Date();
+  return new Date(Date.UTC(source.getUTCFullYear(), source.getUTCMonth(), source.getUTCDate()));
 }
 
 export class DayAlreadyClosedError extends Error {
   constructor() {
-    super('This branch has already closed today');
+    super('This branch has already closed this day');
     this.name = 'DayAlreadyClosedError';
   }
 }
 
-/**
- * FEATURE-016 — a review/summary marker only (owner's own clarification:
- * "مجرد علامة/ملخص", not a real lock). Reads today's branch-scoped total/
- * count the same way `getMyTreasurySummary` does, just date-bounded, and
- * freezes them into one row. Any `treasury.create` holder for that branch
- * may close it — same access level already required to record entries
- * there in the first place, per the owner's own confirmation.
- */
-export async function closeTreasuryDay(branchId: string, staffId: string): Promise<TreasuryDayClosure> {
-  const date = todayDateOnly();
-  const existing = await prisma.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
-  if (existing) throw new DayAlreadyClosedError();
+export class DayNotClosedError extends Error {
+  constructor() {
+    super('This branch/day is not currently closed');
+    this.name = 'DayNotClosedError';
+  }
+}
 
+/**
+ * The daily closing screen's whole reason to exist: a caller who tries to
+ * record a treasury entry (manual, invoice payment, employee advance/
+ * repayment — every write path, see each call site's own comment) for a
+ * branch+date that was already closed and never reopened gets rejected
+ * here, once, instead of the check being duplicated per call site.
+ */
+export class DayClosedError extends Error {
+  constructor() {
+    super('This branch/day is closed — new treasury entries are locked until it is reopened');
+    this.name = 'DayClosedError';
+  }
+}
+
+export async function assertBranchDayNotClosed(
+  branchId: string,
+  entryDate: Date | string,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<void> {
+  const closure = await client.treasuryDayClosure.findUnique({
+    where: { branchId_date: { branchId, date: dateOnly(entryDate) } },
+  });
+  if (closure && !closure.isOpen) throw new DayClosedError();
+}
+
+/** Cash-only inflow/outflow totals for one branch+day — the physical-drawer reconciliation the owner asked for excludes Vodafone Cash/InstaPay/bank entries, which never touch the counted cash. */
+async function computeCashFlows(
+  branchId: string,
+  date: Date,
+): Promise<{ inflows: number; outflows: number; entryCount: number }> {
   const startOfDay = date;
   const endOfDay = new Date(date.getTime() + 24 * 60 * 60 * 1000 - 1);
-  const agg = await prisma.treasuryEntry.aggregate({
-    where: { isDeleted: false, branchId, date: { gte: startOfDay, lte: endOfDay } },
+  const grouped = await prisma.treasuryEntry.groupBy({
+    by: ['type'],
+    where: { isDeleted: false, branchId, method: 'CASH', date: { gte: startOfDay, lte: endOfDay } },
     _sum: { amount: true },
-    _count: true,
+    _count: { _all: true },
   });
 
-  const created = await prisma.treasuryDayClosure.create({
-    data: {
-      branchId,
-      date,
-      closedById: staffId,
-      totalAtClose: agg._sum.amount ?? 0,
-      entryCountAtClose: agg._count,
-    },
+  let inflows = 0;
+  let outflows = 0;
+  let entryCount = 0;
+  for (const g of grouped) {
+    const amount = g._sum.amount?.toNumber() ?? 0;
+    entryCount += g._count._all;
+    if (g.type === 'INCOME') inflows += amount;
+    else if (g.type === 'EXPENSE') outflows += amount;
+    // TRANSFER entries move cash between wallets, not into/out of the branch — excluded, same convention as getTreasuryBalance.
+  }
+  return { inflows, outflows, entryCount };
+}
+
+/** The counted cash left in the drawer at the last *actually closed* (not currently reopened) prior day for this branch — 0 if the branch has never closed a day before. */
+async function getCarryForwardOpeningBalance(branchId: string, beforeDate: Date): Promise<number> {
+  const previous = await prisma.treasuryDayClosure.findFirst({
+    where: { branchId, date: { lt: beforeDate }, isOpen: false },
+    orderBy: { date: 'desc' },
   });
-  return mapDayClosureToDto(created);
+  return previous?.actualCountedCash.toNumber() ?? 0;
+}
+
+/** The live numbers for today (or any not-yet-closed day) before the employee commits a close — same math `closeTreasuryDay` persists, computed fresh on every call. */
+export async function getDayClosurePreview(branchId: string, forDate?: string): Promise<TreasuryDayClosurePreview> {
+  const date = dateOnly(forDate);
+  const openingBalance = await getCarryForwardOpeningBalance(branchId, date);
+  const { inflows, outflows, entryCount } = await computeCashFlows(branchId, date);
+  return {
+    branchId,
+    date: date.toISOString().slice(0, 10),
+    openingBalance,
+    totalInflows: inflows,
+    totalOutflows: outflows,
+    expectedClosingBalance: openingBalance + inflows - outflows,
+    entryCount,
+  };
+}
+
+/**
+ * FEATURE-016, rebuilt 2026-08-18 per the owner's detailed spec — a real
+ * cash-drawer reconciliation (Opening + Inflows - Outflows = Expected,
+ * compared against what the employee actually counted), not the old
+ * review-marker-only behaviour. Locks new treasury entries for this
+ * branch+date going forward (`assertBranchDayNotClosed`) until reopened.
+ * Re-closing after a reopen updates the same row (full audit trail lives
+ * in `AuditLog`, not in extra rows here) — closing while still `isOpen:
+ * false` (never reopened) is the 409 case.
+ */
+export async function closeTreasuryDay(
+  branchId: string,
+  staffId: string,
+  actualCountedCash: number,
+  notes?: string,
+): Promise<TreasuryDayClosure> {
+  const date = dateOnly();
+  const existing = await prisma.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
+  if (existing && !existing.isOpen) throw new DayAlreadyClosedError();
+
+  const openingBalance = await getCarryForwardOpeningBalance(branchId, date);
+  const { inflows, outflows, entryCount } = await computeCashFlows(branchId, date);
+  const expectedClosingBalance = openingBalance + inflows - outflows;
+  const difference = actualCountedCash - expectedClosingBalance;
+
+  const data = {
+    branchId,
+    date,
+    openingBalance,
+    totalInflows: inflows,
+    totalOutflows: outflows,
+    expectedClosingBalance,
+    actualCountedCash,
+    difference,
+    entryCountAtClose: entryCount,
+    notes: notes ?? null,
+    closedById: staffId,
+    closedAt: new Date(),
+    isOpen: false,
+    reopenedById: null,
+    reopenedAt: null,
+    reopenReason: null,
+  };
+
+  const result = existing
+    ? await prisma.treasuryDayClosure.update({ where: { id: existing.id }, data })
+    : await prisma.treasuryDayClosure.create({ data });
+  return mapDayClosureToDto(result);
+}
+
+/** Unlocks new entries for an already-closed branch+date. Gated at the controller layer to SUPER_ADMIN/ADMIN only, per the owner's "Reopening should require the appropriate authorized permission" — a stricter bar than closing itself (which any `treasury.create` holder can do). */
+export async function reopenTreasuryDay(
+  branchId: string,
+  forDate: string,
+  staffId: string,
+  reason: string,
+): Promise<TreasuryDayClosure> {
+  const date = dateOnly(forDate);
+  const existing = await prisma.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
+  if (!existing || existing.isOpen) throw new DayNotClosedError();
+
+  const updated = await prisma.treasuryDayClosure.update({
+    where: { id: existing.id },
+    data: { isOpen: true, reopenedById: staffId, reopenedAt: new Date(), reopenReason: reason },
+  });
+  return mapDayClosureToDto(updated);
 }
 
 /** Null when today hasn't been closed yet for this branch — the normal, default state. */
 export async function getTodayClosure(branchId: string): Promise<TreasuryDayClosure | null> {
   const closure = await prisma.treasuryDayClosure.findUnique({
-    where: { branchId_date: { branchId, date: todayDateOnly() } },
+    where: { branchId_date: { branchId, date: dateOnly() } },
   });
   return closure ? mapDayClosureToDto(closure) : null;
 }

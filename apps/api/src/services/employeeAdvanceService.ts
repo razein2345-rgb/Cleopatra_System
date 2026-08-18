@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import type { CreateAdvanceRepaymentInput, CreateEmployeeAdvanceInput, EmployeeAdvance, EmployeeAdvanceSummary } from '@cleopatra/shared';
 import { computeEmployeePayroll } from './employeePayrollService.js';
+import { assertBranchDayNotClosed } from './treasuryService.js';
 
 /**
  * FEATURE-008 (2026-08-13, owner: "إدارة السلف هتبقى من الخزينة ولا من قسم
@@ -76,6 +77,8 @@ export async function listAdvancesForStaff(staffId: string): Promise<EmployeeAdv
 
 export async function createAdvance(input: CreateEmployeeAdvanceInput, recordedById: string): Promise<EmployeeAdvance> {
   const advance = await prisma.$transaction(async (tx) => {
+    await assertBranchDayNotClosed(input.branchId, input.date, tx);
+
     const created = await tx.employeeAdvance.create({
       data: {
         staffId: input.staffId,
@@ -139,6 +142,7 @@ export async function createRepayment(
       if (!input.walletMethod) {
         throw new MissingWalletMethodError();
       }
+      await assertBranchDayNotClosed(advance.branchId, input.date, tx);
       await tx.treasuryEntry.create({
         data: {
           type: 'INCOME',

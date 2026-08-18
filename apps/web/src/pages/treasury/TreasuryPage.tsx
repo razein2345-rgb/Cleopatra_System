@@ -7,6 +7,7 @@ import type {
   PaymentMethod,
   TreasuryBalance,
   TreasuryDayClosure,
+  TreasuryDayClosurePreview,
   TreasuryEntry,
   TreasuryType,
   UpdateTreasuryEntryInput,
@@ -43,7 +44,7 @@ export function TreasuryPage() {
 }
 
 function FullTreasuryView() {
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
   const [entries, setEntries] = useState<TreasuryEntry[] | null>(null);
   const [balance, setBalance] = useState<TreasuryBalance | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
@@ -52,6 +53,9 @@ function FullTreasuryView() {
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [showAdvanceForm, setShowAdvanceForm] = useState(false);
+  const [closureBranchId, setClosureBranchId] = useState('');
+  const [closureRefreshTick, setClosureRefreshTick] = useState(0);
+  const isAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN' || r.name === 'ADMIN') ?? false;
 
   const [typeFilter, setTypeFilter] = useState<TreasuryType | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
@@ -86,6 +90,7 @@ function FullTreasuryView() {
   const refreshAll = () => {
     loadList();
     loadBalance();
+    setClosureRefreshTick((t) => t + 1);
   };
 
   /** FEATURE-007 (2026-08-12, owner: "محتاج قسم الوارد والمنصرف ضروري علشان ابدأ افعله عندي واشتغل من عليه") — the module itself already existed end-to-end (this page); the actual gap was no way to fix a mistaken entry, which real daily use immediately needs. Automatic `INVOICE_PAYMENT` entries stay read-only (guarded server-side too — see `ManualEntryOnlyError`). */
@@ -161,6 +166,32 @@ function FullTreasuryView() {
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {/* FEATURE-016, rebuilt 2026-08-18 — admins oversee every branch's register, so unlike ReceptionTreasuryView's implicit "my own branch," this view picks which branch's day to review/close/reopen. */}
+      {branches.length > 0 && (
+        <div className="space-y-2">
+          <label className="block max-w-xs space-y-1 text-sm">
+            <span className="text-muted-foreground">الفرع</span>
+            <select
+              value={closureBranchId || branches[0].id}
+              onChange={(e) => setClosureBranchId(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <DailyClosureCard
+            branchId={closureBranchId || branches[0].id}
+            isAdmin={isAdmin}
+            onChanged={refreshAll}
+            refreshSignal={closureRefreshTick}
+          />
         </div>
       )}
 
@@ -342,8 +373,7 @@ function ReceptionTreasuryView() {
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [closure, setClosure] = useState<TreasuryDayClosure | null>(null);
-  const [closing, setClosing] = useState(false);
+  const [closureRefreshTick, setClosureRefreshTick] = useState(0);
 
   const load = () => {
     apiGet<MyTreasurySummary>('/api/treasury-entries/my-summary')
@@ -352,9 +382,7 @@ function ReceptionTreasuryView() {
     apiGet<TreasuryEntry[]>('/api/treasury-entries')
       .then(setMyEntries)
       .catch(() => undefined);
-    apiGet<TreasuryDayClosure | null>('/api/treasury-entries/today-closure')
-      .then(setClosure)
-      .catch(() => undefined);
+    setClosureRefreshTick((t) => t + 1);
   };
 
   useEffect(load, []);
@@ -366,6 +394,7 @@ function ReceptionTreasuryView() {
   const partnerName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? '—') : '—');
   const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? '—';
   const myBranchName = authContext ? branchName(authContext.user.branchId) : null;
+  const isAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN' || r.name === 'ADMIN') ?? false;
 
   const removeEntry = async (entry: TreasuryEntry) => {
     if (!confirm('حذف هذه الحركة؟')) return;
@@ -375,24 +404,6 @@ function ReceptionTreasuryView() {
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر حذف الحركة');
-    }
-  };
-
-  // FEATURE-016 (2026-08-16, owner: "زرار تقفيل حساب اليوم علشان يقدر ينجز
-  // ويراجع حسابه آخر اليوم") — a review/summary marker only, confirmed by
-  // the owner: closing does NOT block adding/editing/deleting entries
-  // afterward, it just freezes today's total as a "reviewed at" record.
-  const closeDay = async () => {
-    if (!confirm('تقفيل حساب اليوم؟ هيتسجل إجمالي وعدد حركات النهاردة كمرجع — ده مش هيمنعك من إضافة حركات جديدة بعد كده.')) return;
-    setClosing(true);
-    setError(null);
-    try {
-      const created = await apiPost<TreasuryDayClosure>('/api/treasury-entries/close-day');
-      setClosure(created);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر تقفيل حساب اليوم');
-    } finally {
-      setClosing(false);
     }
   };
 
@@ -408,26 +419,13 @@ function ReceptionTreasuryView() {
       <h1 className="text-2xl font-bold">الوارد والمنصرف{myBranchName ? ` — ${myBranchName}` : ''}</h1>
 
       {/* FEATURE-007 M3 (2026-08-13, owner: "لو حاطه في فرع كليوباترا يبقى الوارد والمنصرف بتاعه في كليوباترا بس") — this total/list is the caller's own branch's ledger, not just entries they personally recorded within it. */}
-      <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
-        <div>
-          <p className="text-muted-foreground text-sm">إجمالي حركات الفرع</p>
-          <p className="text-xl font-bold">{(summary?.total ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
-          <p className="text-muted-foreground mt-1 text-xs">{summary?.entryCount ?? 0} حركة</p>
-        </div>
-        {closure ? (
-          <div className="border-success/40 bg-success/10 text-success rounded-lg border px-3 py-2 text-sm">
-            <p className="font-semibold">اليوم مقفول ✓</p>
-            <p className="text-xs">
-              الإجمالي وقت التقفيل: {closure.totalAtClose.toLocaleString('en-US', { minimumFractionDigits: 2 })} —{' '}
-              {new Date(closure.closedAt).toLocaleTimeString('ar-EG')}
-            </p>
-          </div>
-        ) : (
-          <Button type="button" variant="secondary" disabled={closing} onClick={() => void closeDay()}>
-            {closing ? 'جارٍ التقفيل…' : 'تقفيل حساب اليوم'}
-          </Button>
-        )}
+      <Card className="p-4">
+        <p className="text-muted-foreground text-sm">إجمالي حركات الفرع</p>
+        <p className="text-xl font-bold">{(summary?.total ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+        <p className="text-muted-foreground mt-1 text-xs">{summary?.entryCount ?? 0} حركة</p>
       </Card>
+
+      <DailyClosureCard isAdmin={isAdmin} onChanged={load} refreshSignal={closureRefreshTick} />
 
       <NewEntryForm branches={branches} partners={partners} onCreated={load} />
 
@@ -543,6 +541,226 @@ function ReceptionTreasuryView() {
         </div>
       )}
     </div>
+  );
+}
+
+function ClosureRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: 'success' | 'danger' | 'emphasis';
+}) {
+  const toneClass =
+    tone === 'success' ? 'text-success' : tone === 'danger' ? 'text-danger' : tone === 'emphasis' ? 'font-semibold' : '';
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={toneClass}>{value}</span>
+    </div>
+  );
+}
+
+/**
+ * FEATURE-016, rebuilt 2026-08-18 per the owner's detailed spec — a real
+ * cash-drawer reconciliation (Opening + Inflows - Outflows = Expected, vs.
+ * what the employee actually counted), replacing the old review-marker-only
+ * version. `branchId` unset means "my own branch" (reception's normal
+ * case, server defaults to `auth.branchId`); admins on `FullTreasuryView`
+ * pass an explicit branch to review/close/reopen any branch's day.
+ * Reopening is admin-only client-side too (`isAdmin`) — pure UX, the
+ * server enforces the real gate regardless (see `reopenTreasuryDayHandler`).
+ */
+function DailyClosureCard({
+  branchId,
+  isAdmin,
+  onChanged,
+  refreshSignal,
+}: {
+  branchId?: string;
+  isAdmin: boolean;
+  onChanged: () => void;
+  /** Bumped by the parent whenever an entry is created/edited/deleted elsewhere on the page, so this card's preview numbers stay in sync without re-fetching on every render. */
+  refreshSignal?: number;
+}) {
+  const [closure, setClosure] = useState<TreasuryDayClosure | null>(null);
+  const [preview, setPreview] = useState<TreasuryDayClosurePreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [actualCash, setActualCash] = useState('');
+  const [closeNotes, setCloseNotes] = useState('');
+  const [closing, setClosing] = useState(false);
+  const [showReopenForm, setShowReopenForm] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
+  const [reopening, setReopening] = useState(false);
+
+  const qs = branchId ? `?branchId=${branchId}` : '';
+
+  const load = () => {
+    setError(null);
+    Promise.all([
+      apiGet<TreasuryDayClosure | null>(`/api/treasury-entries/today-closure${qs}`),
+      apiGet<TreasuryDayClosurePreview>(`/api/treasury-entries/day-closure-preview${qs}`),
+    ])
+      .then(([c, p]) => {
+        setClosure(c);
+        setPreview(p);
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل بيانات تقفيل اليوم'));
+  };
+
+  useEffect(load, [branchId, refreshSignal]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
+  const isClosed = closure !== null && !closure.isOpen;
+
+  const closeDay = async () => {
+    if (actualCash.trim() === '' || Number.isNaN(Number(actualCash))) {
+      setError('اكتب قيمة النقدية الفعلية اللي في الدرج');
+      return;
+    }
+    if (!confirm('تقفيل حساب اليوم؟ لن تقدر تسجّل حركات نقدية جديدة على هذا اليوم إلا بإعادة فتحه.')) return;
+    setClosing(true);
+    setError(null);
+    try {
+      const created = await apiPost<TreasuryDayClosure>('/api/treasury-entries/close-day', {
+        actualCountedCash: Number(actualCash),
+        notes: closeNotes.trim() || undefined,
+        branchId,
+      });
+      setClosure(created);
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تقفيل حساب اليوم');
+    } finally {
+      setClosing(false);
+    }
+  };
+
+  const reopenDay = async () => {
+    if (!closure) return;
+    if (!reopenReason.trim()) {
+      setError('اكتب سبب إعادة الفتح');
+      return;
+    }
+    setReopening(true);
+    setError(null);
+    try {
+      const updated = await apiPost<TreasuryDayClosure>('/api/treasury-entries/reopen-day', {
+        date: closure.date,
+        reason: reopenReason.trim(),
+        branchId,
+      });
+      setClosure(updated);
+      setShowReopenForm(false);
+      setReopenReason('');
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر إعادة فتح اليوم');
+    } finally {
+      setReopening(false);
+    }
+  };
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-semibold">تقفيل حساب اليوم (كاش)</h2>
+        {isClosed && <StatusBadge tone="success">مقفول</StatusBadge>}
+        {closure?.isOpen && <StatusBadge tone="warning">معاد فتحه</StatusBadge>}
+      </div>
+
+      {error && <div className="text-destructive text-sm">{error}</div>}
+
+      {isClosed && closure ? (
+        <div className="space-y-2 text-sm">
+          <ClosureRow label="الرصيد الافتتاحي" value={fmt(closure.openingBalance)} />
+          <ClosureRow label="الوارد" value={fmt(closure.totalInflows)} />
+          <ClosureRow label="المنصرف" value={fmt(closure.totalOutflows)} />
+          <ClosureRow label="المتبقي المتوقع" value={fmt(closure.expectedClosingBalance)} tone="emphasis" />
+          <ClosureRow label="النقدية الفعلية" value={fmt(closure.actualCountedCash)} tone="emphasis" />
+          <ClosureRow
+            label={closure.difference === 0 ? 'الفرق' : closure.difference > 0 ? 'زيادة' : 'عجز'}
+            value={fmt(closure.difference)}
+            tone={closure.difference === 0 ? undefined : closure.difference > 0 ? 'success' : 'danger'}
+          />
+          {closure.notes && <p className="text-muted-foreground text-xs">ملاحظات: {closure.notes}</p>}
+          <p className="text-muted-foreground text-xs">قُفل {new Date(closure.closedAt).toLocaleString('ar-EG')}</p>
+          {closure.reopenedAt && (
+            <p className="text-warning-foreground text-xs">
+              تم إعادة فتحه سابقًا في {new Date(closure.reopenedAt).toLocaleString('ar-EG')}
+              {closure.reopenReason ? ` — السبب: ${closure.reopenReason}` : ''}
+            </p>
+          )}
+
+          {isAdmin && !showReopenForm && (
+            <Button type="button" variant="secondary" size="sm" onClick={() => setShowReopenForm(true)}>
+              إعادة فتح اليوم
+            </Button>
+          )}
+          {isAdmin && showReopenForm && (
+            <div className="border-warning/40 bg-warning/10 space-y-2 rounded-lg border p-3">
+              <label className="block space-y-1 text-sm">
+                <span className="text-muted-foreground">سبب إعادة الفتح</span>
+                <input
+                  value={reopenReason}
+                  onChange={(e) => setReopenReason(e.target.value)}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  placeholder="مثال: خطأ في العدّ، حركة اتسجلت غلط"
+                />
+              </label>
+              <div className="flex gap-2">
+                <Button type="button" size="sm" disabled={reopening} onClick={() => void reopenDay()}>
+                  {reopening ? 'جارٍ إعادة الفتح…' : 'تأكيد إعادة الفتح'}
+                </Button>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowReopenForm(false)}>
+                  إلغاء
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : preview ? (
+        <div className="space-y-3">
+          <div className="space-y-2 text-sm">
+            <ClosureRow label="الرصيد الافتتاحي" value={fmt(preview.openingBalance)} />
+            <ClosureRow label="الوارد (كاش)" value={fmt(preview.totalInflows)} />
+            <ClosureRow label="المنصرف (كاش)" value={fmt(preview.totalOutflows)} />
+            <ClosureRow label="المتبقي المتوقع" value={fmt(preview.expectedClosingBalance)} tone="emphasis" />
+          </div>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">النقدية الفعلية في الدرج</span>
+            <input
+              type="number"
+              step="0.01"
+              value={actualCash}
+              onChange={(e) => setActualCash(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              placeholder="0.00"
+            />
+          </label>
+          {actualCash.trim() !== '' && !Number.isNaN(Number(actualCash)) && (
+            <p className="text-muted-foreground text-xs">
+              الفرق المتوقع: {fmt(Number(actualCash) - preview.expectedClosingBalance)}
+            </p>
+          )}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">ملاحظات (اختياري)</span>
+            <input
+              value={closeNotes}
+              onChange={(e) => setCloseNotes(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <Button type="button" disabled={closing} onClick={() => void closeDay()}>
+            {closing ? 'جارٍ التقفيل…' : 'تقفيل حساب اليوم'}
+          </Button>
+        </div>
+      ) : (
+        <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>
+      )}
+    </Card>
   );
 }
 

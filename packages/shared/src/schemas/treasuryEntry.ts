@@ -85,20 +85,60 @@ export const myTreasurySummarySchema = z.object({
 });
 
 /**
- * FEATURE-016 (2026-08-16, owner: "زرار تقفيل حساب اليوم علشان يقدر ينجز
- * ويراجع حسابه آخر اليوم") — a review/summary marker, not a lock: the
- * owner explicitly confirmed closing a day does NOT block further entries
- * for it, it just records that a review happened and what the totals were
- * at that moment. One row per (branch, date) — closing twice is a 409.
+ * FEATURE-016, rebuilt 2026-08-18 (owner: "The goal is to have a proper
+ * daily cash register closing system... Opening Balance + Total Inflows -
+ * Total Outflows = Expected Closing Balance") — a real cash-drawer
+ * reconciliation, not just a review marker. Reconciliation is CASH-method
+ * only (`actualCountedCash` is physical cash counted by hand — Vodafone
+ * Cash/InstaPay/bank entries stay on the normal ledger, just outside this
+ * drawer count). `isOpen: true` means the day was reopened after closing
+ * (an authorized correction — see `reopenTreasuryDay`) and new entries are
+ * allowed again until it is closed once more. One row per (branch, date);
+ * closing while already closed (`isOpen: false`) is a 409.
  */
 export const treasuryDayClosureSchema = z.object({
   id: z.string().uuid(),
   branchId: z.string().uuid(),
   date: z.string(),
+  openingBalance: z.number(),
+  totalInflows: z.number(),
+  totalOutflows: z.number(),
+  expectedClosingBalance: z.number(),
+  actualCountedCash: z.number(),
+  difference: z.number(),
+  entryCountAtClose: z.number().int(),
+  notes: z.string().nullable(),
   closedById: z.string().uuid(),
   closedAt: z.string(),
-  totalAtClose: z.number(),
-  entryCountAtClose: z.number().int(),
+  isOpen: z.boolean(),
+  reopenedById: z.string().uuid().nullable(),
+  reopenedAt: z.string().nullable(),
+  reopenReason: z.string().nullable(),
+});
+
+/** The live numbers for "today" (or a not-yet-closed day) before the employee commits a close — same math `closeTreasuryDay` will persist, minus `actualCountedCash`/`difference` which only exist once counted. */
+export const treasuryDayClosurePreviewSchema = z.object({
+  branchId: z.string().uuid(),
+  date: z.string(),
+  openingBalance: z.number(),
+  totalInflows: z.number(),
+  totalOutflows: z.number(),
+  expectedClosingBalance: z.number(),
+  entryCount: z.number().int(),
+});
+
+/** `branchId` lets a `treasury.view` holder (admin) close a branch other than their own assigned one — everyone else is locked to their own branch server-side regardless of what's sent here. */
+export const closeTreasuryDaySchema = z.object({
+  actualCountedCash: z.number(),
+  notes: z.string().trim().min(1).max(1000).optional(),
+  branchId: z.string().uuid().optional(),
+});
+
+/** `date` is the closed day being reopened (`YYYY-MM-DD`) — always today's own branch+date in the UI, but explicit so a past day can be corrected too. `branchId` — same admin-only override as `closeTreasuryDaySchema`. */
+export const reopenTreasuryDaySchema = z.object({
+  date: z.string(),
+  reason: z.string().trim().min(1).max(1000),
+  branchId: z.string().uuid().optional(),
 });
 
 export type TreasuryType = z.infer<typeof treasuryTypeSchema>;
@@ -109,3 +149,6 @@ export type UpdateTreasuryEntryInput = z.infer<typeof updateTreasuryEntrySchema>
 export type TreasuryBalance = z.infer<typeof treasuryBalanceSchema>;
 export type MyTreasurySummary = z.infer<typeof myTreasurySummarySchema>;
 export type TreasuryDayClosure = z.infer<typeof treasuryDayClosureSchema>;
+export type TreasuryDayClosurePreview = z.infer<typeof treasuryDayClosurePreviewSchema>;
+export type CloseTreasuryDayInput = z.infer<typeof closeTreasuryDaySchema>;
+export type ReopenTreasuryDayInput = z.infer<typeof reopenTreasuryDaySchema>;

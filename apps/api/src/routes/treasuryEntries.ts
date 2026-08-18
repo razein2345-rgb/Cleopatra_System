@@ -7,10 +7,12 @@ import {
   closeTreasuryDayHandler,
   createTreasuryEntryHandler,
   deleteTreasuryEntryHandler,
+  getDayClosurePreviewHandler,
   getMyTreasurySummaryHandler,
   getTodayClosureHandler,
   getTreasuryBalanceHandler,
   listTreasuryEntriesHandler,
+  reopenTreasuryDayHandler,
   updateTreasuryEntryHandler,
 } from '../controllers/treasuryEntries.js';
 
@@ -45,11 +47,16 @@ function requireTreasuryReadAccess(req: Request, res: Response, next: NextFuncti
 treasuryEntriesRouter.get('/', requireTreasuryReadAccess, listTreasuryEntriesHandler);
 treasuryEntriesRouter.get('/balance', requirePermission('treasury.view'), getTreasuryBalanceHandler);
 treasuryEntriesRouter.get('/my-summary', requireTreasuryReadAccess, getMyTreasurySummaryHandler);
-// FEATURE-016 — "تقفيل حساب اليوم" (review/summary marker, never a lock —
-// see closeTreasuryDay's own doc comment); same access level as recording
-// entries in the first place, per the owner's own confirmation.
+// FEATURE-016, rebuilt 2026-08-18 — "تقفيل حساب اليوم" is now a real
+// cash-drawer reconciliation that locks new entries for the day (see
+// treasuryService's own doc comments). Preview/close/today-closure share
+// the same access level as recording entries in the first place; reopening
+// is stricter (SUPER_ADMIN/ADMIN only, enforced inside the handler itself
+// since it isn't a `treasury.*` permission — see the handler's own comment).
+treasuryEntriesRouter.get('/day-closure-preview', requireTreasuryReadAccess, getDayClosurePreviewHandler);
 treasuryEntriesRouter.get('/today-closure', requireTreasuryReadAccess, getTodayClosureHandler);
 treasuryEntriesRouter.post('/close-day', requirePermission('treasury.create'), closeTreasuryDayHandler);
+treasuryEntriesRouter.post('/reopen-day', requirePermission('treasury.create'), reopenTreasuryDayHandler);
 treasuryEntriesRouter.post('/', requirePermission('treasury.create'), createTreasuryEntryHandler);
 treasuryEntriesRouter.put('/:id', requirePermission('treasury.edit'), updateTreasuryEntryHandler);
 treasuryEntriesRouter.delete('/:id', requirePermission('treasury.delete'), deleteTreasuryEntryHandler);

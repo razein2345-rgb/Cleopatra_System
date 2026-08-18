@@ -5,6 +5,7 @@ import { deductStockForOrderItem, restockForOrderItem } from './inventoryService
 import { buildPricingContext, computeItemPricing, type ItemPricingResult } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
 import { createWorkOrderForTrack, softDeleteWorkOrderTx, tryAutoCreateWorkOrders } from './workOrderService.js';
+import { assertBranchDayNotClosed } from './treasuryService.js';
 
 export { PricingInputError } from './pricingEngineService.js';
 
@@ -512,7 +513,12 @@ export async function createOrder(
 
     // FEATURE-007 — multi-payment collection at creation time
     // (PRICING_ENGINE_SPEC.md §4). Each payment gets its own atomically
-    // paired TreasuryEntry, same shape as `recordPayment` below.
+    // paired TreasuryEntry, same shape as `recordPayment` below. Daily
+    // closure (2026-08-18) — one guard check covers the whole loop since
+    // every payment here shares the same branch+today's date.
+    if ((input.payments?.length ?? 0) > 0) {
+      await assertBranchDayNotClosed(input.branchId, new Date(), tx);
+    }
     for (const payment of input.payments ?? []) {
       const createdPayment = await tx.payment.create({
         data: { orderId: created.id, method: payment.method, amount: payment.amount },
@@ -881,6 +887,7 @@ export async function recordPayment(
     if (!order || order.isDeleted) {
       throw new OrderNotFoundError();
     }
+    await assertBranchDayNotClosed(order.branchId, new Date(), tx);
 
     const payment = await tx.payment.create({
       data: { orderId: order.id, method: input.method, amount: input.amount },

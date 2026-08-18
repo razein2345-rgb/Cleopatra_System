@@ -1,15 +1,25 @@
 import type { Request, Response } from 'express';
-import { createTreasuryEntrySchema, hasPermission, treasuryTypeSchema, updateTreasuryEntrySchema } from '@cleopatra/shared';
+import {
+  closeTreasuryDaySchema,
+  createTreasuryEntrySchema,
+  hasPermission,
+  reopenTreasuryDaySchema,
+  treasuryTypeSchema,
+  updateTreasuryEntrySchema,
+} from '@cleopatra/shared';
 import {
   closeTreasuryDay,
   createManualTreasuryEntry,
   DayAlreadyClosedError,
+  DayNotClosedError,
   deleteManualTreasuryEntry,
+  getDayClosurePreview,
   getMyTreasurySummary,
   getTodayClosure,
   getTreasuryBalance,
   listTreasuryEntries,
   ManualEntryOnlyError,
+  reopenTreasuryDay,
   TreasuryEntryNotFoundError,
   updateManualTreasuryEntry,
 } from '../services/treasuryService.js';
@@ -57,19 +67,47 @@ export async function getMyTreasurySummaryHandler(req: Request, res: Response) {
   res.json({ success: true, data: summary });
 }
 
-/** FEATURE-016 — whether the caller's own branch has already closed today; null if not. Same access level as `/my-summary` (`treasury.create` is enough). */
-export async function getTodayClosureHandler(req: Request, res: Response) {
+/**
+ * A `treasury.view` holder (admin overseeing multiple branches) may target
+ * any branch via `?branchId=`/body `branchId`; everyone else — reception,
+ * `treasury.create`-only — is always locked to their own assigned branch
+ * regardless of what they send, same "one endpoint, permission-shaped by
+ * value" precedent as `listTreasuryEntriesHandler`'s `canSeeAll`.
+ */
+function resolveTargetBranchId(req: Request, requested: string | undefined): string {
   const auth = req.auth!;
-  const closure = await getTodayClosure(auth.branchId);
+  if (requested && hasPermission(auth.permissions, 'treasury.view')) return requested;
+  return auth.branchId;
+}
+
+/** FEATURE-016 — whether the target branch has already closed today (and its full reconciliation, if so); null if not. Same access level as `/my-summary` (`treasury.create` is enough) — branch override for admins, see `resolveTargetBranchId`. */
+export async function getTodayClosureHandler(req: Request, res: Response) {
+  const branchId = resolveTargetBranchId(req, typeof req.query.branchId === 'string' ? req.query.branchId : undefined);
+  const closure = await getTodayClosure(branchId);
   res.json({ success: true, data: closure });
 }
 
-/** FEATURE-016 — closes the caller's own branch's day (review/summary marker only, never a lock — see `closeTreasuryDay`'s own doc comment). */
+/** FEATURE-016, rebuilt 2026-08-18 — the live opening/inflows/outflows/expected numbers for today, before the employee commits a close. Same access level as recording entries in the first place — branch override for admins, see `resolveTargetBranchId`. */
+export async function getDayClosurePreviewHandler(req: Request, res: Response) {
+  const branchId = resolveTargetBranchId(req, typeof req.query.branchId === 'string' ? req.query.branchId : undefined);
+  const preview = await getDayClosurePreview(branchId);
+  res.json({ success: true, data: preview });
+}
+
+/**
+ * FEATURE-016, rebuilt 2026-08-18 per the owner's spec — a real cash-drawer
+ * reconciliation now, and it DOES lock new entries for the day
+ * (`assertBranchDayNotClosed`, enforced at every treasury-entry write path
+ * — see each one's own comment), unlike the old review-marker version.
+ */
 export async function closeTreasuryDayHandler(req: Request, res: Response) {
   const auth = req.auth!;
+  const input = closeTreasuryDaySchema.parse(req.body);
+  const branchId = resolveTargetBranchId(req, input.branchId);
+
   let closure;
   try {
-    closure = await closeTreasuryDay(auth.branchId, auth.staffId);
+    closure = await closeTreasuryDay(branchId, auth.staffId, input.actualCountedCash, input.notes);
   } catch (err) {
     if (err instanceof DayAlreadyClosedError) {
       res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_ALREADY_CLOSED' } });
@@ -81,13 +119,64 @@ export async function closeTreasuryDayHandler(req: Request, res: Response) {
   await recordAudit({
     entityType: 'TreasuryDayClosure',
     entityId: closure.id,
-    action: 'CREATE',
+    action: 'STATUS_CHANGE',
     performedById: auth.staffId,
     branchId: closure.branchId,
-    newValue: { date: closure.date, totalAtClose: closure.totalAtClose, entryCountAtClose: closure.entryCountAtClose },
+    newValue: {
+      date: closure.date,
+      openingBalance: closure.openingBalance,
+      totalInflows: closure.totalInflows,
+      totalOutflows: closure.totalOutflows,
+      expectedClosingBalance: closure.expectedClosingBalance,
+      actualCountedCash: closure.actualCountedCash,
+      difference: closure.difference,
+    },
   });
 
   res.status(201).json({ success: true, data: closure });
+}
+
+/**
+ * FEATURE-016 — reopening a closed day is a stricter action than closing
+ * one (owner: "Reopening should require the appropriate authorized
+ * permission"). Gated to SUPER_ADMIN/ADMIN role names directly, the same
+ * "stricter than the module's own permission" precedent already used for
+ * the attendance-admin screen (`attendance.ts`'s
+ * `listAttendanceForStaffHandler`) — not a `treasury.*` permission key,
+ * since CASHIER already holds the `treasury.*` wildcard for day-to-day
+ * work and would otherwise inherit reopen access too.
+ */
+export async function reopenTreasuryDayHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  if (!auth.roleNames.includes('SUPER_ADMIN') && !auth.roleNames.includes('ADMIN')) {
+    res.status(403).json({ success: false, error: { message: 'Reopening a closed day is restricted to admins' } });
+    return;
+  }
+
+  const input = reopenTreasuryDaySchema.parse(req.body);
+  const branchId = resolveTargetBranchId(req, input.branchId);
+
+  let closure;
+  try {
+    closure = await reopenTreasuryDay(branchId, input.date, auth.staffId, input.reason);
+  } catch (err) {
+    if (err instanceof DayNotClosedError) {
+      res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_NOT_CLOSED' } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'TreasuryDayClosure',
+    entityId: closure.id,
+    action: 'STATUS_CHANGE',
+    performedById: auth.staffId,
+    branchId: closure.branchId,
+    newValue: { date: closure.date, reopenReason: closure.reopenReason },
+  });
+
+  res.json({ success: true, data: closure });
 }
 
 export async function createTreasuryEntryHandler(req: Request, res: Response) {
