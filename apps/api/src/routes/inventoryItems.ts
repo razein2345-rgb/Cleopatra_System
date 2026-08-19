@@ -8,6 +8,7 @@ import {
   getInventoryItemHandler,
   listInventoryItemsHandler,
   listItemsNeedingSupplierHandler,
+  listStockMovementsHandler,
   recordStockMovementHandler,
   updateInventoryItemHandler,
 } from '../controllers/inventoryItems.js';
@@ -25,5 +26,6 @@ inventoryItemsRouter.get('/by-barcode/:barcode', requirePermission('inventory.vi
 inventoryItemsRouter.get('/:id', requirePermission('inventory.view'), getInventoryItemHandler);
 inventoryItemsRouter.post('/', requirePermission('inventory.create'), createInventoryItemHandler);
 inventoryItemsRouter.put('/:id', requirePermission('inventory.edit'), updateInventoryItemHandler);
+inventoryItemsRouter.get('/:id/movements', requirePermission('inventory.view'), listStockMovementsHandler);
 inventoryItemsRouter.post('/:id/movements', requirePermission('inventory.create'), recordStockMovementHandler);
 inventoryItemsRouter.delete('/:id', requirePermission('inventory.delete'), deleteInventoryItemHandler);

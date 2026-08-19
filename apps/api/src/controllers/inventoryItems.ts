@@ -10,6 +10,7 @@ import {
   InventoryItemNotFoundError,
   listInventoryItems,
   listItemsNeedingSupplier,
+  listStockMovements,
   recordStockMovement,
   updateInventoryItem,
 } from '../services/inventoryService.js';
@@ -111,6 +112,13 @@ export async function updateInventoryItemHandler(req: Request<{ id: string }>, r
   });
 
   res.json({ success: true, data: updated });
+}
+
+/** Owner ("موظف المخزن مقدرش يجاوب 'الرصيد ده نزل امتى وليه'") — read-only, no Audit Log call (this is a view action, not a mutation). */
+export async function listStockMovementsHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const movements = await listStockMovements(req.params.id, auth.branchId);
+  res.json({ success: true, data: movements });
 }
 
 export async function recordStockMovementHandler(req: Request<{ id: string }>, res: Response) {

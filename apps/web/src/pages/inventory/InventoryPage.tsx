@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react';
-import type { CreateInventoryItemInput, InventoryItem, InventoryUnit, MaterialCategory } from '@cleopatra/shared';
+import type { CreateInventoryItemInput, InventoryItem, InventoryUnit, MaterialCategory, StockMovement, StockMovementType } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { StatusBadge, EditableTextCell } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
+
+const MOVEMENT_TYPE_LABELS: Record<StockMovementType, string> = {
+  IN: 'وارد',
+  OUT: 'صادر',
+  ADJUSTMENT: 'تسوية',
+};
 
 const CATEGORY_LABELS: Record<MaterialCategory, string> = {
   PAPER: 'ورق',
@@ -44,6 +51,7 @@ export function InventoryPage() {
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<MaterialCategory | 'ALL'>('ALL');
+  const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
 
   const load = () => {
     apiGet<InventoryItem[]>('/api/inventory-items')
@@ -162,6 +170,7 @@ export function InventoryPage() {
                 <th className="p-3">حد التنبيه</th>
                 <th className="p-3">سعر البيع</th>
                 <th className="p-3">الحالة</th>
+                <th className="p-3" />
               </tr>
             </thead>
             <tbody>
@@ -175,7 +184,7 @@ export function InventoryPage() {
                 if (filtered.length === 0) {
                   return (
                     <tr>
-                      <td className="text-muted-foreground p-3 text-center" colSpan={7}>
+                      <td className="text-muted-foreground p-3 text-center" colSpan={8}>
                         {items.length === 0 ? 'لا توجد بضاعة مسجلة بعد.' : 'لا توجد أصناف مطابقة.'}
                       </td>
                     </tr>
@@ -234,6 +243,15 @@ export function InventoryPage() {
                         <StatusBadge tone="success">متوفرة</StatusBadge>
                       )}
                     </td>
+                    <td className="p-3">
+                      <button
+                        type="button"
+                        onClick={() => setHistoryItem(item)}
+                        className="text-primary text-xs hover:underline"
+                      >
+                        سجل الحركة
+                      </button>
+                    </td>
                   </tr>
                 ));
               })()}
@@ -241,7 +259,64 @@ export function InventoryPage() {
           </table>
         </div>
       )}
+      {historyItem && <StockMovementHistoryDialog item={historyItem} onClose={() => setHistoryItem(null)} />}
     </div>
+  );
+}
+
+/** Owner ("موظف المخزن مقدرش يجاوب 'الرصيد ده نزل امتى وليه'") — read-only history, both order-driven and manual movements already land in the same StockMovement table. */
+function StockMovementHistoryDialog({ item, onClose }: { item: InventoryItem; onClose: () => void }) {
+  const [movements, setMovements] = useState<StockMovement[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiGet<StockMovement[]>(`/api/inventory-items/${item.id}/movements`)
+      .then(setMovements)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل سجل الحركة'));
+  }, [item.id]);
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>سجل حركة "{item.name}"</DialogTitle>
+        </DialogHeader>
+        {error && <p className="text-destructive text-sm">{error}</p>}
+        {!movements ? (
+          <p className="text-muted-foreground text-sm">جارٍ التحميل…</p>
+        ) : movements.length === 0 ? (
+          <p className="text-muted-foreground text-sm">لا توجد حركة مسجلة لهذا الصنف بعد.</p>
+        ) : (
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+                  <th className="p-2">التاريخ</th>
+                  <th className="p-2">النوع</th>
+                  <th className="p-2">الكمية</th>
+                  <th className="p-2">مرجع</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movements.map((m) => (
+                  <tr key={m.id} className="border-border border-b last:border-0">
+                    <td className="p-2">{new Date(m.date).toLocaleString('ar-EG')}</td>
+                    <td className="p-2">
+                      <StatusBadge tone={m.type === 'OUT' ? 'danger' : 'success'}>{MOVEMENT_TYPE_LABELS[m.type]}</StatusBadge>
+                    </td>
+                    <td className="p-2" dir="ltr">
+                      {m.type === 'OUT' ? '-' : '+'}
+                      {m.quantity.toLocaleString('en-US')} {UNIT_LABELS[item.unit]}
+                    </td>
+                    <td className="text-muted-foreground p-2">{m.reference ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

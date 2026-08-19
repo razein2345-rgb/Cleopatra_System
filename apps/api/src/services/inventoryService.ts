@@ -1,5 +1,5 @@
 import type { Prisma } from '../generated/prisma/client.js';
-import type { CreateInventoryItemInput, CreateStockMovementInput, InventoryItem, UpdateInventoryItemInput } from '@cleopatra/shared';
+import type { CreateInventoryItemInput, CreateStockMovementInput, InventoryItem, StockMovement, UpdateInventoryItemInput } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 
 type InventoryItemRecord = Prisma.InventoryItemGetPayload<{
@@ -209,6 +209,24 @@ export async function recordStockMovement(
     return tx.inventoryItem.findUniqueOrThrow({ where: { id: inventoryItemId }, include: INCLUDE });
   });
   return mapInventoryItemToDto(updated, branchId);
+}
+
+/** Owner ("موظف المخزن مقدرش يجاوب 'الرصيد ده نزل امتى وليه'") — every StockMovement for this item, newest first: both order-driven (`deductStockForOrderItem`/`restockForOrderItem`) and manual (`recordStockMovement`) rows already land in the same table. Read-only, no write path changes. */
+export async function listStockMovements(inventoryItemId: string, branchId: string): Promise<StockMovement[]> {
+  const rows = await prisma.stockMovement.findMany({
+    where: { inventoryItemId, branchId },
+    orderBy: { date: 'desc' },
+  });
+  return rows.map((m) => ({
+    id: m.id,
+    inventoryItemId: m.inventoryItemId,
+    branchId: m.branchId,
+    type: m.type,
+    quantity: m.quantity.toNumber(),
+    reference: m.reference,
+    date: m.date.toISOString(),
+    createdAt: m.createdAt.toISOString(),
+  }));
 }
 
 export async function deleteInventoryItem(id: string, deletedBy: string): Promise<void> {
