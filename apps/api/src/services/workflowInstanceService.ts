@@ -447,10 +447,14 @@ export async function advanceWorkflowInstance(
  * `getTrackQueue` (FEATURE-010, 2026-08-14 — لوحة الإنتاج's "الأقسام" sub-
  * tabs, one request per production track instead of per department).
  */
-async function queryWorkflowQueue(departmentId: string | { in: string[] }): Promise<WorkflowQueueItem[]> {
+async function queryWorkflowQueue(filter: {
+  departmentId?: string | { in: string[] };
+  assignedEmployeeId?: string;
+}): Promise<WorkflowQueueItem[]> {
   const rows = await prisma.stageInstance.findMany({
     where: {
-      departmentId,
+      ...(filter.departmentId !== undefined ? { departmentId: filter.departmentId } : {}),
+      ...(filter.assignedEmployeeId !== undefined ? { assignedEmployeeId: filter.assignedEmployeeId } : {}),
       status: { in: ['WAITING', 'IN_PROGRESS'] },
       workflowInstance: { isDeleted: false },
     },
@@ -477,7 +481,20 @@ async function queryWorkflowQueue(departmentId: string | { in: string[] }): Prom
 }
 
 export async function getDepartmentQueue(departmentId: string): Promise<WorkflowQueueItem[]> {
-  return queryWorkflowQueue(departmentId);
+  return queryWorkflowQueue({ departmentId });
+}
+
+/**
+ * UX_PRODUCT_AUDIT.md § مشكلة 5.1 ("لوحة الإنتاج مفيهاش 'مهامي اليوم' شخصية") —
+ * a staff member assigned across several departments (the common case for
+ * this 8-person team) otherwise has to scan every department's queue for
+ * their own name. Deliberately takes only the caller's own employeeId (see
+ * the controller — it's always `req.auth.staffId`, never an arbitrary id
+ * from the client), so no department-access check is needed: an employee
+ * is always allowed to see stages already assigned to them.
+ */
+export async function getMyQueue(employeeId: string): Promise<WorkflowQueueItem[]> {
+  return queryWorkflowQueue({ assignedEmployeeId: employeeId });
 }
 
 /**
@@ -505,7 +522,7 @@ export async function getTrackQueue(
     departmentIds = departmentIds.filter((id) => allowed.has(id));
   }
   if (departmentIds.length === 0) return [];
-  return queryWorkflowQueue({ in: departmentIds });
+  return queryWorkflowQueue({ departmentId: { in: departmentIds } });
 }
 
 const WORKFLOW_INSTANCE_LIST_INCLUDE = {

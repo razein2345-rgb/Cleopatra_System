@@ -70,10 +70,11 @@ const TRACK_TAB_LABELS: Record<TrackTabKey, string> = {
  * queue, unchanged behaviorally — see `DepartmentsTab` below, previously
  * this whole file's default export).
  */
-type TopTab = 'OVERVIEW' | 'ORDERS' | 'DEPARTMENTS';
-const TOP_TAB_ORDER: TopTab[] = ['OVERVIEW', 'ORDERS', 'DEPARTMENTS'];
+type TopTab = 'OVERVIEW' | 'MY_TASKS' | 'ORDERS' | 'DEPARTMENTS';
+const TOP_TAB_ORDER: TopTab[] = ['OVERVIEW', 'MY_TASKS', 'ORDERS', 'DEPARTMENTS'];
 const TOP_TAB_LABELS: Record<TopTab, string> = {
   OVERVIEW: 'نظرة عامة',
+  MY_TASKS: 'مهامي اليوم',
   ORDERS: 'الطلبات',
   DEPARTMENTS: 'الأقسام',
 };
@@ -111,6 +112,7 @@ export function ProductionBoardPage() {
           }}
         />
       )}
+      {tab === 'MY_TASKS' && <MyTasksTab />}
       {tab === 'ORDERS' && <ProductionBoardOrdersTab />}
       {tab === 'DEPARTMENTS' && <DepartmentsTab initialTrackTab={departmentsTrackTab} />}
     </div>
@@ -277,6 +279,261 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * UX_PRODUCT_AUDIT.md § مشكلة 5.1 ("لوحة الإنتاج مفيهاش 'مهامي اليوم'
+ * شخصية") — an employee assigned across several departments (the common
+ * case for this 8-person team, CLAUDE.md §6's "تعدد الأقسام للموظف
+ * الواحد") otherwise has to open every department's tab to find their own
+ * name in the list. One flat queue across all departments,
+ * scoped server-side to the caller's own StaffProfile id
+ * (`/api/workflow-instances/queue?mine=true` — see `getMyQueue` in
+ * `workflowInstanceService.ts`), so unlike `DepartmentsTab` there is no
+ * department/track selector — just what's actually assigned to *me*.
+ */
+function MyTasksTab() {
+  const { can } = useAuth();
+  const [queue, setQueue] = useState<WorkflowQueueItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [editingItem, setEditingItem] = useState<WorkflowQueueItem | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ item: WorkflowQueueItem; action: 'FAIL' | 'SKIP' } | null>(
+    null,
+  );
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [delayedOnly, setDelayedOnly] = useState(false);
+
+  const loadQueue = useCallback(() => {
+    apiGet<WorkflowQueueItem[]>('/api/workflow-instances/queue?mine=true')
+      .then((items) => {
+        setQueue(items);
+        setLastUpdated(new Date());
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل مهامك'));
+  }, []);
+
+  useEffect(loadQueue, [loadQueue]);
+
+  const filteredQueue = useMemo(() => {
+    if (!queue) return null;
+    return delayedOnly ? queue.filter((item) => item.isDelayed) : queue;
+  }, [queue, delayedOnly]);
+
+  const advance = async (item: WorkflowQueueItem, action: 'COMPLETE' | 'FAIL' | 'SKIP') => {
+    setActionError(null);
+    try {
+      await apiPut(`/api/workflow-instances/${item.workflowInstanceId}/advance`, {
+        action,
+        variableValues: item.variableValues ?? undefined,
+      });
+      loadQueue();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'تعذر تنفيذ الإجراء');
+    }
+  };
+
+  if (error) return <div className="text-destructive">{error}</div>;
+
+  const canEdit = can('work-orders.edit');
+
+  const actionButtons = (item: WorkflowQueueItem) => (
+    <div className="flex items-center gap-2">
+      <label className="flex items-center gap-1.5 text-xs" title="إنهاء المرحلة والانتقال للتالية">
+        <input type="checkbox" checked={false} onChange={() => void advance(item, 'COMPLETE')} />
+        إنهاء
+      </label>
+      <button
+        type="button"
+        title="تخطي"
+        onClick={() => setConfirmAction({ item, action: 'SKIP' })}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <SkipForward className="size-4" />
+      </button>
+      <button
+        type="button"
+        title="فشل"
+        onClick={() => setConfirmAction({ item, action: 'FAIL' })}
+        className="text-muted-foreground hover:text-destructive"
+      >
+        <Ban className="size-4" />
+      </button>
+      <button
+        type="button"
+        title="تعديل"
+        onClick={() => setEditingItem(item)}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <Pencil className="size-4" />
+      </button>
+    </div>
+  );
+
+  const timelineLink = (item: WorkflowQueueItem) => (
+    <Link
+      to={`/production-board/timeline/${item.workflowInstanceId}?workOrderNumber=${encodeURIComponent(item.workOrderNumber ?? '')}&customerName=${encodeURIComponent(item.customerName ?? '')}`}
+      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
+    >
+      <RouteIcon className="size-3.5" />
+      المسار الكامل
+    </Link>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="secondary" size="icon" onClick={loadQueue} aria-label="تحديث">
+            <RefreshCw className="size-4" />
+          </Button>
+          {lastUpdated && (
+            <span className="text-muted-foreground text-xs">
+              آخر تحديث: {lastUpdated.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+        </div>
+        <label className="flex items-center gap-1.5 text-sm">
+          <input type="checkbox" checked={delayedOnly} onChange={(e) => setDelayedOnly(e.target.checked)} />
+          المتأخرة فقط
+        </label>
+      </div>
+
+      {actionError && (
+        <div className="border-destructive/40 bg-destructive/10 text-destructive rounded-lg border p-3 text-sm">
+          {actionError}
+        </div>
+      )}
+
+      {!filteredQueue ? (
+        <div className="text-muted-foreground">جارٍ التحميل…</div>
+      ) : (
+        <>
+          <div className="border-border bg-card hidden rounded-2xl border sm:block">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>العميل</TableHead>
+                  <TableHead>أمر التشغيل</TableHead>
+                  <TableHead>القسم</TableHead>
+                  <TableHead>المرحلة</TableHead>
+                  <TableHead>الحالة</TableHead>
+                  <TableHead>الأولوية</TableHead>
+                  <TableHead>التأخير</TableHead>
+                  <TableHead>تاريخ الاستحقاق</TableHead>
+                  <TableHead>منذ</TableHead>
+                  <TableHead>سبب الانتظار</TableHead>
+                  <TableHead>المسار</TableHead>
+                  {canEdit && <TableHead>الإجراءات</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredQueue.map((item) => (
+                  <TableRow key={item.id} className={cn(rowToneClassName(item.isDelayed, item.priority))}>
+                    <TableCell className="font-medium">{item.customerName ?? '—'}</TableCell>
+                    <TableCell>{item.workOrderNumber ?? '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">{item.departmentName ?? '—'}</TableCell>
+                    <TableCell>{item.stageName}</TableCell>
+                    <TableCell>
+                      <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
+                        {STAGE_STATUS_LABELS[item.status]}
+                      </StatusBadge>
+                    </TableCell>
+                    <TableCell>
+                      <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
+                    </TableCell>
+                    <TableCell>
+                      {item.isDelayed ? (
+                        <StatusBadge tone="danger">متأخرة</StatusBadge>
+                      ) : (
+                        <StatusBadge tone="success">في الموعد</StatusBadge>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{formatDueDate(item.dueDate)}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatTimeInStage(item.startedAt, item.createdAt)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{item.waitingReason ?? '—'}</TableCell>
+                    <TableCell>{timelineLink(item)}</TableCell>
+                    {canEdit && <TableCell>{actionButtons(item)}</TableCell>}
+                  </TableRow>
+                ))}
+                {filteredQueue.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={canEdit ? 12 : 11} className="text-muted-foreground text-center">
+                      {queue && queue.length > 0
+                        ? 'لا توجد مهام مطابقة لعوامل التصفية الحالية.'
+                        : 'مفيش مهام متعينة عليك دلوقتي.'}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="grid gap-2 sm:hidden">
+            {filteredQueue.length === 0 && (
+              <div className="border-border bg-card text-muted-foreground rounded-2xl border p-4 text-center text-sm">
+                {queue && queue.length > 0
+                  ? 'لا توجد مهام مطابقة لعوامل التصفية الحالية.'
+                  : 'مفيش مهام متعينة عليك دلوقتي.'}
+              </div>
+            )}
+            {filteredQueue.map((item) => (
+              <Card key={item.id} className={cn('gap-2 p-3', rowToneClassName(item.isDelayed, item.priority))}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{item.customerName ?? '—'}</p>
+                    <p className="text-muted-foreground truncate text-xs">
+                      {item.workOrderNumber ?? '—'} · {item.departmentName ?? '—'} · {item.stageName}
+                    </p>
+                  </div>
+                  {item.isDelayed ? (
+                    <StatusBadge tone="danger">متأخرة</StatusBadge>
+                  ) : (
+                    <StatusBadge tone="success">في الموعد</StatusBadge>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
+                    {STAGE_STATUS_LABELS[item.status]}
+                  </StatusBadge>
+                  <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
+                  <span className="text-muted-foreground">استحقاق: {formatDueDate(item.dueDate)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  {timelineLink(item)}
+                  {canEdit && actionButtons(item)}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+
+      {editingItem && (
+        <EditQueueItemDialog
+          item={editingItem}
+          onClose={() => setEditingItem(null)}
+          onSaved={() => {
+            setEditingItem(null);
+            loadQueue();
+          }}
+        />
+      )}
+      {confirmAction && (
+        <ConfirmStageActionDialog
+          stageName={confirmAction.item.stageName}
+          action={confirmAction.action}
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={() => {
+            void advance(confirmAction.item, confirmAction.action);
+            setConfirmAction(null);
+          }}
+        />
+      )}
     </div>
   );
 }

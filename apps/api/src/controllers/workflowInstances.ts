@@ -8,6 +8,7 @@ import {
   WORKFLOW_INSTANCE_INCLUDE,
   advanceWorkflowInstance,
   getDepartmentQueue,
+  getMyQueue,
   getTrackQueue,
   getWorkflowDashboardSummary,
   listWorkflowInstances,
@@ -135,6 +136,16 @@ export async function getWorkflowQueue(req: Request, res: Response) {
   const departmentId = typeof req.query.departmentId === 'string' ? req.query.departmentId : undefined;
   const productionTrack =
     typeof req.query.productionTrack === 'string' ? (req.query.productionTrack as ProductionTrack) : undefined;
+  const mine = req.query.mine === 'true';
+
+  // UX_PRODUCT_AUDIT.md § مشكلة 5.1 — "مهامي اليوم": always the caller's
+  // own StaffProfile id, never a client-supplied employeeId, so this needs
+  // no department-access check (see getMyQueue's doc comment).
+  if (mine) {
+    const items = await getMyQueue(auth.staffId);
+    res.json({ success: true, data: items });
+    return;
+  }
 
   // FEATURE-010 (2026-08-14) — لوحة الإنتاج's "الأقسام" sub-tabs: one
   // combined queue for every department in a track, instead of the caller
