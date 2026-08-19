@@ -23,7 +23,12 @@ function mapInventoryItemToDto(record: InventoryItemRecord, branchId: string): I
     salePrice: record.salePrice?.toNumber() ?? null,
     reorderLevel,
     quantityOnHand,
-    isLowStock: reorderLevel !== null && quantityOnHand <= reorderLevel,
+    // Owner (2026-08-20, "ازاي مكتوب متوفر والعدد صفر لكل الأفرخ اللي
+    // محطوطة؟") — zero (or negative) stock is always "low"/needs
+    // attention, whether or not anyone bothered to configure a reorder
+    // threshold for that item. The threshold check stays for items that
+    // still have stock but are running low.
+    isLowStock: quantityOnHand <= 0 || (reorderLevel !== null && quantityOnHand <= reorderLevel),
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };

@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
-import type { CreateInventoryItemInput, InventoryItem, InventoryUnit, MaterialCategory, StockMovement, StockMovementType } from '@cleopatra/shared';
-import { apiGet, apiPost, apiPut } from '@/lib/api';
+import type {
+  CreateInventoryItemInput,
+  CreateStockMovementInput,
+  InventoryItem,
+  InventoryUnit,
+  MaterialCategory,
+  StockMovement,
+  StockMovementType,
+} from '@cleopatra/shared';
+import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { StatusBadge, EditableTextCell, paginate, Pagination } from '@/components/cleopatra';
+import { StatusBadge, EditableTextCell, paginate, Pagination, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 const PAGE_SIZE = 30;
@@ -54,8 +62,22 @@ export function InventoryPage() {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<MaterialCategory | 'ALL'>('ALL');
   const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
+  const [movementItem, setMovementItem] = useState<InventoryItem | null>(null);
   const [page, setPage] = useState(1);
+  const confirm = useConfirm();
   useEffect(() => setPage(1), [search, categoryFilter]);
+
+  /** Owner (2026-08-20, "دلوقتي انا بكتب عدد الأفرخ منين اللي عندي في المخزن؟") — `POST /:id/movements` has existed since this page's own creation, just with no button ever calling it for an already-created item (only `initialQuantity` at creation time). */
+  const removeItem = async (item: InventoryItem) => {
+    if (!(await confirm({ title: `حذف صنف "${item.name}"؟`, destructive: true }))) return;
+    setError(null);
+    try {
+      await apiDelete(`/api/inventory-items/${item.id}`);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حذف الصنف');
+    }
+  };
 
   const load = () => {
     apiGet<InventoryItem[]>('/api/inventory-items')
@@ -251,13 +273,33 @@ export function InventoryPage() {
                       )}
                     </td>
                     <td className="p-3">
-                      <button
-                        type="button"
-                        onClick={() => setHistoryItem(item)}
-                        className="text-primary text-xs hover:underline"
-                      >
-                        سجل الحركة
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {can('inventory.create') && (
+                          <button
+                            type="button"
+                            onClick={() => setMovementItem(item)}
+                            className="text-primary text-xs hover:underline"
+                          >
+                            تسجيل حركة
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setHistoryItem(item)}
+                          className="text-primary text-xs hover:underline"
+                        >
+                          سجل الحركة
+                        </button>
+                        {can('inventory.delete') && (
+                          <button
+                            type="button"
+                            onClick={() => void removeItem(item)}
+                            className="text-destructive text-xs hover:underline"
+                          >
+                            حذف
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ));
@@ -268,11 +310,118 @@ export function InventoryPage() {
       )}
       {items && <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />}
       {historyItem && <StockMovementHistoryDialog item={historyItem} onClose={() => setHistoryItem(null)} />}
+      {movementItem && (
+        <RecordMovementDialog
+          item={movementItem}
+          onClose={() => setMovementItem(null)}
+          onSaved={() => {
+            setMovementItem(null);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
 
 /** Owner ("موظف المخزن مقدرش يجاوب 'الرصيد ده نزل امتى وليه'") — read-only history, both order-driven and manual movements already land in the same StockMovement table. */
+/** Owner (2026-08-20) — the write-side counterpart `StockMovementHistoryDialog` below always lacked: adding stock (وارد, e.g. a supplier delivery) or a manual تسوية (adjustment) for an item that already exists. `POST /api/inventory-items/:id/movements` has been live since this module's own creation; this is its first caller. */
+function RecordMovementDialog({
+  item,
+  onClose,
+  onSaved,
+}: {
+  item: InventoryItem;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [type, setType] = useState<StockMovementType>('IN');
+  const [quantity, setQuantity] = useState('');
+  const [reference, setReference] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    const parsed = Number(quantity);
+    if (!quantity || Number.isNaN(parsed) || parsed <= 0) {
+      setError('اكتب كمية أكبر من صفر');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      const input: CreateStockMovementInput = { type, quantity: parsed, reference: reference || undefined };
+      await apiPost(`/api/inventory-items/${item.id}/movements`, input);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تسجيل الحركة');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>تسجيل حركة على "{item.name}"</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <p className="text-muted-foreground text-sm">
+            الرصيد الحالي: {item.quantityOnHand.toLocaleString('en-US')} {UNIT_LABELS[item.unit]}
+          </p>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">نوع الحركة</span>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as StockMovementType)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {Object.entries(MOVEMENT_TYPE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">الكمية</span>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              required
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">مرجع (اختياري)</span>
+            <input
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              placeholder="مثال: فاتورة مورد رقم..."
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function StockMovementHistoryDialog({ item, onClose }: { item: InventoryItem; onClose: () => void }) {
   const [movements, setMovements] = useState<StockMovement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
