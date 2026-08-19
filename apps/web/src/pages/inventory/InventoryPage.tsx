@@ -4,8 +4,10 @@ import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { StatusBadge, EditableTextCell } from '@/components/cleopatra';
+import { StatusBadge, EditableTextCell, paginate, Pagination } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
+
+const PAGE_SIZE = 30;
 
 const MOVEMENT_TYPE_LABELS: Record<StockMovementType, string> = {
   IN: 'وارد',
@@ -52,6 +54,8 @@ export function InventoryPage() {
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<MaterialCategory | 'ALL'>('ALL');
   const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
+  const [page, setPage] = useState(1);
+  useEffect(() => setPage(1), [search, categoryFilter]);
 
   const load = () => {
     apiGet<InventoryItem[]>('/api/inventory-items')
@@ -96,6 +100,15 @@ export function InventoryPage() {
   };
 
   if (error) return <div className="text-destructive">{error}</div>;
+
+  const q = search.trim().toLowerCase();
+  const filteredItems = (items ?? []).filter((item) => {
+    if (categoryFilter !== 'ALL' && item.category !== categoryFilter) return false;
+    if (q && !item.name.toLowerCase().includes(q) && !item.barcode?.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+  const pageItems = paginate(filteredItems, page, PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -175,13 +188,7 @@ export function InventoryPage() {
             </thead>
             <tbody>
               {(() => {
-                const q = search.trim().toLowerCase();
-                const filtered = items.filter((item) => {
-                  if (categoryFilter !== 'ALL' && item.category !== categoryFilter) return false;
-                  if (q && !item.name.toLowerCase().includes(q) && !item.barcode?.toLowerCase().includes(q)) return false;
-                  return true;
-                });
-                if (filtered.length === 0) {
+                if (filteredItems.length === 0) {
                   return (
                     <tr>
                       <td className="text-muted-foreground p-3 text-center" colSpan={8}>
@@ -190,7 +197,7 @@ export function InventoryPage() {
                     </tr>
                   );
                 }
-                return filtered.map((item) => (
+                return pageItems.map((item) => (
                   <tr key={item.id} className="border-border border-b last:border-0">
                     <td className="p-3 font-medium">
                       {can('inventory.edit') ? (
@@ -259,6 +266,7 @@ export function InventoryPage() {
           </table>
         </div>
       )}
+      {items && <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />}
       {historyItem && <StockMovementHistoryDialog item={historyItem} onClose={() => setHistoryItem(null)} />}
     </div>
   );

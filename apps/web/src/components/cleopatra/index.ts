@@ -13,4 +13,5 @@ export { NavTree } from './NavTree';
 export { ConfirmProvider, useConfirm } from './ConfirmProvider';
 export type { ConfirmOptions } from './ConfirmProvider';
 export { flattenNavLinks } from './nav-types';
+export { Pagination, paginate } from './Pagination';
 export type { NavEntry, NavLink, NavGroup } from './nav-types';

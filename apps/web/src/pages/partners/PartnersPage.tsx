@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type { BranchSummary, BusinessPartner, CreateBusinessPartnerInput, UpdateBusinessPartnerInput } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableSelectCell, EditableTextCell, StatusBadge } from '@/components/cleopatra';
+import { EditableSelectCell, EditableTextCell, paginate, Pagination, StatusBadge } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PARTNER_ROLE_LABELS, PARTNER_STATUS_LABELS, PARTNER_STATUS_OPTIONS, PARTNER_STATUS_TONES } from './partnerLabels';
 
@@ -12,12 +12,15 @@ import { PARTNER_ROLE_LABELS, PARTNER_STATUS_LABELS, PARTNER_STATUS_OPTIONS, PAR
  * Record). Search/filtering beyond the default name ordering is Milestone
  * 9; this page intentionally has none yet.
  */
+const PAGE_SIZE = 25;
+
 export function PartnersPage() {
   const { can } = useAuth();
   const [partners, setPartners] = useState<BusinessPartner[] | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [page, setPage] = useState(1);
 
   const load = () => {
     Promise.all([
@@ -52,6 +55,9 @@ export function PartnersPage() {
 
   if (error) return <div className="text-destructive">{error}</div>;
   if (!partners) return <div className="text-muted-foreground">جارٍ تحميل العملاء…</div>;
+
+  const totalPages = Math.max(1, Math.ceil(partners.length / PAGE_SIZE));
+  const pagePartners = paginate(partners, page, PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -89,7 +95,7 @@ export function PartnersPage() {
             </tr>
           </thead>
           <tbody>
-            {partners.map((partner) => (
+            {pagePartners.map((partner) => (
               <tr key={partner.id} className="border-border border-b last:border-0">
                 <td className="p-3 font-medium">
                   <div className="flex items-center gap-1">
@@ -169,6 +175,7 @@ export function PartnersPage() {
           </tbody>
         </table>
       </div>
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }

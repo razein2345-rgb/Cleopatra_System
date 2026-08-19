@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { BusinessPartner, Order, Quotation, WorkOrder, WorkflowInstanceStatus } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
-import { StatusBadge, type StatusTone } from '@/components/cleopatra';
+import { paginate, Pagination, StatusBadge, type StatusTone } from '@/components/cleopatra';
 import {
   ORDER_STATUS_LABELS,
   ORDER_STATUS_TONES,
@@ -53,6 +53,9 @@ interface DocumentRow {
 /** A customer with no resolvable partnerId (shouldn't normally happen) falls into its own bucket, sorted last. */
 const NO_PARTNER_KEY = '__none__';
 
+/** UX_PRODUCT_AUDIT.md § مشكلة 12.2 — pages by customer GROUP, not flat row, so every one customer's documents stay together instead of splitting across a page boundary. */
+const GROUPS_PAGE_SIZE = 20;
+
 /**
  * FEATURE-007 — "المستندات" (Documents), the owner's rename of what used
  * to be a Quotations-only list. Quotations/Orders(invoices)/WorkOrders
@@ -67,6 +70,7 @@ export function DocumentsPage() {
   const navigate = useNavigate();
   const [rows, setRows] = useState<DocumentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     Promise.all([
@@ -160,6 +164,8 @@ export function DocumentsPage() {
       latestDate: Math.max(...groupRows.map((r) => new Date(r.date).getTime())),
     }))
     .sort((a, b) => b.latestDate - a.latestDate);
+  const totalPages = Math.max(1, Math.ceil(sortedGroups.length / GROUPS_PAGE_SIZE));
+  const pageGroups = paginate(sortedGroups, page, GROUPS_PAGE_SIZE);
 
   return (
     <div className="space-y-4">
@@ -185,7 +191,7 @@ export function DocumentsPage() {
 
       {rows.length === 0 && <div className="text-muted-foreground">لا توجد مستندات بعد.</div>}
 
-      {sortedGroups.map((group) => (
+      {pageGroups.map((group) => (
         <div key={group.partnerId} className="border-border bg-card overflow-hidden rounded-2xl border">
           <div className="border-border bg-muted/30 flex items-center justify-between border-b p-3">
             <h2 className="font-semibold">{group.partnerName}</h2>
@@ -236,6 +242,7 @@ export function DocumentsPage() {
           </div>
         </div>
       ))}
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }
