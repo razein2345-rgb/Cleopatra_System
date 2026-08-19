@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Breadcrumbs, useConfirm } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
+import { downloadDocumentAsPdf } from '@/lib/documents/exportPdf';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
 
 /**
@@ -27,6 +28,7 @@ export function QuotationDocumentPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -84,6 +86,18 @@ export function QuotationDocumentPage() {
     }
   };
 
+  const exportPdf = async () => {
+    setDeleteError(null);
+    setExportingPdf(true);
+    try {
+      await downloadDocumentAsPdf(`عرض سعر ${quotation.quotationNumber}`);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'تعذر تصدير عرض السعر كملف PDF');
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   const items: DocumentRendererItem[] = quotation.items.map((item) => {
     const breakdown = item.breakdown as { quantity?: number; notes?: string | null } | null;
     return {
@@ -131,6 +145,9 @@ export function QuotationDocumentPage() {
               {deleting ? 'جارٍ الحذف…' : 'حذف عرض السعر'}
             </Button>
           )}
+          <Button type="button" variant="secondary" disabled={exportingPdf} onClick={() => void exportPdf()}>
+            {exportingPdf ? 'جارٍ التصدير…' : 'تنزيل PDF'}
+          </Button>
           <Button type="button" onClick={printQuotation}>
             طباعة عرض السعر
           </Button>

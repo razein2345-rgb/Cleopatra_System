@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Breadcrumbs, EditableNumberCell, EditableSelectCell, StatusBadge, useConfirm } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
+import { downloadDocumentAsPdf } from '@/lib/documents/exportPdf';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
 
 const PRODUCTION_STATUS_LABELS: Record<OrderItem['productionStatus'], string> = {
@@ -346,6 +347,7 @@ export function WorkOrderDocumentPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -408,6 +410,18 @@ export function WorkOrderDocumentPage() {
     }
   };
 
+  const exportPdf = async () => {
+    setDeleteError(null);
+    setExportingPdf(true);
+    try {
+      await downloadDocumentAsPdf(`أمر شغل ${workOrder.workOrderNumber}`);
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'تعذر تصدير أمر الشغل كملف PDF');
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
   const responsibleStaff = staff.find((s) => s.id === order.staffId)?.name ?? '—';
   // FEATURE-007 (2026-08-12) — the issuing branch's own identity wins over the global one.
   const branch = branches.find((b) => b.id === order.branchId);
@@ -465,6 +479,9 @@ export function WorkOrderDocumentPage() {
                 {deleting ? 'جارٍ الحذف…' : 'حذف أمر الشغل'}
               </Button>
             )}
+            <Button type="button" variant="secondary" disabled={exportingPdf} onClick={() => void exportPdf()}>
+              {exportingPdf ? 'جارٍ التصدير…' : 'تنزيل PDF'}
+            </Button>
             <Button type="button" onClick={() => window.print()}>
               طباعة أمر الشغل
             </Button>
@@ -517,6 +534,9 @@ export function WorkOrderDocumentPage() {
               {deleting ? 'جارٍ الحذف…' : 'حذف أمر الشغل'}
             </Button>
           )}
+          <Button type="button" variant="secondary" disabled={exportingPdf} onClick={() => void exportPdf()}>
+            {exportingPdf ? 'جارٍ التصدير…' : 'تنزيل PDF'}
+          </Button>
           <Button type="button" onClick={() => window.print()}>
             طباعة أمر الشغل
           </Button>

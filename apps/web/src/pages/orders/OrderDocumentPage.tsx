@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Breadcrumbs, useConfirm } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
+import { downloadDocumentAsPdf } from '@/lib/documents/exportPdf';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
 import { useAuth } from '@/state/AuthContext';
 
@@ -36,6 +37,7 @@ export function OrderDocumentPage() {
   const [staff, setStaff] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -78,6 +80,18 @@ export function OrderDocumentPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر حذف الفاتورة');
       setDeleting(false);
+    }
+  };
+
+  const exportPdf = async () => {
+    setError(null);
+    setExportingPdf(true);
+    try {
+      await downloadDocumentAsPdf(`فاتورة ${order.invoiceNumber}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تصدير الفاتورة كملف PDF');
+    } finally {
+      setExportingPdf(false);
     }
   };
 
@@ -153,6 +167,9 @@ export function OrderDocumentPage() {
               طباعة أمر شغل {PRODUCTION_TRACK_LABELS[wo.productionTrack]}
             </Button>
           ))}
+          <Button type="button" variant="secondary" disabled={exportingPdf} onClick={() => void exportPdf()}>
+            {exportingPdf ? 'جارٍ التصدير…' : 'تنزيل PDF'}
+          </Button>
           <Button type="button" onClick={() => window.print()}>
             طباعة الفاتورة
           </Button>
