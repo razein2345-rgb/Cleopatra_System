@@ -6,6 +6,8 @@ import type {
   BranchSummary,
   BusinessPartner,
   CreateOrderInput,
+  CreateOrderItemInput,
+  CreateOrderTemplateInput,
   CreatePaymentInput,
   CreateQuotationInput,
   ExtraServiceOption,
@@ -13,6 +15,7 @@ import type {
   InventoryItem,
   Order,
   OrderItemPricingInput,
+  OrderTemplate,
   PaymentMethod,
   PricingReference,
   ProductionTrack,
@@ -40,7 +43,7 @@ import { apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { PartnerCombobox } from '@/components/cleopatra';
+import { PartnerCombobox, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 type PricingKind = OrderItemPricingInput['kind'];
@@ -725,6 +728,23 @@ function previewItemTotal(
 ): { total: number; error: string | null; result: PricingPreviewResult | null } {
   const pricing = buildPricingInput(d);
   if (!pricing) return { total: 0, error: null, result: null };
+  return pricingPreviewFromInput(pricing, d.readyProductId || d.serviceId, ctx);
+}
+
+/**
+ * Same dispatch as `previewItemTotal` above, factored out to take an
+ * already-normalized `OrderItemPricingInput` (+ catalog id) directly
+ * instead of deriving it from a live `DraftItem` — `previewItemTotal` is
+ * now a thin wrapper over this. Lets "تحميل من قالب محفوظ" (a saved
+ * `OrderTemplate.itemsSnapshot`, already stored in this exact shape) reuse
+ * the identical pricing-preview math without reconstructing a full
+ * `DraftItem` per item kind.
+ */
+function pricingPreviewFromInput(
+  pricing: OrderItemPricingInput,
+  catalogId: string | undefined,
+  ctx: PricingCtx,
+): { total: number; error: string | null; result: PricingPreviewResult | null } {
   const extraCosts = sumExtraCosts(pricing);
 
   const families = ctx.families.map((f) => ({
@@ -887,7 +907,6 @@ function previewItemTotal(
       }
       case 'PRODUCT':
       case 'SERVICE': {
-        const catalogId = d.readyProductId || d.serviceId;
         if (!catalogId) return { total: 0, error: null, result: null };
         const unitPrice = ctx.catalogPriceById.get(catalogId);
         if (unitPrice === undefined) return { total: 0, error: 'لا يوجد سعر لهذا الصنف', result: null };
@@ -929,6 +948,47 @@ function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Se
       return `${services.find((s) => s.id === d.serviceId)?.name ?? d.itemType} × ${d.quantity}`;
     case 'INVENTORY_RETAIL':
       return `${d.itemType || KIND_LABELS.INVENTORY_RETAIL} × ${d.quantity}`;
+  }
+}
+
+/**
+ * Same summary text as `describeDraft`, sourced from an already-normalized
+ * `OrderItemPricingInput` instead of a live `DraftItem` — every field this
+ * reads (`realSizeLabel`/`quantity`/`colorCount`/etc.) already exists
+ * verbatim on the pricing input itself (that's precisely what
+ * `buildPricingInput` extracts a `DraftItem` down to), so this is a direct
+ * read, not a re-derivation. Used only when rehydrating a saved
+ * `OrderTemplate` item back into the cart.
+ */
+function describeFromPricingInput(
+  pricing: OrderItemPricingInput,
+  itemType: string,
+  readyProductId: string | undefined,
+  serviceId: string | undefined,
+  readyProducts: ReadyProduct[],
+  services: Service[],
+): string {
+  switch (pricing.kind) {
+    case 'LOOSE_PAPER':
+      return `${itemType || KIND_LABELS.LOOSE_PAPER} — ${pricing.realSizeLabel} — الكمية ${pricing.quantity} — ${pricing.colorCount} لون`;
+    case 'NOTEBOOK':
+      return `${itemType || KIND_LABELS.NOTEBOOK} — ${pricing.realSizeLabel} — ${pricing.notebookQuantity} دفتر`;
+    case 'ENVELOPE':
+      return `${itemType || KIND_LABELS.ENVELOPE} — ${pricing.quantity} قطعة`;
+    case 'FOLDER':
+      return `${itemType || KIND_LABELS.FOLDER} — ${pricing.realSizeLabel} — ${pricing.quantity} قطعة`;
+    case 'BOARDS':
+      return `${itemType || BOARD_MATERIAL_LABELS[pricing.material]} — ${pricing.widthCm}×${pricing.heightCm} سم — ${pricing.quantity} قطعة`;
+    case 'DIGITAL':
+      return `${itemType || KIND_LABELS.DIGITAL} — ${pricing.components
+        .map((c) => `${c.label || 'مكوّن'} ${c.pieceWidthCm}×${c.pieceHeightCm} سم × ${c.quantity}`)
+        .join(' + ')}`;
+    case 'PRODUCT':
+      return `${readyProducts.find((p) => p.id === readyProductId)?.name ?? itemType} × ${pricing.quantity}`;
+    case 'SERVICE':
+      return `${services.find((s) => s.id === serviceId)?.name ?? itemType} × ${pricing.quantity}`;
+    case 'INVENTORY_RETAIL':
+      return `${itemType || KIND_LABELS.INVENTORY_RETAIL} × ${pricing.quantity}`;
   }
 }
 
@@ -1249,6 +1309,56 @@ function reconstructCartLine(
 }
 
 /**
+ * "بعد ما الاوردر يتحفظ يسألني هل احفظه كقالب دوري" (owner, 2026-08-17) —
+ * loads one item from a saved `OrderTemplate.itemsSnapshot` back into an
+ * editable `CartLine`, pricing recomputed fresh via `pricingPreviewFromInput`
+ * (never the stored total, if one had been stored — it wasn't). Simpler
+ * than `reconstructCartLine` above: a template stores the exact
+ * `CreateOrderItemInput` shape (including the real `pricing` input) rather
+ * than a frozen `breakdown` a shape has to be inferred back out of, so no
+ * kind-detection/inference step is needed. `newGroupKey` is pre-resolved by
+ * the caller (one fresh key per distinct original `groupKey` in the
+ * template, so items that were grouped together stay grouped together,
+ * without colliding with any group already in the current cart) — the
+ * attachment fields are deliberately dropped (a template isn't tied to any
+ * one job's reference image).
+ */
+function buildCartLineFromTemplateItem(
+  item: CreateOrderItemInput,
+  ctx: PricingCtx,
+  readyProducts: ReadyProduct[],
+  services: Service[],
+  newGroupKey: string | undefined,
+): { line: CartLine | null; warning: string | null } {
+  const catalogId = item.readyProductId || item.serviceId;
+  const preview = pricingPreviewFromInput(item.pricing, catalogId, ctx);
+  if (preview.error) {
+    return { line: null, warning: `"${item.itemType}": ${preview.error}` };
+  }
+  draftKeySeq += 1;
+  return {
+    line: {
+      key: `item-${draftKeySeq}`,
+      itemType: item.itemType,
+      summary: describeFromPricingInput(item.pricing, item.itemType, item.readyProductId, item.serviceId, readyProducts, services),
+      notes: item.notes,
+      description: item.description,
+      inkColor: item.inkColor,
+      bindingType: item.bindingType,
+      sellophaneType: item.sellophaneType,
+      readyProductId: item.readyProductId,
+      serviceId: item.serviceId,
+      pricing: item.pricing,
+      total: preview.total,
+      productionTrack: item.productionTrack ?? null,
+      breakdown: preview.result ?? undefined,
+      groupKey: newGroupKey,
+    },
+    warning: null,
+  };
+}
+
+/**
  * FEATURE-006 M2 / FEATURE-007 PE-E — Direct Order/Invoice creation, wired
  * to the real pricing engine. Each item is priced client-side for an
  * instant preview (PRICING_ENGINE_SPEC.md §5 — "كل الحسابات المالية تُحسب
@@ -1265,7 +1375,9 @@ function reconstructCartLine(
  * one of Cleopatra's 7 real pricing kinds intact — see 02_PLAN.md's
  * "مطابقة شاشة الطلبات والمستندات" section for the full design decision.
  */
-type CreatedResult = { type: 'INVOICE'; order: Order } | { type: 'QUOTATION'; quotation: Quotation };
+type CreatedResult =
+  | { type: 'INVOICE'; order: Order; itemsSnapshot: CreateOrderItemInput[] }
+  | { type: 'QUOTATION'; quotation: Quotation; itemsSnapshot: CreateOrderItemInput[] };
 
 export function NewOrderPage() {
   const navigate = useNavigate();
@@ -1354,6 +1466,7 @@ export function NewOrderPage() {
           </div>
         )}
         <GenerateWorkOrderPanel order={order} />
+        <SaveAsTemplateSection itemsSnapshot={created.itemsSnapshot} branchId={order.branchId} partnerId={order.partnerId} />
       </div>
     );
   }
@@ -1379,6 +1492,7 @@ export function NewOrderPage() {
             مستند جديد آخر
           </Button>
         </div>
+        <SaveAsTemplateSection itemsSnapshot={created.itemsSnapshot} branchId={quotation.branchId} partnerId={quotation.partnerId} />
       </div>
     );
   }
@@ -1397,6 +1511,79 @@ export function NewOrderPage() {
       editQuotation={editQuotation}
       presetPartnerId={presetPartnerId}
     />
+  );
+}
+
+/**
+ * Owner (2026-08-17, "بعد ما الاوردر يتحفظ يسألني هل احفظه كقالب دوري") —
+ * the exact prompt requested: right after a save succeeds, ask whether to
+ * keep this item configuration as a reusable template, two-step (yes/no
+ * first, name only once "yes" is picked) so the common "no" case stays a
+ * single click. `itemsSnapshot` is the literal `outputItems` array that
+ * was just POSTed — already `CreateOrderItemInput[]`, no reconstruction
+ * needed on the way in (see `buildCartLineFromTemplateItem` for the way out).
+ */
+function SaveAsTemplateSection({
+  itemsSnapshot,
+  branchId,
+  partnerId,
+}: {
+  itemsSnapshot: CreateOrderItemInput[];
+  branchId: string;
+  partnerId: string;
+}) {
+  const [step, setStep] = useState<'ASK' | 'NAME' | 'SAVED'>('ASK');
+  const [name, setName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const input: CreateOrderTemplateInput = { name: name.trim(), branchId, partnerId, itemsSnapshot };
+      await apiPost('/api/order-templates', input);
+      setStep('SAVED');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حفظ القالب');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (step === 'SAVED') {
+    return <p className="text-success border-border border-t pt-3 text-sm">✓ اتحفظ القالب — هيظهر في "تحميل من قالب محفوظ" في أي طلب جديد.</p>;
+  }
+
+  return (
+    <div className="border-border space-y-2 border-t pt-3">
+      {step === 'ASK' ? (
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <span className="text-sm">تحب تحفظ الطلب ده كقالب متكرر؟</span>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setStep('NAME')}>
+            أيوه
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setStep('SAVED')}>
+            لأ
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="اسم القالب، مثال: دفاتر مدرسة النور الشهرية"
+            className="border-input bg-background min-w-[220px] rounded-md border px-3 py-2 text-sm"
+          />
+          <Button type="button" size="sm" disabled={!name.trim() || saving} onClick={() => void save()}>
+            {saving ? 'جارٍ الحفظ…' : 'حفظ القالب'}
+          </Button>
+        </div>
+      )}
+      {error && <p className="text-destructive text-xs">{error}</p>}
+    </div>
   );
 }
 
@@ -1703,6 +1890,49 @@ function NewOrderForm({
     [pricingReference, inventoryItems, readyProducts, services],
   );
 
+  // "بعد ما الاوردر يتحفظ يسألني هل احفظه كقالب دوري" (owner, 2026-08-17)
+  // — the other half of that ask: picking a saved template back up to
+  // prefill a brand-new order/quotation composer.
+  const confirm = useConfirm();
+  const [templates, setTemplates] = useState<OrderTemplate[]>([]);
+  useEffect(() => {
+    apiGet<OrderTemplate[]>('/api/order-templates')
+      .then(setTemplates)
+      .catch(() => undefined);
+  }, []);
+  const [templateLoadWarnings, setTemplateLoadWarnings] = useState<string[]>([]);
+
+  const loadTemplate = async (templateId: string) => {
+    const template = templates.find((t) => t.id === templateId);
+    if (!template) return;
+    if (
+      cart.length > 0 &&
+      !(await confirm({
+        title: `استبدال بنود السلة الحالية بقالب "${template.name}"؟`,
+        description: 'أي بنود مضافة دلوقتي هتتشال.',
+      }))
+    ) {
+      return;
+    }
+    // Two items sharing the template's original `groupKey` should still
+    // land in the same group after loading — just under a freshly minted
+    // key, so it can never collide with a group already in an unrelated cart.
+    const groupKeyMap = new Map<string, string>();
+    const results = template.itemsSnapshot.map((item) => {
+      let newGroupKey: string | undefined;
+      if (item.groupKey) {
+        if (!groupKeyMap.has(item.groupKey)) {
+          draftKeySeq += 1;
+          groupKeyMap.set(item.groupKey, `group-${draftKeySeq}`);
+        }
+        newGroupKey = groupKeyMap.get(item.groupKey);
+      }
+      return buildCartLineFromTemplateItem(item, ctx, readyProducts, services, newGroupKey);
+    });
+    setCart(results.map((r) => r.line).filter((l): l is CartLine => l !== null));
+    setTemplateLoadWarnings(results.map((r) => r.warning).filter((w): w is string => w !== null));
+  };
+
   const draftPreview = useMemo(() => previewItemTotal(draft, ctx), [draft, ctx]);
   // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — the resolved tracks
   // actually present in the cart right now, used to render one "يحتاج
@@ -1989,7 +2219,7 @@ function NewOrderForm({
         if (intent === 'SAVE_AND_PRINT') {
           navigate(`/quotations/${quotation.id}/print`);
         } else {
-          onCreated({ type: 'QUOTATION', quotation });
+          onCreated({ type: 'QUOTATION', quotation, itemsSnapshot: outputItems });
         }
       } else if (isEditing && editOrder) {
         const input: UpdateOrderInput = {
@@ -2023,7 +2253,7 @@ function NewOrderForm({
         if (intent === 'SAVE_AND_PRINT') {
           navigate(`/orders/${order.id}`);
         } else {
-          onCreated({ type: 'INVOICE', order });
+          onCreated({ type: 'INVOICE', order, itemsSnapshot: outputItems });
         }
       }
     } catch (err) {
@@ -2053,6 +2283,31 @@ function NewOrderForm({
       {/* عمود شمال — السلة (بنود الفاتورة/العرض)، زي الفيديو بالظبط */}
       <aside className="border-border bg-card sticky top-4 order-2 h-fit space-y-3 rounded-2xl border p-4">
         <p className="flex items-center gap-1 text-sm font-bold">🛒 {documentType === 'QUOTATION' ? 'بنود عرض السعر' : 'بنود الفاتورة'}</p>
+
+        {templates.length > 0 && (
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">تحميل من قالب محفوظ (اختياري)</span>
+            <select
+              value=""
+              onChange={(e) => e.target.value && void loadTemplate(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              <option value="">— اختر قالب —</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} ({t.itemsSnapshot.length} بند)
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {templateLoadWarnings.length > 0 && (
+          <div className="border-warning/40 bg-warning/10 text-warning-foreground rounded-lg border p-2 text-xs">
+            {templateLoadWarnings.map((w, i) => (
+              <p key={i}>⚠ {w}</p>
+            ))}
+          </div>
+        )}
 
         {cart.length === 0 ? (
           <p className="text-muted-foreground rounded-lg border border-dashed p-4 text-center text-sm">
