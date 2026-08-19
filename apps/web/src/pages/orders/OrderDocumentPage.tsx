@@ -110,9 +110,19 @@ export function OrderDocumentPage() {
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <div>
           <h1 className="text-xl font-bold">فاتورة {order.invoiceNumber}</h1>
-          <Link to="/quotations" className="text-muted-foreground text-sm hover:underline">
-            العودة إلى المستندات
-          </Link>
+          <div className="flex flex-wrap items-center gap-x-3 text-sm">
+            <Link to="/quotations" className="text-muted-foreground hover:underline">
+              العودة إلى المستندات
+            </Link>
+            <Link to={`/partners/${order.partnerId}`} className="text-primary hover:underline">
+              العميل: {partner.nameAr}
+            </Link>
+            {order.quotationOriginId && (
+              <Link to={`/quotations/${order.quotationOriginId}`} className="text-primary hover:underline">
+                عرض السعر الأصلي
+              </Link>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {can('orders.edit') && (

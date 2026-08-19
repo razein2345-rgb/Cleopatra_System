@@ -96,9 +96,19 @@ export function QuotationDocumentPage() {
       <div className="flex items-center justify-between print:hidden">
         <div>
           <h1 className="text-xl font-bold">عرض سعر {quotation.quotationNumber}</h1>
-          <Link to="/quotations" className="text-muted-foreground text-sm hover:underline">
-            العودة إلى المستندات
-          </Link>
+          <div className="flex flex-wrap items-center gap-x-3 text-sm">
+            <Link to="/quotations" className="text-muted-foreground hover:underline">
+              العودة إلى المستندات
+            </Link>
+            <Link to={`/partners/${quotation.partnerId}`} className="text-primary hover:underline">
+              العميل: {partner.nameAr}
+            </Link>
+            {quotation.convertedOrderId && (
+              <Link to={`/orders/${quotation.convertedOrderId}`} className="text-primary hover:underline">
+                الفاتورة الناتجة
+              </Link>
+            )}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {can('quotations.edit') && (
