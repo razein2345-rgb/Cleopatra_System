@@ -5,8 +5,14 @@ import { useAuth } from '@/state/AuthContext';
 import { cn } from '@/lib/utils';
 import type { NavEntry } from './nav-types';
 
-/** A string requires that exact permission; an array is satisfied by holding any one of them. */
-function isPermitted(can: (key: string) => boolean, permission: string | string[] | undefined): boolean {
+/** A string requires that exact permission; an array is satisfied by holding any one of them. `superAdminOnly` is a role check, independent of (and in addition to) any `permission`. */
+function isPermitted(
+  can: (key: string) => boolean,
+  permission: string | string[] | undefined,
+  superAdminOnly: boolean | undefined,
+  isSuperAdmin: boolean,
+): boolean {
+  if (superAdminOnly && !isSuperAdmin) return false;
   if (!permission) return true;
   return Array.isArray(permission) ? permission.some(can) : can(permission);
 }
@@ -21,8 +27,9 @@ interface NavTreeProps {
 }
 
 export function NavTree({ entries, collapsed = false, onNavigate, depth = 0 }: NavTreeProps) {
-  const { can } = useAuth();
-  const visible = entries.filter((entry) => isPermitted(can, entry.permission));
+  const { can, authContext } = useAuth();
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
+  const visible = entries.filter((entry) => isPermitted(can, entry.permission, entry.superAdminOnly, isSuperAdmin));
 
   return (
     <ul className="flex flex-col gap-0.5">
@@ -84,9 +91,10 @@ function NavGroupItem({
   onNavigate?: () => void;
   depth: number;
 }) {
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
   const [open, setOpen] = useState(true);
-  const visibleItems = entry.items.filter((item) => isPermitted(can, item.permission));
+  const visibleItems = entry.items.filter((item) => isPermitted(can, item.permission, item.superAdminOnly, isSuperAdmin));
   if (visibleItems.length === 0) return null;
 
   return (

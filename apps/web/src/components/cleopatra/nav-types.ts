@@ -11,6 +11,8 @@ export interface NavLink {
   icon?: LucideIcon;
   /** A single required permission, or a list where holding any one is enough (e.g. Treasury: `treasury.view` OR `treasury.create`). */
   permission?: string | string[];
+  /** Owner ("مفيش شاشة لعرض الـAudit Log نفسه") — a role restriction, not a permission-catalog check (same class as the attendance admin screen: reveals sensitive data across every module, not gated by the regular `permission` system at all). */
+  superAdminOnly?: boolean;
   end?: boolean;
   /** FEATURE-005 Sprint 2.5 — an attention count (e.g. delayed jobs), not a status. Omitted or 0 renders no badge. */
   badgeCount?: number;
@@ -28,6 +30,8 @@ export interface NavGroup {
   label: string;
   icon?: LucideIcon;
   permission?: string | string[];
+  /** See `NavLink.superAdminOnly` — same role restriction, applicable to a whole group too. */
+  superAdminOnly?: boolean;
   items: NavEntry[];
 }
 

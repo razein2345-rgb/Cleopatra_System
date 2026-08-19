@@ -8,6 +8,7 @@ import { LoginPage } from '@/pages/login/LoginPage';
 import { AcceptInvitePage } from '@/pages/accept-invite/AcceptInvitePage';
 import { RoleHome } from '@/pages/dashboard/RoleHome';
 import { SettingsPage } from '@/pages/settings/SettingsPage';
+import { AuditLogPage } from '@/pages/settings/AuditLogPage';
 import { UsersPage } from '@/pages/users/UsersPage';
 import { EmployeeProfilePage } from '@/pages/users/EmployeeProfilePage';
 import { EmployeeAdvancesReportPage } from '@/pages/users/EmployeeAdvancesReportPage';
@@ -46,6 +47,12 @@ function App() {
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/settings/:categoryId" element={<SettingsPage />} />
               </Route>
+
+              {/* Owner ("مفيش شاشة لعرض الـAudit Log نفسه") — SUPER_ADMIN-only,
+                  enforced inside the component itself (same pattern as
+                  EmployeeProfilePage's attendance/payroll gate), not via a
+                  `permission` prop since this isn't in the permission catalog. */}
+              <Route path="/audit-log" element={<AuditLogPage />} />
 
               <Route element={<ProtectedRoute permission="employees.view" />}>
                 <Route path="/users" element={<UsersPage />} />

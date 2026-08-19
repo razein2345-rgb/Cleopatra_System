@@ -14,6 +14,7 @@ import {
   Briefcase,
   Wrench,
   MonitorSmartphone,
+  History,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -87,6 +88,10 @@ const NAV_ITEMS: NavEntry[] = [
       { kind: 'link', to: '/roles', label: 'الأدوار', icon: ShieldCheck, permission: 'roles.view' },
       { kind: 'link', to: '/permissions', label: 'الصلاحيات', icon: KeyRound, permission: 'permissions.view' },
       { kind: 'link', to: '/settings', label: 'الإعدادات', icon: SettingsIcon, permission: 'settings.view' },
+      // Owner ("مفيش شاشة لعرض الـAudit Log نفسه") — same sensitivity class
+      // as the attendance admin screen: reveals every sensitive change
+      // across every module, not gated by the regular permission catalog.
+      { kind: 'link', to: '/audit-log', label: 'سجل التدقيق', icon: History, superAdminOnly: true },
     ],
   },
 ];
