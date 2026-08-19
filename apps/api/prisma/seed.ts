@@ -61,7 +61,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
   SALES: ['partners.*', 'orders.*', 'quotations.*', 'reports.view', 'inventory.view'],
   CASHIER: ['treasury.*', 'orders.view', 'partners.view'],
   PRODUCTION_MANAGER: ['work-orders.*', 'machines.*', 'orders.view'],
-  DESIGNER: ['work-orders.view', 'orders.view'],
+  DESIGNER: ['work-orders.view', 'work-orders.edit', 'orders.view'],
   PRINTING_OPERATOR: ['work-orders.view', 'work-orders.edit', 'machines.view'],
   VIEWER: [
     'partners.view',
