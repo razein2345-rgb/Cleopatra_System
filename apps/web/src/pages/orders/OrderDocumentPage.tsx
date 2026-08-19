@@ -4,6 +4,7 @@ import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, User } fr
 import { PRODUCTION_TRACK_LABELS } from '@cleopatra/shared';
 import { apiDelete, apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { Breadcrumbs } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
@@ -109,14 +110,15 @@ export function OrderDocumentPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <div>
-          <h1 className="text-xl font-bold">فاتورة {order.invoiceNumber}</h1>
+          <Breadcrumbs
+            items={[
+              { label: 'المستندات', to: '/quotations' },
+              { label: partner.nameAr, to: `/partners/${order.partnerId}` },
+              { label: `فاتورة ${order.invoiceNumber}` },
+            ]}
+          />
           <div className="flex flex-wrap items-center gap-x-3 text-sm">
-            <Link to="/quotations" className="text-muted-foreground hover:underline">
-              العودة إلى المستندات
-            </Link>
-            <Link to={`/partners/${order.partnerId}`} className="text-primary hover:underline">
-              العميل: {partner.nameAr}
-            </Link>
+            <h1 className="text-xl font-bold">فاتورة {order.invoiceNumber}</h1>
             {order.quotationOriginId && (
               <Link to={`/quotations/${order.quotationOriginId}`} className="text-primary hover:underline">
                 عرض السعر الأصلي

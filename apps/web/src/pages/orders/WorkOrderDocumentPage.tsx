@@ -4,7 +4,7 @@ import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem
 import { apiDelete, apiGet, apiPatch } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
-import { EditableNumberCell, EditableSelectCell, StatusBadge } from '@/components/cleopatra';
+import { Breadcrumbs, EditableNumberCell, EditableSelectCell, StatusBadge } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
@@ -432,14 +432,15 @@ export function WorkOrderDocumentPage() {
       <div className="space-y-4">
         <div className="flex items-center justify-between print:hidden">
           <div>
-            <h1 className="text-xl font-bold">أمر شغل {workOrder.workOrderNumber}</h1>
+            <Breadcrumbs
+              items={[
+                { label: 'المستندات', to: '/quotations' },
+                { label: partner.nameAr, to: `/partners/${order.partnerId}` },
+                { label: `أمر شغل ${workOrder.workOrderNumber}` },
+              ]}
+            />
             <div className="flex flex-wrap items-center gap-x-3 text-sm">
-              <Link to="/quotations" className="text-muted-foreground hover:underline">
-                العودة إلى المستندات
-              </Link>
-              <Link to={`/partners/${order.partnerId}`} className="text-primary hover:underline">
-                العميل: {partner.nameAr}
-              </Link>
+              <h1 className="text-xl font-bold">أمر شغل {workOrder.workOrderNumber}</h1>
               <Link to={`/orders/${order.id}`} className="text-primary hover:underline">
                 الفاتورة الأصلية
               </Link>
@@ -483,14 +484,15 @@ export function WorkOrderDocumentPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between print:hidden">
         <div>
-          <h1 className="text-xl font-bold">أمر شغل {workOrder.workOrderNumber}</h1>
+          <Breadcrumbs
+            items={[
+              { label: 'المستندات', to: '/quotations' },
+              { label: partner.nameAr, to: `/partners/${order.partnerId}` },
+              { label: `أمر شغل ${workOrder.workOrderNumber}` },
+            ]}
+          />
           <div className="flex flex-wrap items-center gap-x-3 text-sm">
-            <Link to="/quotations" className="text-muted-foreground hover:underline">
-              العودة إلى المستندات
-            </Link>
-            <Link to={`/partners/${order.partnerId}`} className="text-primary hover:underline">
-              العميل: {partner.nameAr}
-            </Link>
+            <h1 className="text-xl font-bold">أمر شغل {workOrder.workOrderNumber}</h1>
             <Link to={`/orders/${order.id}`} className="text-primary hover:underline">
               الفاتورة الأصلية
             </Link>

@@ -4,6 +4,7 @@ import type { BranchSummary, BusinessIdentity, BusinessPartner, Quotation } from
 import { apiDelete, apiGet, apiPost } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
+import { Breadcrumbs } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
@@ -95,14 +96,15 @@ export function QuotationDocumentPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between print:hidden">
         <div>
-          <h1 className="text-xl font-bold">عرض سعر {quotation.quotationNumber}</h1>
+          <Breadcrumbs
+            items={[
+              { label: 'المستندات', to: '/quotations' },
+              { label: partner.nameAr, to: `/partners/${quotation.partnerId}` },
+              { label: `عرض سعر ${quotation.quotationNumber}` },
+            ]}
+          />
           <div className="flex flex-wrap items-center gap-x-3 text-sm">
-            <Link to="/quotations" className="text-muted-foreground hover:underline">
-              العودة إلى المستندات
-            </Link>
-            <Link to={`/partners/${quotation.partnerId}`} className="text-primary hover:underline">
-              العميل: {partner.nameAr}
-            </Link>
+            <h1 className="text-xl font-bold">عرض سعر {quotation.quotationNumber}</h1>
             {quotation.convertedOrderId && (
               <Link to={`/orders/${quotation.convertedOrderId}`} className="text-primary hover:underline">
                 الفاتورة الناتجة
