@@ -1,7 +1,13 @@
 import { Router } from 'express';
 import { requireAuth } from '../middlewares/requireAuth.js';
 import { requirePermission } from '../middlewares/requirePermission.js';
-import { createWorkOrder, deleteWorkOrder, getWorkOrder, listWorkOrders } from '../controllers/workOrders.js';
+import {
+  createWorkOrder,
+  deleteWorkOrder,
+  getWorkOrder,
+  listWorkOrders,
+  updateWorkOrderItemProduction,
+} from '../controllers/workOrders.js';
 
 export const workOrdersRouter = Router();
 
@@ -22,3 +28,7 @@ workOrdersRouter.get('/', requirePermission('work-orders.view'), listWorkOrders)
 workOrdersRouter.post('/', requirePermission('work-orders.edit'), createWorkOrder);
 workOrdersRouter.get('/:id', requirePermission('work-orders.view'), getWorkOrder);
 workOrdersRouter.delete('/:id', requirePermission('work-orders.delete'), deleteWorkOrder);
+// "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — per-item production
+// progress, independent of the shared WorkOrder's own stage. Same weight
+// as advancing a stage, so gated on `work-orders.edit` too.
+workOrdersRouter.patch('/:workOrderId/items/:itemId/production', requirePermission('work-orders.edit'), updateWorkOrderItemProduction);

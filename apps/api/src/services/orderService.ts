@@ -1,5 +1,6 @@
 import type { Prisma } from '../generated/prisma/client.js';
 import type { CreateOrderItemInput, CreatePaymentInput, Order, OrderItem, Payment, ProductionTrack } from '@cleopatra/shared';
+import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { deductStockForOrderItem, restockForOrderItem } from './inventoryService.js';
 import { buildPricingContext, computeItemPricing, type ItemPricingResult } from './pricingEngineService.js';
@@ -92,6 +93,12 @@ export function mapOrderItemToDto(item: OrderItemRecord): OrderItem {
       sheetPrice: m.sheetPrice.toNumber(),
       sheetsConsumed: m.sheetsConsumed.toNumber(),
     })),
+    groupId: item.groupId,
+    requiredQuantity: item.requiredQuantity,
+    producedQuantity: item.producedQuantity,
+    productionStatus: item.productionStatus,
+    productionUpdatedAt: item.productionUpdatedAt?.toISOString() ?? null,
+    productionUpdatedById: item.productionUpdatedById,
     createdAt: item.createdAt.toISOString(),
   };
 }
@@ -128,6 +135,35 @@ function materialsToRestock(item: {
     return [{ inventoryItemId: item.inventoryItemId, sheetsNeeded: item.sheetsConsumed.toNumber() }];
   }
   return [];
+}
+
+/**
+ * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — creates one real
+ * `OrderItemGroup` row per distinct `groupKey` shared by two or more items
+ * (a "group" of exactly one item isn't meaningful — the composer only ever
+ * sets `groupKey` when duplicating a line as a variant of another), and
+ * returns a map from that key to the real id for `buildOrderItemCreate`'s
+ * `groupId` param. Shared by `createOrder`/`updateOrder` so the two can
+ * never drift.
+ */
+async function resolveOrderItemGroups(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  items: { groupKey?: string }[],
+): Promise<Map<string, string>> {
+  const keyCounts = new Map<string, number>();
+  for (const item of items) {
+    if (!item.groupKey) continue;
+    keyCounts.set(item.groupKey, (keyCounts.get(item.groupKey) ?? 0) + 1);
+  }
+
+  const groupKeyToId = new Map<string, string>();
+  for (const [key, count] of keyCounts) {
+    if (count < 2) continue;
+    const group = await tx.orderItemGroup.create({ data: { orderId } });
+    groupKeyToId.set(key, group.id);
+  }
+  return groupKeyToId;
 }
 
 export function mapPaymentToDto(payment: PaymentRecord): Payment {
@@ -250,6 +286,14 @@ export function buildOrderItemCreate(item: {
   // through, no ad-hoc breakdown involvement (it's a real OrderItem
   // column, not a `breakdown` field).
   productionTrack?: ProductionTrack | null;
+  // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — `groupId` is the
+  // already-resolved real `OrderItemGroup` id (the caller maps each item's
+  // client-side `groupKey` to a real id before calling this — see
+  // `createOrder`/`updateOrder`), never a raw `groupKey` string.
+  // `requiredQuantity` is `resolveRequiredQuantity(item.pricing)`'s result,
+  // frozen the same way `sheetsConsumed` already is.
+  groupId?: string | null;
+  requiredQuantity?: number | null;
 }): {
   kind: string;
   modelName: string | null;
@@ -260,6 +304,8 @@ export function buildOrderItemCreate(item: {
   inventoryItemId: string | null;
   sheetsConsumed: number | null;
   productionTrack: ProductionTrack | null;
+  groupId: string | null;
+  requiredQuantity: number | null;
 } {
   return {
     kind: item.itemType,
@@ -270,6 +316,8 @@ export function buildOrderItemCreate(item: {
     inventoryItemId: item.inventoryItemId ?? null,
     sheetsConsumed: item.sheetsConsumed ?? null,
     productionTrack: item.productionTrack ?? null,
+    groupId: item.groupId ?? null,
+    requiredQuantity: item.requiredQuantity ?? null,
     breakdown:
       item.breakdownOverride ??
       {
@@ -410,6 +458,11 @@ export async function createOrder(
       select: { id: true, branchId: true, partnerId: true, invoiceNumber: true },
     });
 
+    // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — resolve each item's
+    // client-side `groupKey` to a real `OrderItemGroup` id before creating
+    // any item, so `buildOrderItemCreate` below can set the real column.
+    const groupKeyToId = await resolveOrderItemGroups(tx, created.id, input.items);
+
     // Multi-material pricing (2026-08-17) — items are created one at a time
     // (not via a single nested `items: { create: [...] }`) so each item's
     // real id is known immediately, letting its `OrderItemMaterial` rows
@@ -432,6 +485,8 @@ export async function createOrder(
             serviceId: item.serviceId,
             serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
             itemTotal: result.total,
+            groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
+            requiredQuantity: resolveRequiredQuantity(item.pricing),
             // `computeItemPricing`'s breakdown is pricing-only — it has
             // no access to `notes` (not part of `PricingLineItem`). Merge
             // it in here, the one place both the frozen pricing result
@@ -677,6 +732,12 @@ export async function updateOrder(
     // `OrderItemMaterial` rows cascade-delete with their parent `OrderItem`
     // (schema's `onDelete: Cascade`) — no separate cleanup needed here.
     await tx.orderItem.deleteMany({ where: { orderId } });
+    // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — old `OrderItemGroup`
+    // rows don't cascade away with their items (only Order deletion cascades
+    // to groups); clear them explicitly so a full item-replacement edit
+    // doesn't accumulate orphaned groups. `resolveOrderItemGroups` below
+    // creates fresh ones for whatever `groupKey`s the new item set uses.
+    await tx.orderItemGroup.deleteMany({ where: { orderId } });
 
     await tx.order.update({
       where: { id: orderId },
@@ -698,6 +759,10 @@ export async function updateOrder(
       },
     });
 
+    // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — same group
+    // resolution `createOrder` does; the old groups were just cleared above.
+    const groupKeyToId = await resolveOrderItemGroups(tx, orderId, input.items);
+
     // Multi-material pricing (2026-08-17) — items created one at a time
     // (not a nested bulk `items: { create: [...] }`), same reasoning as
     // `createOrder`: each item's real id must be known immediately to link
@@ -718,6 +783,8 @@ export async function updateOrder(
             serviceId: item.serviceId,
             serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
             itemTotal: result.total,
+            groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
+            requiredQuantity: resolveRequiredQuantity(item.pricing),
             breakdownOverride: {
               ...(result.breakdown as Record<string, unknown>),
               notes: item.notes ?? null,
@@ -817,6 +884,69 @@ export async function updateOrder(
   });
 
   return { id: orderId, invoiceNumber: existing.invoiceNumber, branchId: existing.branchId, partnerId: existing.partnerId };
+}
+
+export class OrderItemNotFoundError extends Error {
+  constructor() {
+    super('Order item not found');
+    this.name = 'OrderItemNotFoundError';
+  }
+}
+
+/**
+ * The item doesn't belong to the Work Order the caller is operating
+ * from — same "scope the mutation to what the URL actually names" defense
+ * `deleteWorkOrder`/`advanceWorkflowInstance` already apply elsewhere,
+ * not a generic 404 (the item exists, just not under this job).
+ */
+export class OrderItemNotInWorkOrderError extends Error {
+  constructor() {
+    super('This item does not belong to the given work order');
+    this.name = 'OrderItemNotInWorkOrderError';
+  }
+}
+
+/**
+ * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19, owner: "أقدر أعرف A4
+ * خلصت والA5 لسه") — the one mutation path for an OrderItem's own
+ * production progress, independent of the shared WorkOrder/WorkflowInstance
+ * stage this item's job is in (see `OrderItemProductionStatus`'s own doc
+ * comment). `status`, when the caller omits it, is derived from
+ * `producedQuantity` vs. the item's frozen `requiredQuantity` — WAITING at
+ * 0, DONE once produced reaches/exceeds required, IN_PROGRESS otherwise
+ * (including when `requiredQuantity` is null, i.e. unknown: any progress
+ * at all counts as IN_PROGRESS since "done" can't be determined).
+ */
+export async function updateOrderItemProduction(
+  workOrderId: string,
+  orderItemId: string,
+  input: { producedQuantity?: number; status?: OrderItem['productionStatus'] },
+  updatedById: string,
+): Promise<OrderItem> {
+  const existing = await prisma.orderItem.findUnique({ where: { id: orderItemId }, include: { materials: true } });
+  if (!existing) throw new OrderItemNotFoundError();
+  if (existing.workOrderId !== workOrderId) throw new OrderItemNotInWorkOrderError();
+
+  const producedQuantity = input.producedQuantity ?? existing.producedQuantity;
+  const status =
+    input.status ??
+    (producedQuantity <= 0
+      ? 'WAITING'
+      : existing.requiredQuantity !== null && producedQuantity >= existing.requiredQuantity
+        ? 'DONE'
+        : 'IN_PROGRESS');
+
+  const updated = await prisma.orderItem.update({
+    where: { id: orderItemId },
+    data: {
+      producedQuantity,
+      productionStatus: status,
+      productionUpdatedAt: new Date(),
+      productionUpdatedById: updatedById,
+    },
+    include: { materials: true },
+  });
+  return mapOrderItemToDto(updated);
 }
 
 /**

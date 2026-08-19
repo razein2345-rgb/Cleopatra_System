@@ -1193,7 +1193,7 @@ interface ReconstructedLine {
 
 /** Shared by both edit-Order and edit-Quotation modes — the two item shapes carry the same fields relevant here. */
 function reconstructCartLine(
-  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; productionTrack?: ProductionTrack | null },
+  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; productionTrack?: ProductionTrack | null; groupId?: string | null },
   readyProducts: ReadyProduct[],
   services: Service[],
   inventoryItems: InventoryItem[],
@@ -1237,6 +1237,12 @@ function reconstructCartLine(
       pricing,
       total: item.itemTotal ?? 0,
       productionTrack: item.productionTrack ?? null,
+      // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — reusing the real
+      // `groupId` as the reconstructed line's `groupKey` is enough: two
+      // lines that shared a group before still share this same string now,
+      // which is all `resolveOrderItemGroups`/`resolveQuotationItemGroups`
+      // need to re-link them into a fresh group row on save.
+      groupKey: item.groupId ?? undefined,
     },
     warning: null,
   };
@@ -1525,6 +1531,14 @@ interface CartLine {
   productionTrack: ProductionTrack | null;
   /** Owner (2026-08-17, "عايز يظهرلي تحت السلة سعر بنود الحسبة... وعدد الأفرخ من كل نوع ورق") — the full pricing-engine result captured at add-time, rendered as a line-item cost/material breakdown under the cart. Frozen the same way `total` already is (never recomputed just for display); undefined for kinds with nothing to break down (PRODUCT/SERVICE/INVENTORY_RETAIL). */
   breakdown?: PricingPreviewResult;
+  /**
+   * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — a client-side
+   * correlation key shared by two or more lines built from "كرر بمقاس/كمية
+   * مختلفة" (see `duplicateLineAsVariant`). Sent through as `groupKey` on
+   * save; the server links same-keyed items to one real `OrderItemGroup`
+   * row. Undefined = this line isn't part of any group, exactly like today.
+   */
+  groupKey?: string;
 }
 
 interface PaymentRow {
@@ -1538,6 +1552,9 @@ const emptyPaymentRow = (): PaymentRow => {
   paymentKeySeq += 1;
   return { key: `pay-${paymentKeySeq}`, method: 'CASH', amount: '' };
 };
+
+/** "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — see `duplicateLineAsVariant`. */
+let groupKeySeq = 0;
 
 function NewOrderForm({
   partners,
@@ -1623,6 +1640,8 @@ function NewOrderForm({
   const [itemError, setItemError] = useState<string | null>(null);
   /** Owner (2026-08-17, "عايز لما ادوس على بند في السلة... أقدر أعدل عليه") — the `CartLine.key` currently loaded into the composer for editing, or null when composing a brand-new item. `addToCart` checks this to decide "update in place" vs "append". */
   const [editingKey, setEditingKey] = useState<string | null>(null);
+  /** "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — set by `duplicateLineAsVariant`, read once by the next `addToCart` to link the new line to its source line's group, then cleared. */
+  const [pendingGroupKey, setPendingGroupKey] = useState<string | null>(null);
 
   // التحصيل — دفعات عند الإنشاء (فاتورة فقط)
   const [payments, setPayments] = useState<PaymentRow[]>([]);
@@ -1778,6 +1797,10 @@ function NewOrderForm({
       total: preview.total,
       productionTrack: resolveProductionTrackForTab(activeParentId),
       breakdown: preview.result ?? undefined,
+      // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — a brand-new line
+      // from "كرر بمقاس مختلف" carries `pendingGroupKey`; a normal edit of
+      // an already-grouped line keeps whatever group it already had.
+      groupKey: pendingGroupKey ?? (editingKey ? cart.find((l) => l.key === editingKey)?.groupKey : undefined),
     };
     if (editingKey) {
       setCart((prev) => prev.map((l) => (l.key === editingKey ? line : l)));
@@ -1785,6 +1808,7 @@ function NewOrderForm({
     } else {
       setCart((prev) => [...prev, line]);
     }
+    setPendingGroupKey(null);
     setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER', extraServiceOptions));
   };
 
@@ -1793,6 +1817,7 @@ function NewOrderForm({
     // The line being edited was just deleted out from under the composer — drop back to a fresh item instead of "saving" would silently resurrect it.
     if (editingKey === key) {
       setEditingKey(null);
+      setPendingGroupKey(null);
       setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER', extraServiceOptions));
     }
   };
@@ -1805,11 +1830,39 @@ function NewOrderForm({
     setActiveSubTabId(category.subTabId);
     setDraft(draftFromCartLine(line, extraServiceOptions));
     setEditingKey(line.key);
+    setPendingGroupKey(null);
+    setItemError(null);
+  };
+
+  /**
+   * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19, owner: "عايز أقدر أعمل
+   * طلب فيه تصميم واحد بمقاسات/كميات مختلفة من غير ما أكرر كل حاجة") —
+   * opens the composer pre-filled from an existing line (same as
+   * `openLineForEdit`), but as a brand-new line, not an edit — saving it
+   * adds a second cart line instead of replacing the source. The source
+   * line gets a fresh `groupKey` right away if it didn't have one yet (a
+   * "group" only exists once two lines actually share a key).
+   */
+  const duplicateLineAsVariant = (line: CartLine) => {
+    let groupKey = line.groupKey;
+    if (!groupKey) {
+      groupKeySeq += 1;
+      groupKey = `group-${groupKeySeq}`;
+      setCart((prev) => prev.map((l) => (l.key === line.key ? { ...l, groupKey } : l)));
+    }
+    const serviceCategory = line.serviceId ? services.find((s) => s.id === line.serviceId)?.category : undefined;
+    const category = findCategoryForKind(line.pricing.kind, serviceCategory, line.productionTrack);
+    setActiveParentId(category.parentId);
+    setActiveSubTabId(category.subTabId);
+    setDraft(draftFromCartLine(line, extraServiceOptions));
+    setEditingKey(null);
+    setPendingGroupKey(groupKey);
     setItemError(null);
   };
 
   const cancelEditingLine = () => {
     setEditingKey(null);
+    setPendingGroupKey(null);
     setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER', extraServiceOptions));
     setItemError(null);
   };
@@ -1905,6 +1958,7 @@ function NewOrderForm({
       attachmentId: line.attachmentId,
       pricing: line.pricing,
       productionTrack: line.productionTrack,
+      groupKey: line.groupKey,
     }));
 
     setSubmitting(intent);
@@ -2006,36 +2060,59 @@ function NewOrderForm({
           </p>
         ) : (
           <div className="space-y-2">
-            {cart.map((line) => {
-              const { costRows, materials, totalSheets } = cartLineBreakdownRows(line);
-              const beingEdited = line.key === editingKey;
-              return (
-                <div
-                  key={line.key}
-                  onClick={() => openLineForEdit(line)}
-                  className={`border-border cursor-pointer rounded-lg border p-2 text-sm transition-colors hover:bg-muted/40 ${beingEdited ? 'border-primary bg-primary/5' : ''}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="font-medium">{money(line.total)} ج.م {beingEdited && <span className="text-primary text-xs font-normal">(بيتعدل الآن)</span>}</p>
-                      {/* Owner (2026-08-17, "عايزه يطلعلي سعر الدفتر الواحد والإجمالي مش بس سعر الإجمالي") — notebook-only, since that's the unit the owner prices tenders/quotes against. */}
-                      {line.pricing.kind === 'NOTEBOOK' && line.pricing.notebookQuantity > 0 && (
-                        <p className="text-muted-foreground text-xs">سعر الدفتر الواحد: {money(line.total / line.pricing.notebookQuantity)} ج.م</p>
-                      )}
-                      <p className="text-muted-foreground truncate text-xs">{line.summary}</p>
+            {/* "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — a stable small display number per distinct groupKey present in the cart right now, purely for the badge below (not sent to the server). */}
+            {(() => {
+              const distinctGroupKeys = [...new Set(cart.map((l) => l.groupKey).filter((k): k is string => Boolean(k)))];
+              return cart.map((line) => {
+                const { costRows, materials, totalSheets } = cartLineBreakdownRows(line);
+                const beingEdited = line.key === editingKey;
+                const groupIndex = line.groupKey ? distinctGroupKeys.indexOf(line.groupKey) + 1 : null;
+                return (
+                  <div
+                    key={line.key}
+                    onClick={() => openLineForEdit(line)}
+                    className={`border-border cursor-pointer rounded-lg border p-2 text-sm transition-colors hover:bg-muted/40 ${beingEdited ? 'border-primary bg-primary/5' : ''}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-medium">{money(line.total)} ج.م {beingEdited && <span className="text-primary text-xs font-normal">(بيتعدل الآن)</span>}</p>
+                        {/* Owner (2026-08-17, "عايزه يطلعلي سعر الدفتر الواحد والإجمالي مش بس سعر الإجمالي") — notebook-only, since that's the unit the owner prices tenders/quotes against. */}
+                        {line.pricing.kind === 'NOTEBOOK' && line.pricing.notebookQuantity > 0 && (
+                          <p className="text-muted-foreground text-xs">سعر الدفتر الواحد: {money(line.total / line.pricing.notebookQuantity)} ج.م</p>
+                        )}
+                        <p className="text-muted-foreground truncate text-xs">{line.summary}</p>
+                        {groupIndex !== null && (
+                          <span className="bg-info/10 text-info mt-1 inline-block rounded px-1.5 py-0.5 text-[10px]">
+                            🔗 جزء من تصميم واحد #{groupIndex}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            duplicateLineAsVariant(line);
+                          }}
+                          className="text-primary text-xs"
+                          aria-label="كرر بمقاس أو كمية مختلفة"
+                          title="كرر بمقاس أو كمية مختلفة (نفس التصميم)"
+                        >
+                          ⧉
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFromCart(line.key);
+                          }}
+                          className="text-destructive text-xs"
+                          aria-label="حذف البند"
+                        >
+                          🗑
+                        </button>
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeFromCart(line.key);
-                      }}
-                      className="text-destructive shrink-0 text-xs"
-                      aria-label="حذف البند"
-                    >
-                      🗑
-                    </button>
-                  </div>
                   {/* Owner (2026-08-17) — بنود الحسبة (زنكات/تراج/ترقيم/ورق/تصميم...) وتوزيع الأفرخ على كل خامة، تحت كل بند في السلة مباشرة. */}
                   {costRows.length > 0 && (
                     <div className="text-muted-foreground mt-1.5 space-y-0.5 border-t pt-1.5 text-xs">
@@ -2063,9 +2140,10 @@ function NewOrderForm({
                       <span dir="ltr">{totalSheets} فرخ</span>
                     </div>
                   )}
-                </div>
-              );
-            })}
+                  </div>
+                );
+              });
+            })()}
           </div>
         )}
 

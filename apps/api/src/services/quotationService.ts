@@ -1,5 +1,6 @@
 import type { Prisma } from '../generated/prisma/client.js';
 import type { CreateQuotationItemInput, Quotation, QuotationItem, QuotationStatus } from '@cleopatra/shared';
+import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
@@ -32,8 +33,35 @@ export function mapQuotationItemToDto(item: QuotationItemRecord): QuotationItem 
     sizeFamilyKey: item.sizeFamilyKey,
     realSizeLabel: item.realSizeLabel,
     productionTrack: item.productionTrack,
+    groupId: item.groupId,
+    requiredQuantity: item.requiredQuantity,
     createdAt: item.createdAt.toISOString(),
   };
+}
+
+/**
+ * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — the Quotation-side
+ * mirror of `orderService.ts`'s `resolveOrderItemGroups` (same "a group of
+ * one item isn't meaningful" rule).
+ */
+export async function resolveQuotationItemGroups(
+  tx: Prisma.TransactionClient,
+  quotationId: string,
+  items: { groupKey?: string }[],
+): Promise<Map<string, string>> {
+  const keyCounts = new Map<string, number>();
+  for (const item of items) {
+    if (!item.groupKey) continue;
+    keyCounts.set(item.groupKey, (keyCounts.get(item.groupKey) ?? 0) + 1);
+  }
+
+  const groupKeyToId = new Map<string, string>();
+  for (const [key, count] of keyCounts) {
+    if (count < 2) continue;
+    const group = await tx.quotationItemGroup.create({ data: { quotationId } });
+    groupKeyToId.set(key, group.id);
+  }
+  return groupKeyToId;
 }
 
 /**
@@ -230,6 +258,10 @@ export async function createQuotation(
 
   return prisma.$transaction(async (tx) => {
     const quotationNumber = await nextQuotationNumber(tx);
+    // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — created without its
+    // items first (unlike before) so `resolveQuotationItemGroups` has a
+    // real `quotationId` to attach group rows to before any item references
+    // one; items are attached in a second `update` call right below.
     const created = await tx.quotation.create({
       data: {
         quotationNumber,
@@ -244,6 +276,15 @@ export async function createQuotation(
         finalTotal,
         customerNotes: input.customerNotes ?? null,
         internalNotes: input.internalNotes ?? null,
+      },
+      select: { id: true },
+    });
+
+    const groupKeyToId = await resolveQuotationItemGroups(tx, created.id, input.items);
+
+    const withItems = await tx.quotation.update({
+      where: { id: created.id },
+      data: {
         items: {
           create: input.items.map((item, index) => {
             const result = priced[index]!;
@@ -265,6 +306,8 @@ export async function createQuotation(
               sizeFamilyKey: result.sizeFamilyKey,
               realSizeLabel: result.realSizeLabel,
               productionTrack: item.productionTrack ?? null,
+              groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
+              requiredQuantity: resolveRequiredQuantity(item.pricing),
             };
           }),
         },
@@ -276,6 +319,6 @@ export async function createQuotation(
       await tx.attachment.updateMany({ where: { id: { in: attachmentIds } }, data: { quotationId: created.id } });
     }
 
-    return created;
+    return withItems;
   });
 }

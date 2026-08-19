@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import type { Prisma } from '../generated/prisma/client.js';
-import { hasPermission, quotationStatusSchema } from '@cleopatra/shared';
+import { hasPermission, quotationStatusSchema, resolveRequiredQuantity } from '@cleopatra/shared';
 import {
   createQuotationSchema,
   setQuotationApprovalStateSchema,
@@ -17,6 +17,7 @@ import {
   QUOTATION_INCLUDE,
   QuotationItemValidationError,
   recordQuotationPrint,
+  resolveQuotationItemGroups,
   validateQuotationItemRefs,
 } from '../services/quotationService.js';
 import {
@@ -193,6 +194,11 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
   const updated = await prisma.$transaction(async (tx) => {
     if (input.items) {
       await tx.quotationItem.deleteMany({ where: { quotationId: existing.id } });
+      // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — old groups don't
+      // cascade away with their items (same reasoning as orderService.ts's
+      // updateOrder); clear and re-resolve fresh ones for the new item set.
+      await tx.quotationItemGroup.deleteMany({ where: { quotationId: existing.id } });
+      const groupKeyToId = await resolveQuotationItemGroups(tx, existing.id, input.items);
       await tx.quotationItem.createMany({
         data: input.items.map((item, index) => {
           const result = priced[index]!;
@@ -212,6 +218,8 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
             sizeFamilyKey: result.sizeFamilyKey,
             realSizeLabel: result.realSizeLabel,
             productionTrack: item.productionTrack ?? null,
+            groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
+            requiredQuantity: resolveRequiredQuantity(item.pricing),
           };
         }),
       });
@@ -378,6 +386,12 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
 
   const { order, quotation } = await prisma.$transaction(async (tx) => {
     const invoiceNumber = await nextInvoiceNumber(tx);
+    // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — created without its
+    // items first (same reasoning as `quotationService.ts`'s own
+    // `createQuotation`) so fresh `OrderItemGroup` rows can be created
+    // against a real `orderId` before any item references one — a
+    // Quotation's `QuotationItemGroup` rows are never reused/reparented
+    // onto the Order, each conversion creates its own fresh group rows.
     const createdOrder = await tx.order.create({
       data: {
         invoiceNumber,
@@ -392,6 +406,20 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
         customerNotes: existing.customerNotes,
         internalNotes: existing.internalNotes,
         status: 'CONFIRMED',
+      },
+      select: { id: true, branchId: true },
+    });
+
+    const sourceGroupIds = [...new Set(existing.items.map((i) => i.groupId).filter((id): id is string => Boolean(id)))];
+    const quotationGroupIdToOrderGroupId = new Map<string, string>();
+    for (const sourceGroupId of sourceGroupIds) {
+      const newGroup = await tx.orderItemGroup.create({ data: { orderId: createdOrder.id } });
+      quotationGroupIdToOrderGroupId.set(sourceGroupId, newGroup.id);
+    }
+
+    await tx.order.update({
+      where: { id: createdOrder.id },
+      data: {
         items: {
           create: existing.items.map((item) =>
             buildOrderItemCreate({
@@ -416,11 +444,12 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
               sizeFamilyKey: item.sizeFamilyKey,
               realSizeLabel: item.realSizeLabel,
               productionTrack: item.productionTrack,
+              groupId: item.groupId ? (quotationGroupIdToOrderGroupId.get(item.groupId) ?? null) : null,
+              requiredQuantity: item.requiredQuantity,
             }),
           ),
         },
       },
-      include: ORDER_INCLUDE,
     });
 
     const updatedQuotation = await tx.quotation.update({

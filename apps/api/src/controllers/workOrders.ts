@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import type { ProductionTrack } from '@cleopatra/shared';
-import { createWorkOrderSchema, hasPermission } from '@cleopatra/shared';
+import { createWorkOrderSchema, hasPermission, updateOrderItemProductionSchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
   WORK_ORDER_INCLUDE,
@@ -9,6 +9,11 @@ import {
   mapWorkOrderToDto,
   WorkOrderNotFoundError,
 } from '../services/workOrderService.js';
+import {
+  OrderItemNotFoundError,
+  OrderItemNotInWorkOrderError,
+  updateOrderItemProduction,
+} from '../services/orderService.js';
 import { getLatestPublishedTemplate } from '../services/workflowTemplateService.js';
 import { recordAudit } from '../services/auditService.js';
 
@@ -137,6 +142,45 @@ export async function getWorkOrder(req: Request<{ id: string }>, res: Response) 
     return;
   }
   res.json({ success: true, data: mapWorkOrderToDto(workOrder, canSeeInternal(req)) });
+}
+
+/**
+ * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19, owner: "أقدر أعرف A4
+ * خلصت والA5 لسه") — updates one OrderItem's own production progress,
+ * independent of the shared WorkOrder's own stage. Gated the same weight
+ * as advancing a stage (`work-orders.edit`), scoped to `:workOrderId` in
+ * the URL (not just `:itemId` alone) so a caller can't update an item on a
+ * job they have no route into — `updateOrderItemProduction` itself
+ * enforces the item actually belongs to that Work Order.
+ */
+export async function updateWorkOrderItemProduction(req: Request<{ workOrderId: string; itemId: string }>, res: Response) {
+  const auth = req.auth!;
+  const input = updateOrderItemProductionSchema.parse(req.body);
+
+  let updated;
+  try {
+    updated = await updateOrderItemProduction(req.params.workOrderId, req.params.itemId, input, auth.staffId);
+  } catch (err) {
+    if (err instanceof OrderItemNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof OrderItemNotInWorkOrderError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'ITEM_NOT_IN_WORK_ORDER' } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'OrderItem',
+    entityId: updated.id,
+    action: 'STATUS_CHANGE',
+    performedById: auth.staffId,
+    newValue: { producedQuantity: updated.producedQuantity, productionStatus: updated.productionStatus },
+  });
+
+  res.json({ success: true, data: updated });
 }
 
 /**

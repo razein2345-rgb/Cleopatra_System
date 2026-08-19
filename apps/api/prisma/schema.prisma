@@ -127,6 +127,20 @@ enum QuotationStatus {
   CONVERTED
 }
 
+/// "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19, owner: "أقدر أعرف A4
+/// خلصت والA5 لسه") — per-`OrderItem` production progress, independent of
+/// the shared `WorkOrder`/`WorkflowInstance` stage it belongs to (owner's
+/// explicit decision: no separate Work Order per size/quantity variant,
+/// but each variant must stay independently trackable). Distinct from
+/// `StageInstanceStatus` on purpose — this tracks "how much of this one
+/// item's quantity is physically done," not "what stage is the whole job
+/// in."
+enum OrderItemProductionStatus {
+  WAITING
+  IN_PROGRESS
+  DONE
+}
+
 enum PaymentMethod {
   CASH
   VODAFONE_CASH
@@ -711,6 +725,7 @@ model StaffProfile {
   treasuryDayClosuresClosed  TreasuryDayClosure[]       @relation("TreasuryDayClosureClosedBy")
   treasuryDayClosuresReopened TreasuryDayClosure[]       @relation("TreasuryDayClosureReopenedBy")
   orderTemplatesCreated      OrderTemplate[]
+  orderItemProductionUpdates OrderItem[]                @relation("OrderItemProductionUpdatedBy")
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -1318,6 +1333,7 @@ model Order {
   documentSnapshot   Json?
 
   items           OrderItem[]
+  itemGroups      OrderItemGroup[]
   payments        Payment[]
   /// FEATURE-016+ (2026-08-16, "أمر شغل مستقل لكل صنف حسب مساره") — was a
   /// singular `WorkOrder?` (one order = one order-level production track).
@@ -1397,11 +1413,59 @@ model OrderItem {
   /// `inventoryItemId`/`sheetsConsumed` columns above, untouched.
   materials OrderItemMaterial[]
 
+  /// "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — optional link to the
+  /// other OrderItems this one shares a design/artwork with (e.g. 2×A4 +
+  /// 50×A5 of the same flyer). Purely a sales/display/entry concern — has
+  /// no effect on pricing (still computed per item, independently, exactly
+  /// as before) or on which WorkOrder this item lands in (still grouped by
+  /// `productionTrack` alone, unchanged).
+  groupId String?         @db.Uuid
+  group   OrderItemGroup? @relation(fields: [groupId], references: [id])
+
+  /// Per-variant production progress (2026-08-19) — independent of the
+  /// shared WorkOrder/WorkflowInstance's own stage-by-stage progress.
+  /// `requiredQuantity` is a frozen snapshot of this item's own quantity,
+  /// read once from the validated pricing input at creation time (never
+  /// recomputed — same "freeze by default" discipline as `sheetsConsumed`);
+  /// null for kinds with no single meaningful quantity. `producedQuantity`/
+  /// `productionStatus` are staff-updated as pieces are physically
+  /// finished, independent of any other item sharing this WorkOrder.
+  requiredQuantity Int?
+  producedQuantity Int                        @default(0)
+  productionStatus OrderItemProductionStatus  @default(WAITING)
+
+  productionUpdatedAt   DateTime?
+  productionUpdatedById String?       @db.Uuid
+  productionUpdatedBy   StaffProfile? @relation("OrderItemProductionUpdatedBy", fields: [productionUpdatedById], references: [id])
+
   createdAt DateTime @default(now())
 
   @@index([inventoryItemId])
   @@index([workOrderId])
   @@index([orderId, productionTrack])
+  @@index([groupId])
+}
+
+/// "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19, owner: "عايز أقدر أعمل
+/// طلب فيه تصميم واحد بمقاسات/كميات مختلفة من غير ما أكرر كل حاجة") — a
+/// lightweight link table, nothing more: groups `OrderItem`s that share the
+/// same underlying design/artwork. No price field (the order's total stays
+/// the sum of each item's own independent `itemTotal`, exactly as before),
+/// no approval/status field (approval lives entirely in the Workflow Engine
+/// — a real WorkflowStage + required WorkflowStageVariable — not
+/// duplicated here). Purely additive; an `OrderItem` with `groupId: null`
+/// behaves identically to today.
+model OrderItemGroup {
+  id      String  @id @default(uuid()) @db.Uuid
+  orderId String  @db.Uuid
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  label   String?
+
+  items OrderItem[]
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
 }
 
 /// Multi-material pricing (2026-08-17) — the plural counterpart to
@@ -1521,6 +1585,7 @@ model Quotation {
   documentSnapshot   Json?
 
   items       QuotationItem[]
+  itemGroups  QuotationItemGroup[]
   attachments Attachment[]
 
   isDeleted Boolean   @default(false)
@@ -1590,11 +1655,40 @@ model QuotationItem {
   /// always a silent no-op).
   productionTrack ProductionTrack?
 
+  /// "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — mirrors
+  /// `OrderItem.groupId`/`requiredQuantity` (same freeze/carry-through
+  /// discipline `productionTrack` above already established): a Quotation
+  /// built through the same composer as an Order can group items the same
+  /// way, and `convertQuotation` carries the grouping + required quantity
+  /// into new `OrderItemGroup`/`OrderItem` rows instead of losing them.
+  groupId          String?              @db.Uuid
+  group            QuotationItemGroup?  @relation(fields: [groupId], references: [id])
+  requiredQuantity Int?
+
   createdAt DateTime @default(now())
 
   @@index([quotationId])
   @@index([readyProductId])
   @@index([serviceId])
+  @@index([groupId])
+}
+
+/// "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — the Quotation-side
+/// mirror of `OrderItemGroup` (separate table since it hangs off a
+/// different parent; same shape, same "link only, no price/approval
+/// field" discipline). `convertQuotation` creates fresh `OrderItemGroup`
+/// rows from these, it never reuses/reparents these rows onto an Order.
+model QuotationItemGroup {
+  id          String    @id @default(uuid()) @db.Uuid
+  quotationId String    @db.Uuid
+  quotation   Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  label       String?
+
+  items QuotationItem[]
+
+  createdAt DateTime @default(now())
+
+  @@index([quotationId])
 }
 
 // ---------------------------------------------------------------------------

@@ -70,3 +70,11 @@ export function apiPut<T>(path: string, data?: unknown): Promise<T> {
 export function apiDelete<T>(path: string): Promise<T> {
   return request<T>(path, { method: 'DELETE' });
 }
+
+/** "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — first PATCH caller in the app; same shape as `apiPut`, just the HTTP verb for a genuinely partial update. */
+export function apiPatch<T>(path: string, data?: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'PATCH',
+    body: data === undefined ? undefined : JSON.stringify(data),
+  });
+}

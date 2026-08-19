@@ -45,6 +45,11 @@ export const quotationItemSchema = z.object({
   // OrderItem.productionTrack so `convertQuotation` can carry each item's
   // own track into the new Order's items instead of losing it.
   productionTrack: productionTrackSchema.nullable(),
+  // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — mirrors
+  // OrderItem.groupId/requiredQuantity, same carry-through-on-conversion
+  // reasoning as productionTrack above.
+  groupId: z.string().uuid().nullable(),
+  requiredQuantity: z.number().int().nullable(),
   createdAt: z.string(),
 });
 
@@ -68,6 +73,9 @@ export const createQuotationItemSchema = z.object({
   // Same stamped-from-composer-tab field as createOrderItemSchema — see
   // its doc comment (order.ts).
   productionTrack: productionTrackSchema.nullable().optional(),
+  // Same client-correlation-key pattern as createOrderItemSchema — see its
+  // doc comment (order.ts).
+  groupKey: z.string().trim().min(1).max(50).optional(),
 });
 
 export type QuotationItem = z.infer<typeof quotationItemSchema>;

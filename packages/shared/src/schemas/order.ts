@@ -55,6 +55,16 @@ export const PRODUCTION_TRACK_LABELS: Record<z.infer<typeof productionTrackSchem
 };
 
 /**
+ * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — per-`OrderItem`
+ * production progress, independent of the shared WorkOrder/WorkflowInstance
+ * stage this item's own production job is in. Deliberately a small, plain
+ * status (not `StageInstanceStatus`'s WAITING/IN_PROGRESS/DONE/SKIPPED/
+ * FAILED) — this tracks "how much of this one item's quantity is
+ * physically done," never "what stage is the whole job in."
+ */
+export const orderItemProductionStatusSchema = z.enum(['WAITING', 'IN_PROGRESS', 'DONE']);
+
+/**
  * A historical line item snapshot — `kind`/`modelName`/`breakdown` are
  * frozen at the moment of creation and never recomputed from a live
  * source. See ADR 0010 and FEATURE-003 02_PLAN.md's Milestone 2 section
@@ -106,6 +116,27 @@ export const orderItemSchema = z.object({
       }),
     )
     .optional(),
+  /**
+   * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — optional link to the
+   * other items on this order that share the same design/artwork (e.g.
+   * 2×A4 + 50×A5 of one flyer). Purely a sales/display/entry concern —
+   * `null` behaves identically to every item today; has no effect on
+   * pricing (still fully independent per item) or on which WorkOrder this
+   * item lands in (still grouped by `productionTrack` alone).
+   */
+  groupId: z.string().uuid().nullable(),
+  /**
+   * Per-variant production progress, independent of the shared WorkOrder's
+   * own stage. `requiredQuantity` is a frozen snapshot of this item's own
+   * quantity (null for kinds with no single meaningful quantity);
+   * `producedQuantity`/`productionStatus` are staff-updated as pieces are
+   * physically finished — see `updateOrderItemProductionSchema` below.
+   */
+  requiredQuantity: z.number().int().nullable(),
+  producedQuantity: z.number().int(),
+  productionStatus: orderItemProductionStatusSchema,
+  productionUpdatedAt: z.string().nullable(),
+  productionUpdatedById: z.string().uuid().nullable(),
   createdAt: z.string(),
 });
 
@@ -197,6 +228,16 @@ export const createOrderItemSchema = z.object({
   // cheap consistency check against `pricing.kind` for the unambiguous
   // kinds (see `orderService.ts`'s `assertProductionTrackConsistentWithKind`).
   productionTrack: productionTrackSchema.nullable().optional(),
+  /**
+   * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — a client-generated
+   * correlation key (same `tempKey` pattern `createWorkflowStageSchema`
+   * already uses for cross-referencing rows that don't have real ids yet):
+   * two items in the same `items[]` array sharing the same `groupKey` get
+   * linked to one real `OrderItemGroup` row, created server-side inside the
+   * same transaction. Omitted/no match with any other item = this item
+   * simply gets no group, exactly like today.
+   */
+  groupKey: z.string().trim().min(1).max(50).optional(),
 });
 
 /**
@@ -253,10 +294,27 @@ export const updateOrderSchema = z.object({
   items: z.array(createOrderItemSchema).min(1),
 });
 
+/**
+ * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — the one mutation path
+ * for an OrderItem's own production progress; deliberately separate from
+ * `updateOrderSchema` (which replaces the whole cart) since this touches
+ * exactly one item's progress counters, not pricing or item content.
+ * `status`, when omitted, is derived server-side from `producedQuantity`
+ * vs. the item's frozen `requiredQuantity` — sent explicitly here only
+ * when the caller wants to override that derivation (e.g. flagging
+ * IN_PROGRESS before any pieces are counted yet).
+ */
+export const updateOrderItemProductionSchema = z.object({
+  producedQuantity: z.number().int().nonnegative().optional(),
+  status: orderItemProductionStatusSchema.optional(),
+});
+
 export type OrderStatus = z.infer<typeof orderStatusSchema>;
 export type ProductionTrack = z.infer<typeof productionTrackSchema>;
+export type OrderItemProductionStatus = z.infer<typeof orderItemProductionStatusSchema>;
 export type OrderItem = z.infer<typeof orderItemSchema>;
 export type Order = z.infer<typeof orderSchema>;
 export type CreateOrderItemInput = z.infer<typeof createOrderItemSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;
+export type UpdateOrderItemProductionInput = z.infer<typeof updateOrderItemProductionSchema>;

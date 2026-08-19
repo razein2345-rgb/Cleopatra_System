@@ -1,12 +1,118 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem, PricingReference, ProductionTrack, User, WorkOrder } from '@cleopatra/shared';
-import { apiDelete, apiGet } from '@/lib/api';
+import { apiDelete, apiGet, apiPatch } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
+import { EditableNumberCell, EditableSelectCell, StatusBadge } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
+
+const PRODUCTION_STATUS_LABELS: Record<OrderItem['productionStatus'], string> = {
+  WAITING: 'في الانتظار',
+  IN_PROGRESS: 'جاري التنفيذ',
+  DONE: 'تم',
+};
+const PRODUCTION_STATUS_OPTIONS = Object.entries(PRODUCTION_STATUS_LABELS) as [OrderItem['productionStatus'], string][];
+const PRODUCTION_STATUS_TONE: Record<OrderItem['productionStatus'], 'neutral' | 'warning' | 'success'> = {
+  WAITING: 'neutral',
+  IN_PROGRESS: 'warning',
+  DONE: 'success',
+};
+
+/**
+ * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19, owner: "أقدر أعرف A4
+ * خلصت والA5 لسه") — per-item production progress, independent of the
+ * shared Work Order's own stage-by-stage state above. Only items that
+ * actually carry a `requiredQuantity` snapshot are shown (retail/no-track
+ * items never get one) — an empty result means this section renders
+ * nothing, not an empty table. `print:hidden` — this is an internal
+ * tracking widget with editable inputs, not part of the physical job card
+ * handed to the production floor.
+ */
+function ProductionProgressSection({
+  workOrderId,
+  items,
+  onItemUpdated,
+}: {
+  workOrderId: string;
+  items: OrderItem[];
+  onItemUpdated: (updated: OrderItem) => void;
+}) {
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const trackable = items.filter((item) => item.requiredQuantity !== null);
+  if (trackable.length === 0) return null;
+
+  const update = async (item: OrderItem, patch: { producedQuantity?: number; status?: OrderItem['productionStatus'] }) => {
+    setErrors((prev) => ({ ...prev, [item.id]: '' }));
+    try {
+      const updated = await apiPatch<OrderItem>(`/api/work-orders/${workOrderId}/items/${item.id}/production`, patch);
+      onItemUpdated(updated);
+    } catch (err) {
+      setErrors((prev) => ({ ...prev, [item.id]: err instanceof Error ? err.message : 'تعذر الحفظ' }));
+    }
+  };
+
+  return (
+    <div className="border-border bg-card space-y-2 rounded-2xl border p-4 print:hidden">
+      <h2 className="font-semibold">تتبع الإنتاج لكل بند</h2>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+              <th className="p-2">الصنف</th>
+              <th className="p-2">المطلوب</th>
+              <th className="p-2">المنتَج فعليًا</th>
+              <th className="p-2">المتبقي</th>
+              <th className="p-2">الحالة</th>
+            </tr>
+          </thead>
+          <tbody>
+            {trackable.map((item) => {
+              const required = item.requiredQuantity ?? 0;
+              const remaining = Math.max(0, required - item.producedQuantity);
+              return (
+                <tr key={item.id} className="border-border border-b last:border-0">
+                  <td className="p-2">
+                    {item.modelName || item.kind || '—'}
+                    {errors[item.id] && <p className="text-destructive text-xs">{errors[item.id]}</p>}
+                  </td>
+                  <td className="p-2" dir="ltr">
+                    {required}
+                  </td>
+                  <td className="p-2">
+                    <EditableNumberCell
+                      value={item.producedQuantity}
+                      min={0}
+                      onSave={(next) => update(item, { producedQuantity: next })}
+                    />
+                  </td>
+                  <td className="p-2" dir="ltr">
+                    {remaining}
+                  </td>
+                  <td className="p-2">
+                    <div className="flex items-center gap-1.5">
+                      <StatusBadge tone={PRODUCTION_STATUS_TONE[item.productionStatus]}>
+                        {PRODUCTION_STATUS_LABELS[item.productionStatus]}
+                      </StatusBadge>
+                      <EditableSelectCell
+                        value={item.productionStatus}
+                        options={PRODUCTION_STATUS_OPTIONS}
+                        onSave={(next) => update(item, { status: next })}
+                        renderValue={() => '✎'}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 /**
  * FEATURE-006 M10 — Work Order document. Owner's explicit clarification
@@ -272,6 +378,13 @@ export function WorkOrderDocumentPage() {
     return <div className="text-muted-foreground">جارٍ التحميل…</div>;
   }
 
+  // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — swaps the just-updated
+  // item into local state so `ProductionProgressSection` reflects the save
+  // immediately, without a full re-fetch of the Work Order.
+  const handleItemProductionUpdated = (updated: OrderItem) => {
+    setWorkOrder((prev) => (prev ? { ...prev, items: prev.items.map((i) => (i.id === updated.id ? updated : i)) } : prev));
+  };
+
   // FEATURE-012 (2026-08-14, owner: "لازم اكون أقدر أحذف أمر الشغل") — mirrors
   // OrderDocumentPage.tsx's removeOrder exactly (confirm → soft-delete → leave).
   const removeWorkOrder = async () => {
@@ -353,6 +466,7 @@ export function WorkOrderDocumentPage() {
           items={items}
           customerNotes={order.customerNotes}
         />
+        <ProductionProgressSection workOrderId={workOrder.id} items={workOrder.items} onItemUpdated={handleItemProductionUpdated} />
       </div>
     );
   }
@@ -439,6 +553,7 @@ export function WorkOrderDocumentPage() {
           </section>
         )}
       </div>
+      <ProductionProgressSection workOrderId={workOrder.id} items={workOrder.items} onItemUpdated={handleItemProductionUpdated} />
     </div>
   );
 }
