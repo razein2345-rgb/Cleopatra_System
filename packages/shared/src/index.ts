@@ -17,6 +17,7 @@ export * from './schemas/contactPerson.js';
 export * from './schemas/partnerAddress.js';
 export * from './schemas/partnerCategory.js';
 export * from './schemas/partnerTag.js';
+export * from './schemas/treasuryCategory.js';
 export * from './schemas/extraServiceOption.js';
 export * from './schemas/partnerNote.js';
 export * from './schemas/partnerCommercialProfile.js';

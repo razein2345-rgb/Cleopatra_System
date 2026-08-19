@@ -2195,6 +2195,31 @@ model TreasuryEntry {
   @@index([date])
 }
 
+/// UX_PRODUCT_AUDIT.md § مشكلة 7.3 ("تصنيف مصروفات خزينة قابل للإدارة") —
+/// an admin-managed canonical list for `TreasuryEntry.category`, so
+/// reporting can group reliably instead of relying on free text. Mirrors
+/// `PartnerTag`'s shape exactly (ADR 0007 soft-delete convention). Kept
+/// deliberately independent of `TreasuryEntry.category`, which stays a
+/// plain nullable string (no FK) — the entry form offers this list plus an
+/// explicit "other" free-text fallback, so recording an entry never blocks
+/// on the category catalog being complete, and existing free-text values
+/// keep working unchanged.
+model TreasuryCategory {
+  id       String  @id @default(uuid()) @db.Uuid
+  name     String  @unique
+  isActive Boolean @default(true)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([isActive])
+}
+
 /// FEATURE-016, rebuilt 2026-08-18 (owner: "The goal is to have a proper
 /// daily cash register closing system... Opening Balance + Total Inflows -
 /// Total Outflows = Expected Closing Balance") — a real cash-drawer

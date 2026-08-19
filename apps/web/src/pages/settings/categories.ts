@@ -1,11 +1,12 @@
 import type { ComponentType } from 'react';
-import { Printer, Coins, Package, Wrench, Building2, FileText } from 'lucide-react';
+import { Printer, Coins, Package, Wrench, Building2, FileText, Wallet } from 'lucide-react';
 import { PrintingSettings } from './PrintingSettings';
 import { PricingSettings } from './PricingSettings';
 import { ProductsSettings } from './ProductsSettings';
 import { ServicesSettings } from './ServicesSettings';
 import { CompanySettings } from './CompanySettings';
 import { DocumentsSettings } from './DocumentsSettings';
+import { TreasurySettings } from './TreasurySettings';
 
 export interface SettingsCategory {
   id: string;
@@ -71,5 +72,12 @@ export const SETTINGS_CATEGORIES: SettingsCategory[] = [
     description: 'الهوية التجارية وقوالب عروض الأسعار والفواتير وأوامر الشغل',
     icon: FileText,
     Component: DocumentsSettings,
+  },
+  {
+    id: 'treasury',
+    label: 'الخزينة',
+    description: 'تصنيفات المصروفات والإيرادات',
+    icon: Wallet,
+    Component: TreasurySettings,
   },
 ];

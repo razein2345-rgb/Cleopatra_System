@@ -6,6 +6,7 @@ import type {
   MyTreasurySummary,
   PaymentMethod,
   TreasuryBalance,
+  TreasuryCategory,
   TreasuryDayClosure,
   TreasuryDayClosurePreview,
   TreasuryEntry,
@@ -785,9 +786,17 @@ function NewEntryForm({
   const [type, setType] = useState<TreasuryType>('INCOME');
   const [method, setMethod] = useState<PaymentMethod>('CASH');
   const [amount, setAmount] = useState('0');
+  const [categories, setCategories] = useState<TreasuryCategory[]>([]);
   const [category, setCategory] = useState('');
+  const [customCategory, setCustomCategory] = useState(false);
   const [note, setNote] = useState('');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+
+  useEffect(() => {
+    apiGet<TreasuryCategory[]>('/api/treasury-categories')
+      .then((all) => setCategories(all.filter((c) => c.isActive)))
+      .catch(() => undefined);
+  }, []);
   const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
   const [partnerId, setPartnerId] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -912,12 +921,48 @@ function NewEntryForm({
         </label>
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground">التصنيف (اختياري)</span>
-          <input
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            placeholder="مثال: إيجار، مرتبات، كهرباء"
-            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-          />
+          {customCategory ? (
+            <div className="flex gap-1.5">
+              <input
+                autoFocus
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                placeholder="اكتب تصنيف جديد"
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setCustomCategory(false);
+                  setCategory('');
+                }}
+              >
+                إلغاء
+              </Button>
+            </div>
+          ) : (
+            <select
+              value={category}
+              onChange={(e) => {
+                if (e.target.value === '__custom__') {
+                  setCustomCategory(true);
+                  setCategory('');
+                } else {
+                  setCategory(e.target.value);
+                }
+              }}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              <option value="">— بدون —</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
+              <option value="__custom__">تصنيف آخر (كتابة يدوية)…</option>
+            </select>
+          )}
         </label>
       </div>
       <label className="block space-y-1 text-sm">
