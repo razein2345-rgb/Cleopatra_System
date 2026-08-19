@@ -12,6 +12,7 @@ import type {
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 import { LocationPickerMap } from '@/components/LocationPickerMap';
@@ -39,6 +40,7 @@ function money(n: number) {
 export function EmployeeProfilePage() {
   const { id } = useParams<{ id: string }>();
   const { can, authContext } = useAuth();
+  const confirm = useConfirm();
   const canEdit = can('employees.edit');
   // system_specifications_v2.md §3.1.1 (2026-08-16) — this page bundles
   // attendance records with payroll/salary/advances, which the spec calls
@@ -219,7 +221,7 @@ export function EmployeeProfilePage() {
                         <button
                           type="button"
                           onClick={async () => {
-                            if (!confirm(`تحذف تكليف "${a.locationLabel}"؟`)) return;
+                            if (!(await confirm({ title: `تحذف تكليف "${a.locationLabel}"؟`, destructive: true }))) return;
                             await apiDelete(`/api/attendance/field-assignments/${a.id}`);
                             load();
                           }}

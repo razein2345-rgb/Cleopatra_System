@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { CreatePartnerNoteInput, PartnerNote, UpdatePartnerNoteInput, User } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { useConfirm } from '@/components/cleopatra';
 
 const COLOR_PRESETS: Array<{ label: string; value: string }> = [
   { label: 'كهرماني', value: '#F59E0B' },
@@ -29,6 +30,7 @@ export function NotesTab({
   staff: User[];
   canManage: boolean;
 }) {
+  const confirm = useConfirm();
   const [notes, setNotes] = useState<PartnerNote[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -59,7 +61,7 @@ export function NotesTab({
   };
 
   const removeNote = async (note: PartnerNote) => {
-    if (!confirm(`حذف الملاحظة "${note.title}"؟`)) return;
+    if (!(await confirm({ title: `حذف الملاحظة "${note.title}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/partners/${partnerId}/notes/${note.id}`);

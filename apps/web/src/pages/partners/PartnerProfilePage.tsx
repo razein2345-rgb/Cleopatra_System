@@ -11,6 +11,7 @@ import type {
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PARTNER_ROLE_OPTIONS, PARTNER_STATUS_OPTIONS } from './partnerLabels';
 import { ContactsTab } from './ContactsTab';
@@ -39,6 +40,7 @@ export function PartnerProfilePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { can } = useAuth();
+  const confirm = useConfirm();
 
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
@@ -65,7 +67,15 @@ export function PartnerProfilePage() {
   }, [id]);
 
   const removePartner = async () => {
-    if (!partner || !confirm(`حذف "${partner.nameAr}"؟ لن يظهر بعدها في قائمة العملاء.`)) return;
+    if (
+      !partner ||
+      !(await confirm({
+        title: `حذف "${partner.nameAr}"؟`,
+        description: 'لن يظهر بعدها في قائمة العملاء.',
+        destructive: true,
+      }))
+    )
+      return;
     await apiDelete(`/api/partners/${partner.id}`);
     navigate('/partners', { replace: true });
   };

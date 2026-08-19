@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ProductSourceType, ReadyProduct } from '@cleopatra/shared';
 import { apiDelete, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 const SOURCE_TYPE_LABELS: Record<ProductSourceType, string> = {
@@ -17,13 +18,14 @@ export function ReadyProductsEditor({
   onChanged: () => void;
 }) {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canManage = can('settings.edit');
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<ReadyProduct | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const remove = async (item: ReadyProduct) => {
-    if (!confirm(`حذف "${item.name}"؟`)) return;
+    if (!(await confirm({ title: `حذف "${item.name}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/ready-products/${item.id}`);

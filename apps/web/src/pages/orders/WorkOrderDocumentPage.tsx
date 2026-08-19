@@ -4,7 +4,7 @@ import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem
 import { apiDelete, apiGet, apiPatch } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Breadcrumbs, EditableNumberCell, EditableSelectCell, StatusBadge } from '@/components/cleopatra';
+import { Breadcrumbs, EditableNumberCell, EditableSelectCell, StatusBadge, useConfirm } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
@@ -335,6 +335,7 @@ export function WorkOrderDocumentPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { can } = useAuth();
+  const confirm = useConfirm();
   const [workOrder, setWorkOrder] = useState<WorkOrder | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
@@ -388,7 +389,14 @@ export function WorkOrderDocumentPage() {
   // FEATURE-012 (2026-08-14, owner: "لازم اكون أقدر أحذف أمر الشغل") — mirrors
   // OrderDocumentPage.tsx's removeOrder exactly (confirm → soft-delete → leave).
   const removeWorkOrder = async () => {
-    if (!confirm(`حذف أمر الشغل ${workOrder.workOrderNumber}؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    if (
+      !(await confirm({
+        title: `حذف أمر الشغل ${workOrder.workOrderNumber}؟`,
+        description: 'لا يمكن التراجع عن هذا الإجراء.',
+        destructive: true,
+      }))
+    )
+      return;
     setDeleteError(null);
     setDeleting(true);
     try {

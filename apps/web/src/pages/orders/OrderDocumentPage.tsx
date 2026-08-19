@@ -4,7 +4,7 @@ import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, User } fr
 import { PRODUCTION_TRACK_LABELS } from '@cleopatra/shared';
 import { apiDelete, apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Breadcrumbs } from '@/components/cleopatra';
+import { Breadcrumbs, useConfirm } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
@@ -28,6 +28,7 @@ export function OrderDocumentPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { can } = useAuth();
+  const confirm = useConfirm();
   const [order, setOrder] = useState<Order | null>(null);
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
@@ -61,7 +62,14 @@ export function OrderDocumentPage() {
   if (!order || !partner || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
 
   const removeOrder = async () => {
-    if (!confirm(`حذف الفاتورة ${order.invoiceNumber}؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    if (
+      !(await confirm({
+        title: `حذف الفاتورة ${order.invoiceNumber}؟`,
+        description: 'لا يمكن التراجع عن هذا الإجراء.',
+        destructive: true,
+      }))
+    )
+      return;
     setError(null);
     setDeleting(true);
     try {

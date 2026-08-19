@@ -10,5 +10,7 @@ export { DashboardWidget } from './DashboardWidget';
 export { Breadcrumbs } from './Breadcrumbs';
 export type { BreadcrumbItem } from './Breadcrumbs';
 export { NavTree } from './NavTree';
+export { ConfirmProvider, useConfirm } from './ConfirmProvider';
+export type { ConfirmOptions } from './ConfirmProvider';
 export { flattenNavLinks } from './nav-types';
 export type { NavEntry, NavLink, NavGroup } from './nav-types';

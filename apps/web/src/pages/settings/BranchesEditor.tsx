@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { Attachment, BranchSummary } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /** FEATURE-007 — branch management (owner, 2026-08-12: "عايز مكان في الإعدادات إني اضيف إسم الفروع"; delete added 2026-08-12 after owner feedback; logo added 2026-08-12: "لما اختار فرع بيت الطباعة يطلعلي فاتورة فيها لوجو بيت الطباعة"). Soft delete, same as every other catalog — the default branch can never be deleted (enforced server-side too). */
 export function BranchesEditor() {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canManage = can('settings.edit');
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -24,7 +26,7 @@ export function BranchesEditor() {
   useEffect(load, []);
 
   const remove = async (branch: BranchSummary) => {
-    if (!confirm(`حذف "${branch.name}"؟`)) return;
+    if (!(await confirm({ title: `حذف "${branch.name}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/branches/${branch.id}`);

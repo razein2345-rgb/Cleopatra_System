@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { AddressType, CreatePartnerAddressInput, PartnerAddress, UpdatePartnerAddressInput } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableCheckboxCell, EditableTextCell } from '@/components/cleopatra';
+import { EditableCheckboxCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { ADDRESS_TYPE_LABELS, ADDRESS_TYPE_OPTIONS } from './partnerLabels';
 
 /** Addresses tab — FEATURE-002 Milestone 3. */
@@ -13,6 +13,7 @@ export function AddressesTab({
   partnerId: string;
   canManage: boolean;
 }) {
+  const confirm = useConfirm();
   const [addresses, setAddresses] = useState<PartnerAddress[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -39,7 +40,7 @@ export function AddressesTab({
   };
 
   const removeAddress = async (address: PartnerAddress) => {
-    if (!confirm(`حذف "${address.name}"؟`)) return;
+    if (!(await confirm({ title: `حذف "${address.name}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/partners/${partnerId}/addresses/${address.id}`);

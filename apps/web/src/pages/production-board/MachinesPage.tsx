@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { BranchSummary, Department, Machine, MachineStatus } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { StatusBadge } from '@/components/cleopatra';
+import { StatusBadge, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /**
@@ -27,6 +27,7 @@ const STATUS_OPTIONS = Object.keys(STATUS_LABELS) as MachineStatus[];
 
 export function MachinesPage() {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canManage = can('machines.edit');
   const canDelete = can('machines.delete');
 
@@ -62,7 +63,7 @@ export function MachinesPage() {
   };
 
   const remove = async (machine: Machine) => {
-    if (!confirm(`حذف "${machine.name}"؟`)) return;
+    if (!(await confirm({ title: `حذف "${machine.name}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/machines/${machine.id}`);

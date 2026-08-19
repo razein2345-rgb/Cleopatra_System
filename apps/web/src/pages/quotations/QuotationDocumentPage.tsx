@@ -4,7 +4,7 @@ import type { BranchSummary, BusinessIdentity, BusinessPartner, Quotation } from
 import { apiDelete, apiGet, apiPost } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
-import { Breadcrumbs } from '@/components/cleopatra';
+import { Breadcrumbs, useConfirm } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
@@ -19,6 +19,7 @@ export function QuotationDocumentPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { can } = useAuth();
+  const confirm = useConfirm();
   const [quotation, setQuotation] = useState<Quotation | null>(null);
   const [partner, setPartner] = useState<BusinessPartner | null>(null);
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
@@ -64,7 +65,14 @@ export function QuotationDocumentPage() {
 
   // Mirrors WorkOrderDocumentPage.tsx's removeWorkOrder exactly (confirm → delete → leave).
   const removeQuotation = async () => {
-    if (!confirm(`حذف عرض السعر ${quotation.quotationNumber}؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    if (
+      !(await confirm({
+        title: `حذف عرض السعر ${quotation.quotationNumber}؟`,
+        description: 'لا يمكن التراجع عن هذا الإجراء.',
+        destructive: true,
+      }))
+    )
+      return;
     setDeleteError(null);
     setDeleting(true);
     try {

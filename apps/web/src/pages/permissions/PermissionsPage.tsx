@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import type { Permission } from '@cleopatra/shared';
 import { apiGet, apiPost, apiDelete } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 export function PermissionsPage() {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const [permissions, setPermissions] = useState<Permission[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -21,7 +23,7 @@ export function PermissionsPage() {
   useEffect(load, []);
 
   const deletePermission = async (permission: Permission) => {
-    if (!confirm(`حذف الصلاحية "${permission.key}"؟`)) return;
+    if (!(await confirm({ title: `حذف الصلاحية "${permission.key}"؟`, destructive: true }))) return;
     try {
       await apiDelete(`/api/permissions/${permission.id}`);
       load();

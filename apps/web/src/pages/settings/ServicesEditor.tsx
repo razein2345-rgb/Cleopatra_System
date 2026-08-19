@@ -4,6 +4,7 @@ import type { Service, ServiceCategory } from '@cleopatra/shared';
 import { apiDelete, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 const CATEGORY_LABELS: Record<ServiceCategory, string> = {
@@ -25,6 +26,7 @@ const CATEGORY_OPTIONS = Object.keys(CATEGORY_LABELS) as ServiceCategory[];
  */
 export function ServicesEditor({ services, onChanged }: { services: Service[]; onChanged: () => void }) {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canManage = can('settings.edit');
   const [addingTo, setAddingTo] = useState<ServiceCategory | null>(null);
   const [editing, setEditing] = useState<Service | null>(null);
@@ -32,7 +34,7 @@ export function ServicesEditor({ services, onChanged }: { services: Service[]; o
   const [collapsed, setCollapsed] = useState<Set<ServiceCategory>>(new Set());
 
   const remove = async (item: Service) => {
-    if (!confirm(`حذف "${item.name}"؟`)) return;
+    if (!(await confirm({ title: `حذف "${item.name}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/services/${item.id}`);

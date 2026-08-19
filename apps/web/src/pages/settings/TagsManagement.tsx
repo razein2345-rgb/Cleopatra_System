@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import type { CreatePartnerTagInput, PartnerTag, UpdatePartnerTagInput } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableCheckboxCell, EditableTextCell } from '@/components/cleopatra';
+import { EditableCheckboxCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /** Settings → Tags Management — FEATURE-002 Milestone 4. */
 export function TagsManagement() {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canManage = can('settings.edit');
   const [tags, setTags] = useState<PartnerTag[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +23,7 @@ export function TagsManagement() {
   useEffect(load, []);
 
   const remove = async (tag: PartnerTag) => {
-    if (!confirm(`حذف الوسم "${tag.name}"؟`)) return;
+    if (!(await confirm({ title: `حذف الوسم "${tag.name}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/partner-tags/${tag.id}`);

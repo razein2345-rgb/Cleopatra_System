@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import type { Permission, RoleWithPermissions } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 export function RolesPage() {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const [roles, setRoles] = useState<RoleWithPermissions[] | null>(null);
   const [permissions, setPermissions] = useState<Permission[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +31,7 @@ export function RolesPage() {
   useEffect(load, []);
 
   const deleteRole = async (role: RoleWithPermissions) => {
-    if (!confirm(`حذف الدور "${role.label}"؟`)) return;
+    if (!(await confirm({ title: `حذف الدور "${role.label}"؟`, destructive: true }))) return;
     try {
       await apiDelete(`/api/roles/${role.id}`);
       load();

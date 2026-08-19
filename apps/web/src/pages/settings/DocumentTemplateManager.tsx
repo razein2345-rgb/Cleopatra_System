@@ -3,6 +3,7 @@ import type { DocumentTemplate, DocumentTemplateConfig, DocumentType } from '@cl
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/cleopatra/StatusBadge';
+import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { DEFAULT_TEMPLATE_CONFIG, TEMPLATE_CONFIG_FIELDS } from '@/lib/documents/templateConfigFields';
 
@@ -14,6 +15,7 @@ import { DEFAULT_TEMPLATE_CONFIG, TEMPLATE_CONFIG_FIELDS } from '@/lib/documents
  */
 export function DocumentTemplateManager({ documentType, title }: { documentType: DocumentType; title: string }) {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canManage = can('settings.edit');
   const [templates, setTemplates] = useState<DocumentTemplate[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,8 +50,8 @@ export function DocumentTemplateManager({ documentType, title }: { documentType:
     void runAction(t.id, () => apiPost(`/api/document-templates/${t.id}/duplicate`, { name: name.trim() }));
   };
 
-  const remove = (t: DocumentTemplate) => {
-    if (!window.confirm(`حذف القالب "${t.name}"؟`)) return;
+  const remove = async (t: DocumentTemplate) => {
+    if (!(await confirm({ title: `حذف القالب "${t.name}"؟`, destructive: true }))) return;
     void runAction(t.id, () => apiDelete(`/api/document-templates/${t.id}`));
   };
 

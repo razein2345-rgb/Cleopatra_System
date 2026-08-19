@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import type { CreatePartnerCategoryInput, PartnerCategory, UpdatePartnerCategoryInput } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableCheckboxCell, EditableTextCell } from '@/components/cleopatra';
+import { EditableCheckboxCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /** Settings → Categories Management — FEATURE-002 Milestone 4. */
 export function CategoriesManagement() {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canManage = can('settings.edit');
   const [categories, setCategories] = useState<PartnerCategory[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +25,7 @@ export function CategoriesManagement() {
   useEffect(load, []);
 
   const remove = async (category: PartnerCategory) => {
-    if (!confirm(`حذف التصنيف "${category.name}"؟`)) return;
+    if (!(await confirm({ title: `حذف التصنيف "${category.name}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/partner-categories/${category.id}`);

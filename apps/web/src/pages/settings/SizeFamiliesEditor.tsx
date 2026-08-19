@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { SizeFamily, SizeFamilyEntry, UpdateSizeFamilyEntryInput } from '@cleopatra/shared';
 import { apiDelete, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableNumberCell, EditableTextCell } from '@/components/cleopatra';
+import { EditableNumberCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /**
@@ -39,11 +39,12 @@ function FamilyCard({
   canManage: boolean;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
   const [showAddEntry, setShowAddEntry] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const removeEntry = async (entry: SizeFamilyEntry) => {
-    if (!confirm(`حذف المقاس "${entry.label}"؟`)) return;
+    if (!(await confirm({ title: `حذف المقاس "${entry.label}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/size-families/${family.id}/entries/${entry.id}`);

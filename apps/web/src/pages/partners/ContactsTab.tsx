@@ -7,7 +7,7 @@ import type {
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableCheckboxCell, EditableTextCell } from '@/components/cleopatra';
+import { EditableCheckboxCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 
 const PREFERRED_METHOD_OPTIONS: Array<[PreferredContactMethod, string]> = [
   ['PHONE', 'تليفون'],
@@ -24,6 +24,7 @@ export function ContactsTab({
   partnerId: string;
   canManage: boolean;
 }) {
+  const confirm = useConfirm();
   const [contacts, setContacts] = useState<ContactPerson[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -50,7 +51,7 @@ export function ContactsTab({
   };
 
   const removeContact = async (contact: ContactPerson) => {
-    if (!confirm(`حذف "${contact.fullName}"؟`)) return;
+    if (!(await confirm({ title: `حذف "${contact.fullName}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/partners/${partnerId}/contacts/${contact.id}`);

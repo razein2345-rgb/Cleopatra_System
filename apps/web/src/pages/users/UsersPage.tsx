@@ -5,7 +5,7 @@ import { ADMIN_ROLE_NAMES, INTERNAL_LOGIN_DOMAIN } from '@cleopatra/shared';
 import { Eye, EyeOff } from 'lucide-react';
 import { apiGet, apiPost, apiPut, apiDelete } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableSelectCell, EditableTextCell } from '@/components/cleopatra';
+import { EditableSelectCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { isLastActiveAdmin } from '@/lib/adminSafety';
 
@@ -14,6 +14,7 @@ const LAST_ADMIN_TITLE =
 
 export function UsersPage() {
   const { can, authContext } = useAuth();
+  const confirm = useConfirm();
   // system_specifications_v2.md §3.1.1 (2026-08-16) — the full profile
   // (`/users/:id`) bundles attendance + payroll, restricted to Super Admin
   // there and enforced server-side; hidden here too so the link isn't a
@@ -69,7 +70,7 @@ export function UsersPage() {
   };
 
   const deleteUser = async (user: User) => {
-    if (!confirm(`تعطيل وحذف ${user.name}؟`)) return;
+    if (!(await confirm({ title: `تعطيل وحذف ${user.name}؟`, destructive: true }))) return;
     await apiDelete(`/api/users/${user.id}`);
     load();
   };

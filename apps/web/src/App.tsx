@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '@/state/AuthContext';
 import { ThemeProvider } from '@/state/ThemeContext';
+import { ConfirmProvider } from '@/components/cleopatra';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { AppShell } from '@/components/AppShell';
 import { LoginPage } from '@/pages/login/LoginPage';
@@ -32,6 +33,7 @@ function App() {
     <ThemeProvider>
       <BrowserRouter>
         <AuthProvider>
+          <ConfirmProvider>
           <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/accept-invite" element={<AcceptInvitePage />} />
@@ -121,6 +123,7 @@ function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </ConfirmProvider>
         </AuthProvider>
       </BrowserRouter>
     </ThemeProvider>

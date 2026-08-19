@@ -10,6 +10,7 @@ import type {
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import {
   ITEM_TYPE_LABELS,
@@ -79,6 +80,7 @@ function QuotationLifecycle({
   onChanged: (q: Quotation) => void;
 }) {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canConvert = can('quotations.convert');
   const canDelete = can('quotations.delete');
   const navigate = useNavigate();
@@ -102,7 +104,12 @@ function QuotationLifecycle({
   }, [quotation.convertedOrderId]);
 
   const convertToOrder = async () => {
-    if (!confirm(`تحويل ${quotation.quotationNumber} إلى فاتورة؟ لا يمكن التراجع عن هذا الإجراء.`))
+    if (
+      !(await confirm({
+        title: `تحويل ${quotation.quotationNumber} إلى فاتورة؟`,
+        description: 'لا يمكن التراجع عن هذا الإجراء.',
+      }))
+    )
       return;
     setError(null);
     setConverting(true);
@@ -161,7 +168,14 @@ function QuotationLifecycle({
   };
 
   const removeQuotation = async () => {
-    if (!confirm(`حذف ${quotation.quotationNumber}؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
+    if (
+      !(await confirm({
+        title: `حذف ${quotation.quotationNumber}؟`,
+        description: 'لا يمكن التراجع عن هذا الإجراء.',
+        destructive: true,
+      }))
+    )
+      return;
     setError(null);
     setDeleting(true);
     try {
@@ -174,7 +188,7 @@ function QuotationLifecycle({
   };
 
   const createVersion = async () => {
-    if (!confirm(`إنشاء نسخة جديدة من ${quotation.quotationNumber}؟`)) return;
+    if (!(await confirm({ title: `إنشاء نسخة جديدة من ${quotation.quotationNumber}؟` }))) return;
     setError(null);
     setSubmitting(true);
     try {

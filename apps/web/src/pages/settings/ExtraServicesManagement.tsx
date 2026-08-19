@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import type { CreateExtraServiceOptionInput, ExtraServiceOption, UpdateExtraServiceOptionInput } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableCheckboxCell, EditableTextCell } from '@/components/cleopatra';
+import { EditableCheckboxCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /** Owner (2026-08-17, "عايز في الإعدادات أقدر أضيف على الخدمات الإضافية خدمة") — admin-managed catalog for the order composer's "الخدمات الإضافية" checklist. */
 export function ExtraServicesManagement() {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canManage = can('settings.edit');
   const [options, setOptions] = useState<ExtraServiceOption[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +23,7 @@ export function ExtraServicesManagement() {
   useEffect(load, []);
 
   const remove = async (option: ExtraServiceOption) => {
-    if (!confirm(`حذف "${option.label}"؟`)) return;
+    if (!(await confirm({ title: `حذف "${option.label}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/extra-service-options/${option.id}`);

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { SheetBase, SheetType, UpdateSheetTypeInput } from '@cleopatra/shared';
 import { apiDelete, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableNumberCell, EditableTextCell } from '@/components/cleopatra';
+import { EditableNumberCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /**
@@ -23,12 +23,13 @@ export function SheetTypesEditor({
   onChanged: () => void;
 }) {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const canManage = can('settings.edit');
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const remove = async (sheetType: SheetType) => {
-    if (!confirm(`حذف "${sheetType.name}"؟`)) return;
+    if (!(await confirm({ title: `حذف "${sheetType.name}"؟`, destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/sheet-types/${sheetType.id}`);

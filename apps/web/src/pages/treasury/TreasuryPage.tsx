@@ -17,7 +17,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { StatusBadge, EditableDateCell, EditableNumberCell, EditableSelectCell, EditableTextCell } from '@/components/cleopatra';
+import { StatusBadge, EditableDateCell, EditableNumberCell, EditableSelectCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 import { TREASURY_TYPE_LABELS, TREASURY_TYPE_OPTIONS, treasuryTypeTone, WALLET_COLORS } from './treasuryLabels';
@@ -45,6 +45,7 @@ export function TreasuryPage() {
 
 function FullTreasuryView() {
   const { can, authContext } = useAuth();
+  const confirm = useConfirm();
   const [entries, setEntries] = useState<TreasuryEntry[] | null>(null);
   const [balance, setBalance] = useState<TreasuryBalance | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
@@ -95,7 +96,7 @@ function FullTreasuryView() {
 
   /** FEATURE-007 (2026-08-12, owner: "محتاج قسم الوارد والمنصرف ضروري علشان ابدأ افعله عندي واشتغل من عليه") — the module itself already existed end-to-end (this page); the actual gap was no way to fix a mistaken entry, which real daily use immediately needs. Automatic `INVOICE_PAYMENT` entries stay read-only (guarded server-side too — see `ManualEntryOnlyError`). */
   const removeEntry = async (entry: TreasuryEntry) => {
-    if (!confirm('حذف هذه الحركة؟')) return;
+    if (!(await confirm({ title: 'حذف هذه الحركة؟', destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/treasury-entries/${entry.id}`);
@@ -368,6 +369,7 @@ function FullTreasuryView() {
  */
 function ReceptionTreasuryView() {
   const { can, authContext } = useAuth();
+  const confirm = useConfirm();
   const [summary, setSummary] = useState<MyTreasurySummary | null>(null);
   const [myEntries, setMyEntries] = useState<TreasuryEntry[] | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
@@ -397,7 +399,7 @@ function ReceptionTreasuryView() {
   const isAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN' || r.name === 'ADMIN') ?? false;
 
   const removeEntry = async (entry: TreasuryEntry) => {
-    if (!confirm('حذف هذه الحركة؟')) return;
+    if (!(await confirm({ title: 'حذف هذه الحركة؟', destructive: true }))) return;
     setError(null);
     try {
       await apiDelete(`/api/treasury-entries/${entry.id}`);
@@ -585,6 +587,7 @@ function DailyClosureCard({
   /** Bumped by the parent whenever an entry is created/edited/deleted elsewhere on the page, so this card's preview numbers stay in sync without re-fetching on every render. */
   refreshSignal?: number;
 }) {
+  const confirm = useConfirm();
   const [closure, setClosure] = useState<TreasuryDayClosure | null>(null);
   const [preview, setPreview] = useState<TreasuryDayClosurePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -620,7 +623,13 @@ function DailyClosureCard({
       setError('اكتب قيمة النقدية الفعلية اللي في الدرج');
       return;
     }
-    if (!confirm('تقفيل حساب اليوم؟ لن تقدر تسجّل حركات نقدية جديدة على هذا اليوم إلا بإعادة فتحه.')) return;
+    if (
+      !(await confirm({
+        title: 'تقفيل حساب اليوم؟',
+        description: 'لن تقدر تسجّل حركات نقدية جديدة على هذا اليوم إلا بإعادة فتحه.',
+      }))
+    )
+      return;
     setClosing(true);
     setError(null);
     try {
