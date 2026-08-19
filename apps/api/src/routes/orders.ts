@@ -5,6 +5,7 @@ import {
   createOrderHandler,
   deleteOrderHandler,
   getOrder,
+  getSalesSummaryHandler,
   listOrders,
   recordPaymentHandler,
   updateOrderHandler,
@@ -18,6 +19,10 @@ ordersRouter.use(requireAuth);
 // already-seeded `orders.create` permission.
 ordersRouter.get('/', requirePermission('orders.view'), listOrders);
 ordersRouter.post('/', requirePermission('orders.create'), createOrderHandler);
+// UX_PRODUCT_AUDIT.md § مشكلة 2.1 — before `/:id` for the same Express
+// route-ordering reason every other aggregate-before-detail route in this
+// codebase already documents.
+ordersRouter.get('/sales-summary', requirePermission('treasury.view'), getSalesSummaryHandler);
 ordersRouter.get('/:id', requirePermission('orders.view'), getOrder);
 // FEATURE-007 — full item-replacement edit/delete (owner, 2026-08-12) —
 // `orders.edit`/`orders.delete` were reserved in the permission catalog

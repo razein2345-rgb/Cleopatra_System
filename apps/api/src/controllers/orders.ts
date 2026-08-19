@@ -5,6 +5,7 @@ import {
   createOrder,
   DeliveryDateBeforeOrderDateError,
   deleteOrder,
+  getSalesSummary,
   mapOrderToDto,
   OrderHasPaymentsError,
   OrderHasWorkOrderError,
@@ -41,6 +42,12 @@ export async function listOrders(req: Request, res: Response) {
 
   const canSeeInternal = hasPermission(req.auth!.permissions, 'orders.edit');
   res.json({ success: true, data: orders.map((o) => mapOrderToDto(o, canSeeInternal)) });
+}
+
+/** UX_PRODUCT_AUDIT.md § مشكلة 2.1 — feeds the owner-only financial Dashboard widget. Gated on `treasury.view` (not `orders.view`) since aggregate revenue is more sensitive than the per-order detail an ordinary `orders.view` holder (e.g. SALES) already sees. */
+export async function getSalesSummaryHandler(_req: Request, res: Response) {
+  const summary = await getSalesSummary();
+  res.json({ success: true, data: summary });
 }
 
 export async function getOrder(req: Request<{ id: string }>, res: Response) {

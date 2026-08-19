@@ -1,5 +1,13 @@
 import type { Prisma } from '../generated/prisma/client.js';
-import type { CreateOrderItemInput, CreatePaymentInput, Order, OrderItem, Payment, ProductionTrack } from '@cleopatra/shared';
+import type {
+  CreateOrderItemInput,
+  CreatePaymentInput,
+  Order,
+  OrderItem,
+  Payment,
+  ProductionTrack,
+  SalesSummary,
+} from '@cleopatra/shared';
 import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { deductStockForOrderItem, restockForOrderItem } from './inventoryService.js';
@@ -1043,4 +1051,45 @@ export async function recordPayment(
     const fullOrder = await tx.order.findUniqueOrThrow({ where: { id: order.id }, include: ORDER_INCLUDE });
     return { order: fullOrder, paymentId: payment.id };
   });
+}
+
+/**
+ * UX_PRODUCT_AUDIT.md § مشكلة 2.1 ("مفيش أي Widget مالي/تجاري لصاحب
+ * المشروع") — no aggregate sales-total query existed anywhere in the
+ * codebase before this (confirmed by search); `finalTotal` is only ever
+ * summed per-order today. Every `Order` doubles as its own invoice
+ * (`invoiceNumber` is assigned at creation, `createOrder` always starts a
+ * new order at `status: 'CONFIRMED'`), so the only real-world exclusion is
+ * `CANCELLED` — same `isDeleted`/`date`-ordering convention `listOrders`
+ * already uses, not `createdAt`, to match how orders are dated everywhere
+ * else in the app. "This week" is a rolling 7 days (today inclusive)
+ * rather than a calendar week, to sidestep a Saturday-vs-Monday
+ * week-start decision nobody has actually made for this business.
+ */
+export async function getSalesSummary(): Promise<SalesSummary> {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfWeek = new Date(startOfToday);
+  startOfWeek.setDate(startOfWeek.getDate() - 6);
+
+  const baseWhere = { isDeleted: false, status: { not: 'CANCELLED' as const } };
+  const [today, week] = await Promise.all([
+    prisma.order.aggregate({
+      where: { ...baseWhere, date: { gte: startOfToday } },
+      _sum: { finalTotal: true },
+      _count: true,
+    }),
+    prisma.order.aggregate({
+      where: { ...baseWhere, date: { gte: startOfWeek } },
+      _sum: { finalTotal: true },
+      _count: true,
+    }),
+  ]);
+
+  return {
+    todayTotal: today._sum.finalTotal?.toNumber() ?? 0,
+    todayCount: today._count,
+    weekTotal: week._sum.finalTotal?.toNumber() ?? 0,
+    weekCount: week._count,
+  };
 }

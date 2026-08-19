@@ -309,6 +309,15 @@ export const updateOrderItemProductionSchema = z.object({
   status: orderItemProductionStatusSchema.optional(),
 });
 
+/** UX_PRODUCT_AUDIT.md § مشكلة 2.1 — the owner-only Dashboard financial widget's sales figures. */
+export const salesSummarySchema = z.object({
+  todayTotal: z.number(),
+  todayCount: z.number().int(),
+  weekTotal: z.number(),
+  weekCount: z.number().int(),
+});
+
+export type SalesSummary = z.infer<typeof salesSummarySchema>;
 export type OrderStatus = z.infer<typeof orderStatusSchema>;
 export type ProductionTrack = z.infer<typeof productionTrackSchema>;
 export type OrderItemProductionStatus = z.infer<typeof orderItemProductionStatusSchema>;
