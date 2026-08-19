@@ -9,6 +9,7 @@ export function mapExtraServiceOptionToDto(option: ExtraServiceOptionRecord): Ex
     label: option.label,
     isActive: option.isActive,
     sortOrder: option.sortOrder,
+    applicableTracks: option.applicableTracks,
     createdAt: option.createdAt.toISOString(),
     updatedAt: option.updatedAt.toISOString(),
   };

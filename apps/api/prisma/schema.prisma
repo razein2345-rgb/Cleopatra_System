@@ -1004,6 +1004,15 @@ model ExtraServiceOption {
   isActive  Boolean @default(true)
   sortOrder Int     @default(0)
 
+  /// Owner ("عايز الخدمات الإضافية دي على حسب القسم... انا اللي احدد ده من
+  /// الإعدادات") — which production tracks this option applies to. Empty
+  /// array (the default, and every pre-existing row's value after the
+  /// backfill-free migration) means "no restriction — show for every
+  /// track", exactly matching today's actual behavior; the owner opts an
+  /// option INTO specific tracks by picking one or more, never has to
+  /// touch options they don't care about.
+  applicableTracks ProductionTrack[] @default([])
+
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid

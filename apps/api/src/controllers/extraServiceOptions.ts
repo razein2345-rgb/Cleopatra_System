@@ -50,7 +50,12 @@ export async function updateExtraServiceOption(req: Request<{ id: string }>, res
     entityId: updated.id,
     action: 'UPDATE',
     performedById: auth.staffId,
-    previousValue: { label: existing.label, isActive: existing.isActive, sortOrder: existing.sortOrder },
+    previousValue: {
+      label: existing.label,
+      isActive: existing.isActive,
+      sortOrder: existing.sortOrder,
+      applicableTracks: existing.applicableTracks,
+    },
     newValue: input,
   });
 

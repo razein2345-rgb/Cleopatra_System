@@ -3693,11 +3693,18 @@ function NewOrderForm({
             </p>
           )}
 
-          {/* الخدمات الإضافية — قائمة قابلة للإدارة من الإعدادات (owner, 2026-08-17) */}
+          {/* الخدمات الإضافية — قائمة قابلة للإدارة من الإعدادات (owner، 2026-08-17)، ومفلترة حسب القسم النشط (owner، 2026-08-20: "عايز الخدمات الإضافية دي على حسب القسم") — بند فاضي applicableTracks معناه يظهر لكل الأقسام. */}
           <div className="space-y-2">
             <p className="text-sm font-medium">الخدمات الإضافية</p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {draft.extraServices.map((row, idx) => (
+              {draft.extraServices
+                .map((row, idx) => ({ row, idx }))
+                .filter(({ row }) => {
+                  const option = extraServiceOptions.find((o) => o.id === row.optionId);
+                  const currentTrack = resolveProductionTrackForTab(activeParentId);
+                  return !option || option.applicableTracks.length === 0 || (currentTrack !== null && option.applicableTracks.includes(currentTrack));
+                })
+                .map(({ row, idx }) => (
                 <div key={row.optionId || row.label} className="border-border flex flex-col gap-1 rounded-lg border p-2">
                   <label className="flex items-center gap-2 text-sm">
                     <Checkbox
