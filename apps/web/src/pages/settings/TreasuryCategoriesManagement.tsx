@@ -1,16 +1,24 @@
 import { useEffect, useState } from 'react';
-import type { CreateTreasuryCategoryInput, TreasuryCategory, UpdateTreasuryCategoryInput } from '@cleopatra/shared';
+import type { CreateTreasuryCategoryInput, TreasuryCategory, TreasuryCategoryTotal, UpdateTreasuryCategoryInput } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { EditableCheckboxCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
+
+const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
 /** UX_PRODUCT_AUDIT.md § مشكلة 7.3 — settings-managed treasury entry categories. */
 export function TreasuryCategoriesManagement() {
   const { can } = useAuth();
   const confirm = useConfirm();
   const canManage = can('settings.edit');
+  // Owner (2026-08-20, "حابب إن يظهرلي جمب التصنيف بتاع الخزينة بيدخلي كام
+  // إجمالي وشهرياً") — financial aggregate, so it's gated on treasury.view
+  // (stricter than settings.edit) both server-side and here: a caller
+  // without it simply never sees the column, not an error state.
+  const canSeeTotals = can('treasury.view');
   const [categories, setCategories] = useState<TreasuryCategory[] | null>(null);
+  const [totals, setTotals] = useState<TreasuryCategoryTotal[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
@@ -18,9 +26,14 @@ export function TreasuryCategoriesManagement() {
     apiGet<TreasuryCategory[]>('/api/treasury-categories')
       .then(setCategories)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل تصنيفات الخزينة'));
+    if (canSeeTotals) {
+      apiGet<TreasuryCategoryTotal[]>('/api/treasury-categories/totals')
+        .then(setTotals)
+        .catch(() => undefined);
+    }
   };
 
-  useEffect(load, []);
+  useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const remove = async (category: TreasuryCategory) => {
     if (!(await confirm({ title: `حذف تصنيف "${category.name}"؟`, destructive: true }))) return;
@@ -63,51 +76,66 @@ export function TreasuryCategoriesManagement() {
             <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
               <th className="p-2">الاسم</th>
               <th className="p-2">الحالة</th>
+              {canSeeTotals && <th className="p-2">إجمالي / هذا الشهر</th>}
               <th className="p-2"></th>
             </tr>
           </thead>
           <tbody>
-            {categories.map((category) => (
-              <tr key={category.id} className="border-border border-b last:border-0">
-                <td className="p-2 font-medium">
-                  {canManage ? (
-                    <EditableTextCell
-                      value={category.name}
-                      onSave={(next) => updateCategoryField(category, { name: next })}
-                    />
-                  ) : (
-                    category.name
-                  )}
-                </td>
-                <td className="p-2">
-                  {canManage ? (
-                    <div className="flex items-center gap-1.5">
-                      <EditableCheckboxCell
-                        value={category.isActive}
-                        onSave={(next) => updateCategoryField(category, { isActive: next })}
+            {categories.map((category) => {
+              const total = totals.find((t) => t.category === category.name);
+              return (
+                <tr key={category.id} className="border-border border-b last:border-0">
+                  <td className="p-2 font-medium">
+                    {canManage ? (
+                      <EditableTextCell
+                        value={category.name}
+                        onSave={(next) => updateCategoryField(category, { name: next })}
                       />
+                    ) : (
+                      category.name
+                    )}
+                  </td>
+                  <td className="p-2">
+                    {canManage ? (
+                      <div className="flex items-center gap-1.5">
+                        <EditableCheckboxCell
+                          value={category.isActive}
+                          onSave={(next) => updateCategoryField(category, { isActive: next })}
+                        />
+                        <span className={category.isActive ? 'text-success' : 'text-muted-foreground'}>
+                          {category.isActive ? 'نشط' : 'غير نشط'}
+                        </span>
+                      </div>
+                    ) : (
                       <span className={category.isActive ? 'text-success' : 'text-muted-foreground'}>
                         {category.isActive ? 'نشط' : 'غير نشط'}
                       </span>
-                    </div>
-                  ) : (
-                    <span className={category.isActive ? 'text-success' : 'text-muted-foreground'}>
-                      {category.isActive ? 'نشط' : 'غير نشط'}
-                    </span>
+                    )}
+                  </td>
+                  {canSeeTotals && (
+                    <td className="text-muted-foreground p-2" dir="ltr">
+                      {total ? (
+                        <>
+                          {money(total.total)} <span className="text-xs">/ {money(total.month)}</span>
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                   )}
-                </td>
-                <td className="p-2">
-                  {canManage && (
-                    <Button variant="ghost" size="sm" onClick={() => void remove(category)}>
-                      حذف
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            ))}
+                  <td className="p-2">
+                    {canManage && (
+                      <Button variant="ghost" size="sm" onClick={() => void remove(category)}>
+                        حذف
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
             {categories.length === 0 && (
               <tr>
-                <td className="text-muted-foreground p-2" colSpan={3}>
+                <td className="text-muted-foreground p-2" colSpan={canSeeTotals ? 4 : 3}>
                   لا توجد تصنيفات بعد.
                 </td>
               </tr>

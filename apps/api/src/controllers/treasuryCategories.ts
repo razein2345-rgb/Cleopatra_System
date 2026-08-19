@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { createTreasuryCategorySchema, updateTreasuryCategorySchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { mapTreasuryCategoryToDto } from '../services/treasuryCategoryService.js';
+import { getTreasuryCategoryTotals } from '../services/treasuryService.js';
 import { recordAudit } from '../services/auditService.js';
 
 async function loadCategoryOr404(id: string, res: Response) {
@@ -19,6 +20,12 @@ export async function listTreasuryCategories(_req: Request, res: Response) {
     orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
   });
   res.json({ success: true, data: categories.map(mapTreasuryCategoryToDto) });
+}
+
+/** Owner (2026-08-20) — إجمالي/شهري لكل تصنيف، لعرضه جنب كل تصنيف في شاشة الإدارة. Financial aggregate, gated stricter than the plain list (treasury.view, not orders/settings-level access). */
+export async function getTreasuryCategoryTotalsHandler(_req: Request, res: Response) {
+  const totals = await getTreasuryCategoryTotals();
+  res.json({ success: true, data: totals });
 }
 
 export async function createTreasuryCategory(req: Request, res: Response) {

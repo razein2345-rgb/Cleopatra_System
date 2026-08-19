@@ -3,6 +3,7 @@ import type {
   CreateTreasuryEntryInput,
   MyTreasurySummary,
   TreasuryBalance,
+  TreasuryCategoryTotal,
   TreasuryDayClosure,
   TreasuryDayClosurePreview,
   TreasuryEntry,
@@ -401,4 +402,42 @@ export async function getTodayClosure(branchId: string): Promise<TreasuryDayClos
     where: { branchId_date: { branchId, date: dateOnly() } },
   });
   return closure ? mapDayClosureToDto(closure) : null;
+}
+
+/**
+ * Owner (2026-08-20, "حابب إن يظهرلي جمب التصنيف بتاع الخزينة بيدخلي كام
+ * إجمالي وشهرياً") — total and this-calendar-month sums per category
+ * name, for the "إدارة تصنيفات المصروفات/الإيرادات" settings screen.
+ * Matched by `TreasuryEntry.category`'s free-text value (not an FK — see
+ * TreasuryCategory's own schema comment), so this also naturally surfaces
+ * totals for any legacy free-text category never added to the managed
+ * list. `entries with category: null` are simply excluded — there's no
+ * catalog row to attribute them to.
+ */
+export async function getTreasuryCategoryTotals(): Promise<TreasuryCategoryTotal[]> {
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const [allTime, thisMonth] = await Promise.all([
+    prisma.treasuryEntry.groupBy({
+      by: ['category'],
+      where: { isDeleted: false, category: { not: null } },
+      _sum: { amount: true },
+      _count: true,
+    }),
+    prisma.treasuryEntry.groupBy({
+      by: ['category'],
+      where: { isDeleted: false, category: { not: null }, date: { gte: startOfMonth } },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  const monthByCategory = new Map(thisMonth.map((row) => [row.category as string, row._sum.amount?.toNumber() ?? 0]));
+
+  return allTime.map((row) => ({
+    category: row.category as string,
+    total: row._sum.amount?.toNumber() ?? 0,
+    month: monthByCategory.get(row.category as string) ?? 0,
+    entryCount: row._count,
+  }));
 }
