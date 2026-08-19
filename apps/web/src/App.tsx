@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '@/state/AuthContext';
 import { ThemeProvider } from '@/state/ThemeContext';
@@ -7,27 +8,59 @@ import { AppShell } from '@/components/AppShell';
 import { LoginPage } from '@/pages/login/LoginPage';
 import { AcceptInvitePage } from '@/pages/accept-invite/AcceptInvitePage';
 import { RoleHome } from '@/pages/dashboard/RoleHome';
-import { SettingsPage } from '@/pages/settings/SettingsPage';
-import { AuditLogPage } from '@/pages/settings/AuditLogPage';
-import { UsersPage } from '@/pages/users/UsersPage';
-import { EmployeeProfilePage } from '@/pages/users/EmployeeProfilePage';
-import { EmployeeAdvancesReportPage } from '@/pages/users/EmployeeAdvancesReportPage';
-import { RolesPage } from '@/pages/roles/RolesPage';
-import { PermissionsPage } from '@/pages/permissions/PermissionsPage';
-import { PartnersPage } from '@/pages/partners/PartnersPage';
-import { PartnerProfilePage } from '@/pages/partners/PartnerProfilePage';
-import { DocumentsPage } from '@/pages/documents/DocumentsPage';
-import { QuotationDetailPage } from '@/pages/quotations/QuotationDetailPage';
-import { QuotationDocumentPage } from '@/pages/quotations/QuotationDocumentPage';
-import { NewOrderPage } from '@/pages/orders/NewOrderPage';
-import { OrderDocumentPage } from '@/pages/orders/OrderDocumentPage';
-import { WorkOrderDocumentPage } from '@/pages/orders/WorkOrderDocumentPage';
-import { TreasuryPage } from '@/pages/treasury/TreasuryPage';
-import { InventoryPage } from '@/pages/inventory/InventoryPage';
-import { ProductionBoardPage } from '@/pages/production-board/ProductionBoardPage';
-import { WorkOrderTimelinePage } from '@/pages/production-board/WorkOrderTimelinePage';
-import { MachinesPage } from '@/pages/production-board/MachinesPage';
-import { KioskPage } from '@/pages/attendance/KioskPage';
+
+/**
+ * UX_PRODUCT_AUDIT.md § مشكلة 12.1 — every route used to be a static
+ * top-of-file import, so a session that only ever touches the attendance
+ * kiosk still downloaded the entire app (Settings, Treasury, Production
+ * Board, everything) in one ~1.28MB bundle. `LoginPage`/`AcceptInvitePage`/
+ * `RoleHome` stay eager — every session hits one of them first, so lazy-
+ * loading them would only add a network round-trip with no benefit. Every
+ * other route is its own chunk, loaded once actually navigated to.
+ */
+const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
+const AuditLogPage = lazy(() => import('@/pages/settings/AuditLogPage').then((m) => ({ default: m.AuditLogPage })));
+const UsersPage = lazy(() => import('@/pages/users/UsersPage').then((m) => ({ default: m.UsersPage })));
+const EmployeeProfilePage = lazy(() =>
+  import('@/pages/users/EmployeeProfilePage').then((m) => ({ default: m.EmployeeProfilePage })),
+);
+const EmployeeAdvancesReportPage = lazy(() =>
+  import('@/pages/users/EmployeeAdvancesReportPage').then((m) => ({ default: m.EmployeeAdvancesReportPage })),
+);
+const RolesPage = lazy(() => import('@/pages/roles/RolesPage').then((m) => ({ default: m.RolesPage })));
+const PermissionsPage = lazy(() => import('@/pages/permissions/PermissionsPage').then((m) => ({ default: m.PermissionsPage })));
+const PartnersPage = lazy(() => import('@/pages/partners/PartnersPage').then((m) => ({ default: m.PartnersPage })));
+const PartnerProfilePage = lazy(() =>
+  import('@/pages/partners/PartnerProfilePage').then((m) => ({ default: m.PartnerProfilePage })),
+);
+const DocumentsPage = lazy(() => import('@/pages/documents/DocumentsPage').then((m) => ({ default: m.DocumentsPage })));
+const QuotationDetailPage = lazy(() =>
+  import('@/pages/quotations/QuotationDetailPage').then((m) => ({ default: m.QuotationDetailPage })),
+);
+const QuotationDocumentPage = lazy(() =>
+  import('@/pages/quotations/QuotationDocumentPage').then((m) => ({ default: m.QuotationDocumentPage })),
+);
+const NewOrderPage = lazy(() => import('@/pages/orders/NewOrderPage').then((m) => ({ default: m.NewOrderPage })));
+const OrderDocumentPage = lazy(() =>
+  import('@/pages/orders/OrderDocumentPage').then((m) => ({ default: m.OrderDocumentPage })),
+);
+const WorkOrderDocumentPage = lazy(() =>
+  import('@/pages/orders/WorkOrderDocumentPage').then((m) => ({ default: m.WorkOrderDocumentPage })),
+);
+const TreasuryPage = lazy(() => import('@/pages/treasury/TreasuryPage').then((m) => ({ default: m.TreasuryPage })));
+const InventoryPage = lazy(() => import('@/pages/inventory/InventoryPage').then((m) => ({ default: m.InventoryPage })));
+const ProductionBoardPage = lazy(() =>
+  import('@/pages/production-board/ProductionBoardPage').then((m) => ({ default: m.ProductionBoardPage })),
+);
+const WorkOrderTimelinePage = lazy(() =>
+  import('@/pages/production-board/WorkOrderTimelinePage').then((m) => ({ default: m.WorkOrderTimelinePage })),
+);
+const MachinesPage = lazy(() => import('@/pages/production-board/MachinesPage').then((m) => ({ default: m.MachinesPage })));
+const KioskPage = lazy(() => import('@/pages/attendance/KioskPage').then((m) => ({ default: m.KioskPage })));
+
+function RouteFallback() {
+  return <div className="text-muted-foreground p-6 text-sm">جارٍ التحميل…</div>;
+}
 
 function App() {
   return (
@@ -35,6 +68,7 @@ function App() {
       <BrowserRouter>
         <AuthProvider>
           <ConfirmProvider>
+          <Suspense fallback={<RouteFallback />}>
           <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/accept-invite" element={<AcceptInvitePage />} />
@@ -130,6 +164,7 @@ function App() {
 
           <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          </Suspense>
           </ConfirmProvider>
         </AuthProvider>
       </BrowserRouter>
