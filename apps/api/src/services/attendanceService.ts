@@ -315,6 +315,22 @@ export class FieldAssignmentNotFoundError extends Error {
   }
 }
 
+/** Owner (2026-08-19, "أقدر أحذف المهمة دي من عند الموظف؟") — soft delete, same `isDeleted`/`deletedAt`/`deletedBy` columns the model already carried unused. */
+export async function deleteFieldAssignment(
+  id: string,
+  deletedBy: string,
+): Promise<{ branchId: string }> {
+  const existing = await prisma.fieldAssignment.findUnique({ where: { id } });
+  if (!existing || existing.isDeleted) {
+    throw new FieldAssignmentNotFoundError();
+  }
+  await prisma.fieldAssignment.update({
+    where: { id },
+    data: { isDeleted: true, deletedAt: new Date(), deletedBy },
+  });
+  return { branchId: existing.branchId };
+}
+
 export class TooFarFromTargetError extends Error {
   constructor(public readonly distanceMeters: number) {
     super(`أنت على بعد ${Math.round(distanceMeters)} متر من المكان المطلوب`);

@@ -6,6 +6,7 @@ import {
   checkOutHandler,
   confirmFieldAssignmentHandler,
   createFieldAssignmentHandler,
+  deleteFieldAssignmentHandler,
   getKioskStaffHandler,
   getMyTodayAttendanceHandler,
   kioskSubmitHandler,
@@ -39,3 +40,4 @@ attendanceRouter.get('/field-assignments/my-today', myTodayFieldAssignmentsHandl
 attendanceRouter.post('/field-assignments/:id/confirm', confirmFieldAssignmentHandler);
 attendanceRouter.get('/field-assignments', requirePermission('employees.edit'), listFieldAssignmentsHandler);
 attendanceRouter.post('/field-assignments', requirePermission('employees.edit'), createFieldAssignmentHandler);
+attendanceRouter.delete('/field-assignments/:id', requirePermission('employees.edit'), deleteFieldAssignmentHandler);

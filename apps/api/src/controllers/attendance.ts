@@ -13,6 +13,7 @@ import {
   checkOut,
   confirmFieldAssignmentLocation,
   createFieldAssignment,
+  deleteFieldAssignment,
   FieldAssignmentNotFoundError,
   getTodayEntryForStaff,
   InvalidKioskCredentialsError,
@@ -184,4 +185,28 @@ export async function listFieldAssignmentsHandler(req: Request, res: Response) {
   const staffId = typeof req.query.staffId === 'string' ? req.query.staffId : undefined;
   const assignments = await listFieldAssignments(staffId);
   res.json({ success: true, data: assignments });
+}
+
+/** Owner (2026-08-19, "أقدر أحذف المهمة دي من عند الموظف؟") — same `employees.edit` weight as creating one. */
+export async function deleteFieldAssignmentHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  let result;
+  try {
+    result = await deleteFieldAssignment(req.params.id, auth.staffId);
+  } catch (err) {
+    if (err instanceof FieldAssignmentNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+  await recordAudit({
+    entityType: 'FieldAssignment',
+    entityId: req.params.id,
+    action: 'DELETE',
+    performedById: auth.staffId,
+    branchId: result.branchId,
+    newValue: null,
+  });
+  res.json({ success: true, data: { id: req.params.id } });
 }

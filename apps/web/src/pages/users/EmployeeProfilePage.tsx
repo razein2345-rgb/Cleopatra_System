@@ -9,7 +9,7 @@ import type {
   PayFrequency,
   User,
 } from '@cleopatra/shared';
-import { apiGet, apiPost, apiPut } from '@/lib/api';
+import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuth } from '@/state/AuthContext';
@@ -205,6 +205,7 @@ export function EmployeeProfilePage() {
                   <th className="p-2">التاريخ</th>
                   <th className="p-2">المكان</th>
                   <th className="p-2">الحالة</th>
+                  {canEdit && <th className="p-2" />}
                 </tr>
               </thead>
               <tbody>
@@ -213,6 +214,22 @@ export function EmployeeProfilePage() {
                     <td className="p-2">{new Date(a.date).toLocaleDateString('ar-EG')}</td>
                     <td className="p-2">{a.locationLabel}</td>
                     <td className="p-2">{FIELD_ASSIGNMENT_STATUS_LABELS[a.status]}</td>
+                    {canEdit && (
+                      <td className="p-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!confirm(`تحذف تكليف "${a.locationLabel}"؟`)) return;
+                            await apiDelete(`/api/attendance/field-assignments/${a.id}`);
+                            load();
+                          }}
+                          className="text-destructive text-xs"
+                          aria-label="حذف التكليف"
+                        >
+                          🗑
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
