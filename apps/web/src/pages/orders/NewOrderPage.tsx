@@ -1794,6 +1794,7 @@ function NewOrderForm({
   // toggled off — see the dynamic toggle group in the JSX below.
   const [requiresDesignByTrack, setRequiresDesignByTrack] = useState<Partial<Record<ProductionTrack, boolean>>>({});
   const [deliveryDate, setDeliveryDate] = useState(editOrder?.deliveryDate?.slice(0, 10) ?? '');
+  const [paymentTerms, setPaymentTerms] = useState(editOrder?.paymentTerms ?? '');
   const [validUntil, setValidUntil] = useState(() => {
     if (editQuotation) return editQuotation.validUntil?.slice(0, 10) ?? '';
     const d = new Date();
@@ -1847,7 +1848,7 @@ function NewOrderForm({
   // therefore doesn't warn either — only a real, human-made edit does.
   // Native `beforeunload` only fires on real page unload, not in-app
   // `navigate()` calls, so a successful save never triggers it.
-  const trackedFields = { cart, payments, partnerId, branchId, requiresDesignByTrack, deliveryDate, discountPercent, vatOn, customerNotes, internalNotes };
+  const trackedFields = { cart, payments, partnerId, branchId, requiresDesignByTrack, deliveryDate, paymentTerms, discountPercent, vatOn, customerNotes, internalNotes };
   const initialSnapshot = useRef<string | undefined>(undefined);
   if (initialSnapshot.current === undefined) {
     initialSnapshot.current = JSON.stringify(trackedFields);
@@ -1856,7 +1857,7 @@ function NewOrderForm({
   useEffect(() => {
     setHasUnsavedChanges(JSON.stringify(trackedFields) !== initialSnapshot.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, payments, partnerId, branchId, requiresDesignByTrack, deliveryDate, discountPercent, vatOn, customerNotes, internalNotes]);
+  }, [cart, payments, partnerId, branchId, requiresDesignByTrack, deliveryDate, paymentTerms, discountPercent, vatOn, customerNotes, internalNotes]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return;
@@ -2226,6 +2227,7 @@ function NewOrderForm({
           discountPercent: discountNum,
           vatOn,
           deliveryDate: deliveryDate ? new Date(deliveryDate).toISOString() : null,
+          paymentTerms: paymentTerms || null,
           customerNotes: customerNotes || null,
           internalNotes: internalNotes || null,
           requiresDesignByTrack,
@@ -2243,6 +2245,7 @@ function NewOrderForm({
           discountPercent: discountNum,
           vatOn,
           deliveryDate: deliveryDate ? new Date(deliveryDate).toISOString() : undefined,
+          paymentTerms: paymentTerms || undefined,
           customerNotes: customerNotes || undefined,
           internalNotes: internalNotes || undefined,
           requiresDesignByTrack,
@@ -2758,6 +2761,15 @@ function NewOrderForm({
                     value={deliveryDate}
                     min={(editOrder?.date ?? new Date().toISOString()).slice(0, 10)}
                     onChange={(e) => setDeliveryDate(e.target.value)}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">شروط الدفع (اختياري)</span>
+                  <input
+                    value={paymentTerms}
+                    onChange={(e) => setPaymentTerms(e.target.value)}
+                    placeholder="مثال: 50% مقدم والباقي عند التسليم"
                     className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                   />
                 </label>

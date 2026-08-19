@@ -201,6 +201,7 @@ export function OrderDocumentPage() {
         }}
         paymentSummary={{ paidTotal: order.paidTotal, remainingBalance: order.remainingBalance }}
         customerNotes={order.customerNotes}
+        paymentTerms={order.paymentTerms}
         deliveryDate={order.deliveryDate}
       />
     </div>

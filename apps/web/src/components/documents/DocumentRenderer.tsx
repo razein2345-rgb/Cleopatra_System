@@ -81,6 +81,8 @@ export interface DocumentRendererProps {
   totals?: DocumentRendererTotals | null;
   paymentSummary?: DocumentRendererPaymentSummary | null;
   customerNotes?: string | null;
+  /** `Order.paymentTerms` — free-text terms ("50% مقدم والباقي عند التسليم"), shown only when set. Invoice-only field (no Quotation/WorkOrder equivalent). */
+  paymentTerms?: string | null;
   /** FEATURE-007 (2026-08-13, owner: "تاريخ الإستلام في الفاتورة محتاجه يظهر") — the order's own delivery/pickup date (`Order.deliveryDate`), shown only when set. */
   deliveryDate?: string | null;
   /** FEATURE-007 (2026-08-12, owner: "الفاتورة ميكونش فيها الإسم ولا اللوجو فقط فاتورة — اما عرض السعر وأمر الشغل فيهم إسم المكان واللوجو") — Invoice omits the business name/logo/watermark entirely; Quotation and Work Order keep them. Defaults to `true` (Quotation/Work Order's own callers don't need to think about this). */
@@ -134,6 +136,7 @@ export function DocumentRenderer({
   totals,
   paymentSummary,
   customerNotes,
+  paymentTerms,
   deliveryDate,
   showBranding = true,
   createdByName,
@@ -308,6 +311,13 @@ export function DocumentRenderer({
                 </>
               )}
             </div>
+          </section>
+        )}
+
+        {paymentTerms && (
+          <section className="mb-4">
+            <div className="text-muted-foreground text-xs">شروط الدفع</div>
+            <div className="text-xs">{paymentTerms}</div>
           </section>
         )}
 
