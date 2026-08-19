@@ -29,6 +29,9 @@ export function mapPartnerToDto(partner: PartnerRecord, tagIds: string[]): Busin
     notes: partner.notes,
     categoryId: partner.categoryId,
     tagIds,
+    leadSource: partner.leadSource,
+    lastContactedAt: partner.lastContactedAt ? partner.lastContactedAt.toISOString() : null,
+    nextFollowUpAt: partner.nextFollowUpAt ? partner.nextFollowUpAt.toISOString() : null,
     createdAt: partner.createdAt.toISOString(),
     updatedAt: partner.updatedAt.toISOString(),
   };

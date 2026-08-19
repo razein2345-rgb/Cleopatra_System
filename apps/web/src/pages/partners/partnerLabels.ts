@@ -1,5 +1,6 @@
 import type {
   AddressType,
+  LeadSource,
   PartnerCommercialStatus,
   PartnerRiskLevel,
   PartnerRole,
@@ -32,6 +33,19 @@ export const PARTNER_STATUS_TONES: Record<PartnerStatus, 'neutral' | 'success' |
   INACTIVE: 'neutral',
   BLOCKED: 'danger',
 };
+
+/** PRODUCT_ROADMAP.md §2 — where a lead/customer came from. */
+export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
+  REFERRAL: 'إحالة',
+  SOCIAL_MEDIA: 'سوشيال ميديا',
+  WALK_IN: 'زيارة مباشرة',
+  PHONE_INQUIRY: 'استفسار تليفوني',
+  WEBSITE: 'الموقع الإلكتروني',
+  REPEAT_CUSTOMER: 'عميل متكرر',
+  OTHER: 'أخرى',
+};
+
+export const LEAD_SOURCE_OPTIONS = Object.entries(LEAD_SOURCE_LABELS) as [LeadSource, string][];
 
 export const PARTNER_ROLE_OPTIONS = Object.entries(PARTNER_ROLE_LABELS) as [PartnerRole, string][];
 export const PARTNER_STATUS_OPTIONS = Object.entries(PARTNER_STATUS_LABELS) as [

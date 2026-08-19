@@ -282,6 +282,22 @@ enum PartnerStatus {
   BLOCKED
 }
 
+/// PRODUCT_ROADMAP.md §2 "المرحلة الأولى" (CRM Phase 1's cheapest first
+/// step) — a fixed, code-defined picklist, same class as PartnerStatus/
+/// PartnerRole above, not an admin-managed catalog (TreasuryCategory/
+/// PartnerTag's pattern) — the roadmap's own phrasing ("قائمة بسيطة")
+/// matches the fixed-enum precedent, and no one asked for this list to be
+/// editable from Settings.
+enum LeadSource {
+  REFERRAL
+  SOCIAL_MEDIA
+  WALK_IN
+  PHONE_INQUIRY
+  WEBSITE
+  REPEAT_CUSTOMER
+  OTHER
+}
+
 /// Owner, 2026-08-13 — only meaningful on an individual BusinessPartner
 /// (isIndividual: true); picks the printed-document salutation ("السيد"/
 /// "السيدة" instead of the company-style "السادة").
@@ -855,6 +871,19 @@ model BusinessPartner {
   phone String?
   email String?
   notes String?
+
+  /// PRODUCT_ROADMAP.md §2 — where this lead/customer came from. Set once
+  /// at creation typically, editable any time from the Overview tab.
+  leadSource LeadSource?
+  /// Updated automatically whenever a new PartnerNote is added to this
+  /// partner (see partnerNotes.ts's createPartnerNote), and editable by
+  /// hand from the Overview tab too — the roadmap's "يدوي أو تلقائي" both
+  /// write the same column, there is no second "manual" field.
+  lastContactedAt DateTime?
+  /// Optional reminder date — purely informational today (no notification
+  /// engine exists yet per CLAUDE.md §10), surfaced on the Overview tab so
+  /// staff can see it at a glance without a dedicated task list.
+  nextFollowUpAt DateTime?
 
   // FEATURE-002 M4. Zero-or-one Category (a plain nullable FK — no
   // exclusivity/lock pattern needed, unlike ContactPerson.isPrimary or

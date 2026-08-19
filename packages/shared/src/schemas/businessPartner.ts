@@ -18,6 +18,17 @@ export const partnerRoleSchema = z.enum([
   'INTERNAL_DEPARTMENT',
 ]);
 
+/** PRODUCT_ROADMAP.md §2 — where a lead/customer came from. */
+export const leadSourceSchema = z.enum([
+  'REFERRAL',
+  'SOCIAL_MEDIA',
+  'WALK_IN',
+  'PHONE_INQUIRY',
+  'WEBSITE',
+  'REPEAT_CUSTOMER',
+  'OTHER',
+]);
+
 export const businessPartnerSchema = z.object({
   id: z.string().uuid(),
   nameAr: z.string().min(1),
@@ -38,6 +49,9 @@ export const businessPartnerSchema = z.object({
   // PUT .../category / PUT .../tags endpoints (see partnerCategoryAssignmentService.ts).
   categoryId: z.string().uuid().nullable(),
   tagIds: z.array(z.string().uuid()),
+  leadSource: leadSourceSchema.nullable(),
+  lastContactedAt: z.string().nullable(),
+  nextFollowUpAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -55,6 +69,9 @@ export const createBusinessPartnerSchema = z.object({
   phone: z.string().min(1).optional(),
   email: z.string().email().optional(),
   notes: z.string().optional(),
+  leadSource: leadSourceSchema.optional(),
+  lastContactedAt: z.string().optional(),
+  nextFollowUpAt: z.string().optional(),
 });
 
 export const updateBusinessPartnerSchema = z.object({
@@ -70,10 +87,14 @@ export const updateBusinessPartnerSchema = z.object({
   phone: z.string().min(1).nullable().optional(),
   email: z.string().email().nullable().optional(),
   notes: z.string().nullable().optional(),
+  leadSource: leadSourceSchema.nullable().optional(),
+  lastContactedAt: z.string().nullable().optional(),
+  nextFollowUpAt: z.string().nullable().optional(),
 });
 
 export type PartnerStatus = z.infer<typeof partnerStatusSchema>;
 export type PartnerRole = z.infer<typeof partnerRoleSchema>;
+export type LeadSource = z.infer<typeof leadSourceSchema>;
 export type Gender = z.infer<typeof genderSchema>;
 export type BusinessPartner = z.infer<typeof businessPartnerSchema>;
 export type CreateBusinessPartnerInput = z.infer<typeof createBusinessPartnerSchema>;

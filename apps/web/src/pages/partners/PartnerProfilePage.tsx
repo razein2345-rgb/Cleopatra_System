@@ -4,6 +4,7 @@ import type {
   BranchSummary,
   BusinessPartner,
   Gender,
+  LeadSource,
   PartnerRole,
   PartnerStatus,
   UpdateBusinessPartnerInput,
@@ -13,7 +14,7 @@ import { apiDelete, apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
-import { PARTNER_ROLE_OPTIONS, PARTNER_STATUS_OPTIONS } from './partnerLabels';
+import { LEAD_SOURCE_OPTIONS, PARTNER_ROLE_OPTIONS, PARTNER_STATUS_OPTIONS } from './partnerLabels';
 import { ContactsTab } from './ContactsTab';
 import { AddressesTab } from './AddressesTab';
 import { CategoryTagsSection } from './CategoryTagsSection';
@@ -181,6 +182,9 @@ function OverviewForm({
   const [phone, setPhone] = useState(partner.phone ?? '');
   const [email, setEmail] = useState(partner.email ?? '');
   const [notes, setNotes] = useState(partner.notes ?? '');
+  const [leadSource, setLeadSource] = useState<LeadSource | ''>(partner.leadSource ?? '');
+  const [lastContactedAt, setLastContactedAt] = useState(partner.lastContactedAt?.slice(0, 10) ?? '');
+  const [nextFollowUpAt, setNextFollowUpAt] = useState(partner.nextFollowUpAt?.slice(0, 10) ?? '');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -207,6 +211,9 @@ function OverviewForm({
         phone: phone || null,
         email: email || null,
         notes: notes || null,
+        leadSource: leadSource || null,
+        lastContactedAt: lastContactedAt || null,
+        nextFollowUpAt: nextFollowUpAt || null,
       };
       const updated = await apiPut<BusinessPartner>(`/api/partners/${partner.id}`, input);
       onSaved(updated);
@@ -342,6 +349,43 @@ function OverviewForm({
             disabled={!canEdit}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
+          />
+        </label>
+
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">مصدر العميل (اختياري)</span>
+          <select
+            disabled={!canEdit}
+            value={leadSource}
+            onChange={(e) => setLeadSource(e.target.value as LeadSource | '')}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
+          >
+            <option value="">غير محدد</option>
+            {LEAD_SOURCE_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">تاريخ آخر تواصل (اختياري)</span>
+          <input
+            type="date"
+            disabled={!canEdit}
+            value={lastContactedAt}
+            onChange={(e) => setLastContactedAt(e.target.value)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
+          />
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">تذكير متابعة في (اختياري)</span>
+          <input
+            type="date"
+            disabled={!canEdit}
+            value={nextFollowUpAt}
+            onChange={(e) => setNextFollowUpAt(e.target.value)}
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
           />
         </label>

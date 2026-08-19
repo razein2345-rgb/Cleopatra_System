@@ -8,6 +8,12 @@ import {
 } from '../services/businessPartnerService.js';
 import { recordAudit } from '../services/auditService.js';
 
+/** `lastContactedAt`/`nextFollowUpAt` arrive as ISO strings (Zod's date convention throughout this codebase) but Prisma's DateTime columns need real `Date`s — same explicit-conversion pattern `orderService.ts`'s `deliveryDate` handling already uses, not implicit string coercion. */
+function toDate(value: string | null | undefined): Date | null | undefined {
+  if (value === undefined) return undefined;
+  return value === null ? null : new Date(value);
+}
+
 /**
  * Milestone 1 (Core Partner Record) only — no search/filtering beyond
  * ordering (that's FEATURE-002 Milestone 9), no contacts/addresses/credit/
@@ -59,7 +65,13 @@ export async function createBusinessPartner(req: Request, res: Response) {
     return;
   }
 
-  const partner = await prisma.businessPartner.create({ data: input });
+  const partner = await prisma.businessPartner.create({
+    data: {
+      ...input,
+      lastContactedAt: toDate(input.lastContactedAt),
+      nextFollowUpAt: toDate(input.nextFollowUpAt),
+    },
+  });
 
   await recordAudit({
     entityType: 'BusinessPartner',
@@ -109,7 +121,11 @@ export async function updateBusinessPartner(req: Request<{ id: string }>, res: R
   // DTO must still report the partner's *current* tagIds accurately.
   const updated = await prisma.businessPartner.update({
     where: { id: req.params.id },
-    data: input,
+    data: {
+      ...input,
+      lastContactedAt: toDate(input.lastContactedAt),
+      nextFollowUpAt: toDate(input.nextFollowUpAt),
+    },
     include: { tags: { select: { tagId: true } } },
   });
 

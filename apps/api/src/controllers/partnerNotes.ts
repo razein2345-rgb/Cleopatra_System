@@ -45,9 +45,20 @@ export async function createPartnerNote(req: Request<{ partnerId: string }>, res
   if (!partner) return;
 
   const input = createPartnerNoteSchema.parse(req.body);
-  const note = await prisma.partnerNote.create({
-    data: { ...input, partnerId: partner.id, createdBy: auth.staffId },
-  });
+  // PRODUCT_ROADMAP.md §2 — a new note is itself an act of contact, so
+  // "آخر تواصل" advances automatically here (still hand-editable from the
+  // Overview tab too — both paths write the same column, see
+  // BusinessPartner.lastContactedAt's own schema comment). One
+  // transaction so the two writes never partially apply.
+  const [note] = await prisma.$transaction([
+    prisma.partnerNote.create({
+      data: { ...input, partnerId: partner.id, createdBy: auth.staffId },
+    }),
+    prisma.businessPartner.update({
+      where: { id: partner.id },
+      data: { lastContactedAt: new Date() },
+    }),
+  ]);
 
   await recordAudit({
     entityType: 'PartnerNote',
