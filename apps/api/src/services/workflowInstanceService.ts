@@ -700,18 +700,32 @@ export async function getWorkflowDashboardSummary(
 
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
+  // "ظاهرلي ده في الإنتاج اليومي وانا مستخدمتش السيستم اصلا" (2026-08-19) —
+  // these two counts read `WorkflowEvent` directly, unlike the `rows` query
+  // above which already excludes `workflowInstance.isDeleted` — a stage
+  // completed on a Work Order that got deleted later (test data, a mistaken
+  // order, ...) kept inflating "today's production" forever after, since
+  // the event log itself is never deleted. Same `workflowInstance: {
+  // isDeleted: false }` filter as `rows` above, just reached one level
+  // deeper (WorkflowEvent → StageInstance → WorkflowInstance).
   const dailyProductionCount = await prisma.workflowEvent.count({
     where: {
       eventType: 'STAGE_COMPLETED',
       occurredAt: { gte: todayStart },
-      ...(departmentIds === 'all' ? {} : { stageInstance: { departmentId: { in: departmentIds } } }),
+      stageInstance: {
+        workflowInstance: { isDeleted: false },
+        ...(departmentIds === 'all' ? {} : { departmentId: { in: departmentIds } }),
+      },
     },
   });
   const failedToday = await prisma.workflowEvent.count({
     where: {
       eventType: 'STAGE_FAILED',
       occurredAt: { gte: todayStart },
-      ...(departmentIds === 'all' ? {} : { stageInstance: { departmentId: { in: departmentIds } } }),
+      stageInstance: {
+        workflowInstance: { isDeleted: false },
+        ...(departmentIds === 'all' ? {} : { departmentId: { in: departmentIds } }),
+      },
     },
   });
 
