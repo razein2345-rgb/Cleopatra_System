@@ -189,6 +189,10 @@ enum TreasurySourceType {
   INVOICE_PAYMENT
   EMPLOYEE_ADVANCE
   EMPLOYEE_ADVANCE_REPAYMENT
+  /// Owner (2026-08-20, "مش محتاجه يتعمله فاتورة خالص") — paired atomically
+  /// with an `OUT` StockMovement, no Order/invoice involved at all. See
+  /// `TreasuryEntry.stockMovementId`.
+  QUICK_SALE
 }
 
 /// FEATURE-008 (2026-08-13) — how often an employee is paid; drives which
@@ -2284,6 +2288,14 @@ model TreasuryEntry {
   employeeAdvanceRepaymentId String?                   @unique @db.Uuid
   employeeAdvanceRepayment   EmployeeAdvanceRepayment? @relation(fields: [employeeAdvanceRepaymentId], references: [id])
 
+  /// `sourceType: 'QUICK_SALE'` only — owner (2026-08-20, "بيخصم من المخزون
+  /// ويتحط في الخزينه على طول"). Editing/deleting the StockMovement cascades
+  /// to this entry (`inventoryService.updateStockMovement`/`deleteStockMovement`);
+  /// this entry itself is never edited directly (see `sourceType !== 'MANUAL'`
+  /// guard in `treasuryService.ts`).
+  stockMovementId String?        @unique @db.Uuid
+  stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id], onDelete: SetNull)
+
   staffId  String       @db.Uuid // employee who recorded it (or who saved the source invoice)
   staff    StaffProfile @relation(fields: [staffId], references: [id])
   branchId String       @db.Uuid
@@ -2678,6 +2690,10 @@ model StockMovement {
   quantity        Decimal           @db.Decimal(14, 3)
   reference       String?
   date            DateTime          @default(now())
+
+  /// Owner (2026-08-20, "بيخصم من المخزون ويتحط في الخزينه على طول") — set
+  /// only for a quick-sale-originated movement (see `TreasuryEntry.stockMovementId`).
+  treasuryEntry TreasuryEntry?
 
   /// Owner (2026-08-20, "لا عايز اقدر اعدل الحركة واحذفها") — this row was
   /// originally documented as an immutable ledger (matching TreasuryEntry),

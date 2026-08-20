@@ -3,11 +3,14 @@ import type {
   CreateInventoryItemInput,
   CreateStockMovementInput,
   InventoryItem,
+  QuickInventorySaleInput,
   StockMovement,
+  TreasuryEntry,
   UpdateInventoryItemInput,
   UpdateStockMovementInput,
 } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
+import { assertBranchDayNotClosed, mapTreasuryEntryToDto } from './treasuryService.js';
 
 type InventoryItemRecord = Prisma.InventoryItemGetPayload<{
   include: { stockLevels: true; sheetType: true };
@@ -216,6 +219,29 @@ export async function updateInventoryItem(id: string, input: UpdateInventoryItem
  * inside the same transaction as the order (mirrors the Payment+Treasury
  * atomic pattern), not this standalone entry point.
  */
+/**
+ * Shared by `recordStockMovement` and `quickSaleFromInventory` — the one
+ * place a brand-new movement gets created + `StockLevel` adjusted, so the
+ * two call sites can never drift apart (rule 5, "دوّر قبل ما تبني").
+ */
+async function createStockMovementTx(
+  tx: Prisma.TransactionClient,
+  inventoryItemId: string,
+  branchId: string,
+  input: CreateStockMovementInput,
+) {
+  const delta = input.type === 'OUT' ? -input.quantity : input.quantity;
+  const movement = await tx.stockMovement.create({
+    data: { inventoryItemId, branchId, type: input.type, quantity: input.quantity, reference: input.reference ?? null },
+  });
+  await tx.stockLevel.upsert({
+    where: { inventoryItemId_branchId: { inventoryItemId, branchId } },
+    create: { inventoryItemId, branchId, quantityOnHand: delta },
+    update: { quantityOnHand: { increment: delta } },
+  });
+  return movement;
+}
+
 export async function recordStockMovement(
   inventoryItemId: string,
   branchId: string,
@@ -224,20 +250,70 @@ export async function recordStockMovement(
   const existing = await prisma.inventoryItem.findUnique({ where: { id: inventoryItemId } });
   if (!existing || existing.isDeleted) throw new InventoryItemNotFoundError();
 
-  const delta = input.type === 'OUT' ? -input.quantity : input.quantity;
-
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.stockMovement.create({
-      data: { inventoryItemId, branchId, type: input.type, quantity: input.quantity, reference: input.reference ?? null },
-    });
-    await tx.stockLevel.upsert({
-      where: { inventoryItemId_branchId: { inventoryItemId, branchId } },
-      create: { inventoryItemId, branchId, quantityOnHand: delta },
-      update: { quantityOnHand: { increment: delta } },
-    });
+    await createStockMovementTx(tx, inventoryItemId, branchId, input);
     return tx.inventoryItem.findUniqueOrThrow({ where: { id: inventoryItemId }, include: INCLUDE });
   });
   return mapInventoryItemToDto(updated);
+}
+
+export class NoSalePriceError extends Error {
+  constructor() {
+    super('لازم تحدد سعر البيع أولًا (سعر البيع مش متسجل على الصنف)');
+    this.name = 'NoSalePriceError';
+  }
+}
+
+/**
+ * Owner (2026-08-20, "لو حد خد صنف بسيط من قسم بضاعة من المخزون مش مضطر
+ * اطلع عليه فاتورة وعايزة يتسجل في حركة الخزينة ويخصمه من المخزن") — a
+ * one-step cash sale with no Order/invoice: an `OUT` StockMovement and an
+ * `INCOME` TreasuryEntry, created atomically and paired via
+ * `TreasuryEntry.stockMovementId`. `unitPrice` defaults to the item's own
+ * `salePrice` (same field `INVENTORY_RETAIL` order pricing reads), staff
+ * can override it for a one-off discount/markup.
+ */
+export async function quickSaleFromInventory(
+  inventoryItemId: string,
+  branchId: string,
+  staffId: string,
+  input: QuickInventorySaleInput,
+): Promise<{ item: InventoryItem; treasuryEntry: TreasuryEntry }> {
+  const existing = await prisma.inventoryItem.findUnique({ where: { id: inventoryItemId } });
+  if (!existing || existing.isDeleted) throw new InventoryItemNotFoundError();
+
+  const unitPrice = input.unitPrice ?? existing.salePrice?.toNumber();
+  if (unitPrice === undefined) throw new NoSalePriceError();
+  const amount = unitPrice * input.quantity;
+  const now = new Date();
+
+  await assertBranchDayNotClosed(branchId, now);
+
+  const result = await prisma.$transaction(async (tx) => {
+    const movement = await createStockMovementTx(tx, inventoryItemId, branchId, {
+      type: 'OUT',
+      quantity: input.quantity,
+      reference: input.note ?? 'بيع سريع',
+    });
+    const entry = await tx.treasuryEntry.create({
+      data: {
+        type: 'INCOME',
+        amount,
+        method: input.method,
+        category: input.category ?? 'مبيعات نقدية',
+        note: input.note ?? `بيع سريع — ${existing.name} × ${input.quantity}`,
+        date: now,
+        sourceType: 'QUICK_SALE',
+        stockMovementId: movement.id,
+        staffId,
+        branchId,
+      },
+    });
+    const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: inventoryItemId }, include: INCLUDE });
+    return { item, entry };
+  });
+
+  return { item: mapInventoryItemToDto(result.item), treasuryEntry: mapTreasuryEntryToDto(result.entry) };
 }
 
 /**
@@ -280,7 +356,7 @@ function movementDelta(type: 'IN' | 'OUT' | 'ADJUSTMENT', quantity: number): num
 export async function updateStockMovement(
   movementId: string,
   input: UpdateStockMovementInput,
-): Promise<{ item: InventoryItem; previous: StockMovement }> {
+): Promise<{ item: InventoryItem; previous: StockMovement; updatedTreasuryEntry: TreasuryEntry | null }> {
   const existing = await prisma.stockMovement.findUnique({ where: { id: movementId } });
   if (!existing || existing.isDeleted) throw new StockMovementNotFoundError();
 
@@ -300,7 +376,7 @@ export async function updateStockMovement(
   const oldDelta = movementDelta(existing.type, existing.quantity.toNumber());
   const newDelta = movementDelta(newType, newQuantity);
 
-  const updated = await prisma.$transaction(async (tx) => {
+  const { item: updated, entry: updatedEntry } = await prisma.$transaction(async (tx) => {
     await tx.stockMovement.update({
       where: { id: movementId },
       data: {
@@ -315,10 +391,28 @@ export async function updateStockMovement(
       create: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId, quantityOnHand: newDelta - oldDelta },
       update: { quantityOnHand: { increment: newDelta - oldDelta } },
     });
-    return tx.inventoryItem.findUniqueOrThrow({ where: { id: existing.inventoryItemId }, include: INCLUDE });
+
+    // Owner (2026-08-20, "تعديل/حذف حركة المخزون بيرجّع قيد الخزينة
+    // تلقائيًا") — a quick-sale movement's quantity edit rescales its paired
+    // TreasuryEntry proportionally (same unit price, new quantity), keeping
+    // the cash figure and the stock figure from ever drifting apart.
+    const linkedEntry = await tx.treasuryEntry.findFirst({
+      where: { stockMovementId: movementId, isDeleted: false },
+    });
+    let entry = null;
+    if (linkedEntry) {
+      const unitPrice = linkedEntry.amount.toNumber() / previous.quantity;
+      entry = await tx.treasuryEntry.update({
+        where: { id: linkedEntry.id },
+        data: { amount: unitPrice * newQuantity },
+      });
+    }
+
+    const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: existing.inventoryItemId }, include: INCLUDE });
+    return { item, entry };
   });
 
-  return { item: mapInventoryItemToDto(updated), previous };
+  return { item: mapInventoryItemToDto(updated), previous, updatedTreasuryEntry: updatedEntry ? mapTreasuryEntryToDto(updatedEntry) : null };
 }
 
 /**
@@ -331,7 +425,7 @@ export async function updateStockMovement(
 export async function deleteStockMovement(
   movementId: string,
   deletedBy: string,
-): Promise<{ item: InventoryItem; previous: StockMovement }> {
+): Promise<{ item: InventoryItem; previous: StockMovement; reversedTreasuryEntry: TreasuryEntry | null }> {
   const existing = await prisma.stockMovement.findUnique({ where: { id: movementId } });
   if (!existing || existing.isDeleted) throw new StockMovementNotFoundError();
 
@@ -347,7 +441,7 @@ export async function deleteStockMovement(
   };
   const oldDelta = movementDelta(existing.type, existing.quantity.toNumber());
 
-  const updated = await prisma.$transaction(async (tx) => {
+  const { item: updated, entry: reversedEntry } = await prisma.$transaction(async (tx) => {
     await tx.stockMovement.update({
       where: { id: movementId },
       data: { isDeleted: true, deletedAt: new Date(), deletedBy },
@@ -357,10 +451,27 @@ export async function deleteStockMovement(
       create: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId, quantityOnHand: -oldDelta },
       update: { quantityOnHand: { increment: -oldDelta } },
     });
-    return tx.inventoryItem.findUniqueOrThrow({ where: { id: existing.inventoryItemId }, include: INCLUDE });
+
+    // Owner (2026-08-20, "تعديل/حذف حركة المخزون بيرجّع قيد الخزينة
+    // تلقائيًا") — reverses the paired cash effect the same way the stock
+    // effect is reversed above, same soft-delete + Audit Log discipline as
+    // every other sensitive delete in this codebase (rule 19).
+    const linkedEntry = await tx.treasuryEntry.findFirst({
+      where: { stockMovementId: movementId, isDeleted: false },
+    });
+    let entry = null;
+    if (linkedEntry) {
+      entry = await tx.treasuryEntry.update({
+        where: { id: linkedEntry.id },
+        data: { isDeleted: true, deletedAt: new Date(), deletedBy },
+      });
+    }
+
+    const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: existing.inventoryItemId }, include: INCLUDE });
+    return { item, entry };
   });
 
-  return { item: mapInventoryItemToDto(updated), previous };
+  return { item: mapInventoryItemToDto(updated), previous, reversedTreasuryEntry: reversedEntry ? mapTreasuryEntryToDto(reversedEntry) : null };
 }
 
 export async function deleteInventoryItem(id: string, deletedBy: string): Promise<void> {

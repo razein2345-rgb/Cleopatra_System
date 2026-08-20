@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { inventoryUnitSchema } from './sheetType.js';
+import { paymentMethodSchema } from './partnerCommercialProfile.js';
 
 export const materialCategorySchema = z.enum(['PAPER', 'INK', 'PLATE', 'FINISHING', 'CONSUMABLE', 'READY_MADE']);
 export const stockMovementTypeSchema = z.enum(['IN', 'OUT', 'ADJUSTMENT']);
@@ -82,6 +83,25 @@ export const stockMovementSchema = z.object({
   createdAt: z.string(),
 });
 
+/**
+ * Owner (2026-08-20, "لو حد خد صنف بسيط من قسم بضاعة من المخزون مش مضطر
+ * اطلع عليه فاتورة وعايزة يتسجل في حركة الخزينة ويخصمه من المخزن") — a
+ * one-step cash sale with no Order/invoice at all: deducts stock (a normal
+ * `OUT` StockMovement) and records treasury income, paired atomically. Edit/
+ * delete only ever happens through the StockMovement (see
+ * `updateStockMovementSchema`/`deleteStockMovement`) — the paired
+ * TreasuryEntry follows automatically, never edited directly (same
+ * `sourceType !== 'MANUAL'` guard `treasuryService.ts` already enforces).
+ */
+export const quickInventorySaleSchema = z.object({
+  quantity: z.number().positive(),
+  /** Defaults to `InventoryItem.salePrice` server-side when omitted. */
+  unitPrice: z.number().nonnegative().optional(),
+  method: paymentMethodSchema,
+  category: z.string().trim().min(1).max(100).optional(),
+  note: z.string().trim().min(1).max(500).optional(),
+});
+
 export type MaterialCategory = z.infer<typeof materialCategorySchema>;
 export type StockMovementType = z.infer<typeof stockMovementTypeSchema>;
 export type InventoryItem = z.infer<typeof inventoryItemSchema>;
@@ -90,3 +110,4 @@ export type UpdateInventoryItemInput = z.infer<typeof updateInventoryItemSchema>
 export type StockMovement = z.infer<typeof stockMovementSchema>;
 export type CreateStockMovementInput = z.infer<typeof createStockMovementSchema>;
 export type UpdateStockMovementInput = z.infer<typeof updateStockMovementSchema>;
+export type QuickInventorySaleInput = z.infer<typeof quickInventorySaleSchema>;

@@ -23,6 +23,11 @@ export const treasurySourceTypeSchema = z.enum([
   // repayment of one (INCOME); see employeeAdvance.ts.
   'EMPLOYEE_ADVANCE',
   'EMPLOYEE_ADVANCE_REPAYMENT',
+  // Owner (2026-08-20, "مش محتاجه يتعمله فاتورة خالص هو بس بيخصم من المخزون
+  // ويتحط في الخزينه على طول") — a same-transaction pairing of a
+  // `StockMovement` (OUT) and this income entry, with no Order/invoice at
+  // all. See `stockMovementId` below and `inventoryService.quickSaleFromInventory`.
+  'QUICK_SALE',
 ]);
 
 export const treasuryEntrySchema = z.object({
@@ -38,6 +43,8 @@ export const treasuryEntrySchema = z.object({
   paymentId: z.string().uuid().nullable(),
   employeeAdvanceId: z.string().uuid().nullable(),
   employeeAdvanceRepaymentId: z.string().uuid().nullable(),
+  /** `sourceType: 'QUICK_SALE'` only — the StockMovement this entry was paired with at creation. */
+  stockMovementId: z.string().uuid().nullable(),
   partnerId: z.string().uuid().nullable(),
   staffId: z.string().uuid(),
   branchId: z.string().uuid(),

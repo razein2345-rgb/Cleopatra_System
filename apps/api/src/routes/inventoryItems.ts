@@ -10,6 +10,7 @@ import {
   listInventoryItemsHandler,
   listItemsNeedingSupplierHandler,
   listStockMovementsHandler,
+  quickSaleHandler,
   recordStockMovementHandler,
   updateInventoryItemHandler,
   updateStockMovementHandler,
@@ -30,6 +31,9 @@ inventoryItemsRouter.post('/', requirePermission('inventory.create'), createInve
 inventoryItemsRouter.put('/:id', requirePermission('inventory.edit'), updateInventoryItemHandler);
 inventoryItemsRouter.get('/:id/movements', requirePermission('inventory.view'), listStockMovementsHandler);
 inventoryItemsRouter.post('/:id/movements', requirePermission('inventory.create'), recordStockMovementHandler);
+// Owner (2026-08-20, "بيع سريع بدون فاتورة") — `treasury.create` is
+// additionally checked inside the handler (one action, two write rights).
+inventoryItemsRouter.post('/:id/quick-sale', requirePermission('inventory.create'), quickSaleHandler);
 inventoryItemsRouter.put('/:id/movements/:movementId', requirePermission('inventory.edit'), updateStockMovementHandler);
 inventoryItemsRouter.delete('/:id/movements/:movementId', requirePermission('inventory.delete'), deleteStockMovementHandler);
 inventoryItemsRouter.delete('/:id', requirePermission('inventory.delete'), deleteInventoryItemHandler);
