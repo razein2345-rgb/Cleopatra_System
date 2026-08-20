@@ -10,6 +10,7 @@ import type {
   CreateOrderTemplateInput,
   CreatePaymentInput,
   CreateQuotationInput,
+  CreateTreasuryEntryInput,
   DigitalColorMode,
   DigitalPriceTierDto,
   DigitalPrintBasis,
@@ -23,6 +24,7 @@ import type {
   PaymentMethod,
   PricingReference,
   ProductionTrack,
+  QuickInventorySaleInput,
   Quotation,
   ReadyProduct,
   Service,
@@ -1881,6 +1883,9 @@ function NewOrderForm({
   // نسخة محلية قابلة للتحديث — عشان لما تتضاف عميل جديد من نفس الشاشة يظهر فورًا بدون إعادة تحميل الصفحة.
   const [localPartners, setLocalPartners] = useState<BusinessPartner[]>(partners);
   const [showAddPartner, setShowAddPartner] = useState(false);
+  /** Owner (2026-08-20, "بيع سريع... جوة تاب بضاعة من المخزون وتاب بند يدوي") — see QuickSaleDialog/QuickManualIncomeDialog below. */
+  const [showQuickSale, setShowQuickSale] = useState(false);
+  const [showQuickIncome, setShowQuickIncome] = useState(false);
   const [partnerId, setPartnerId] = useState(
     editOrder?.partnerId ?? editQuotation?.partnerId ?? presetPartnerId ?? partners[0]?.id ?? '',
   );
@@ -3854,6 +3859,18 @@ function NewOrderForm({
 
           {draft.kind === 'INVENTORY_RETAIL' && (
             <div className="space-y-3">
+              {/* Owner (2026-08-20, "بيع سريع دي تتحط... في قسم بيع من
+                  المخزون") — a shortcut out of the whole order/invoice flow
+                  for a simple stock sale (see QuickSaleDialog below). */}
+              {can('inventory.create') && can('treasury.create') && (
+                <button
+                  type="button"
+                  onClick={() => setShowQuickSale(true)}
+                  className="text-primary text-xs hover:underline"
+                >
+                  ⚡ بيع سريع — بدون فاتورة (يخصم من المخزون ويسجل في الخزينة على طول)
+                </button>
+              )}
               <div className="border-border bg-muted/30 space-y-2 rounded-lg border p-3">
                 <span className="text-muted-foreground text-sm">امسح الباركود — بيتضاف للفاتورة فورًا</span>
                 <div className="flex gap-2">
@@ -3905,29 +3922,44 @@ function NewOrderForm({
               زي حركات الخزينة") — free-text line (اسم البند above is its
               label), manually-priced, no formula, no catalog. */}
           {draft.kind === 'MANUAL' && (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">السعر</span>
-                <input
-                  autoFocus
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={draft.unitPrice}
-                  onChange={(e) => updateDraft({ unitPrice: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">الكمية</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.quantity}
-                  onChange={(e) => updateDraft({ quantity: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
+            <div className="space-y-2">
+              {/* Owner (2026-08-20, "في تاب بند يدوي، البيع السريع يعني
+                  إيه؟" → "يسجل قيد دخل خزينة بس، بدون مخزون") — MANUAL has
+                  no inventory item to deduct from at all (see
+                  QuickManualIncomeDialog below). */}
+              {can('treasury.create') && (
+                <button
+                  type="button"
+                  onClick={() => setShowQuickIncome(true)}
+                  className="text-primary text-xs hover:underline"
+                >
+                  ⚡ بيع سريع — قيد خزينة بدون فاتورة
+                </button>
+              )}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">السعر</span>
+                  <input
+                    autoFocus
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={draft.unitPrice}
+                    onChange={(e) => updateDraft({ unitPrice: e.target.value })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">الكمية</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={draft.quantity}
+                    onChange={(e) => updateDraft({ quantity: e.target.value })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
             </div>
           )}
 
@@ -4140,7 +4172,452 @@ function NewOrderForm({
           }}
         />
       )}
+      {showQuickSale && (
+        <QuickSaleDialog
+          items={inventoryItems.filter((i) => i.category === 'READY_MADE' && i.salePrice !== null)}
+          categories={treasuryCategories}
+          onClose={() => setShowQuickSale(false)}
+        />
+      )}
+      {showQuickIncome && (
+        <QuickManualIncomeDialog branchId={branchId} categories={treasuryCategories} onClose={() => setShowQuickIncome(false)} />
+      )}
     </div>
+  );
+}
+
+/**
+ * Owner (2026-08-20, "لو حد خد صنف بسيط من قسم بضاعة من المخزون مش مضطر
+ * اطلع عليه فاتورة وعايزة يتسجل في حركة الخزينة ويخصمه من المخزن", then
+ * "بيع سريع دي تتحط... في قسم بيع من المخزون وقسم البنود اليدوي") — a
+ * one-step cash sale with no Order/invoice at all, surfaced right inside
+ * the composer's "بضاعة من المخزون" tab (not a separate page) since that's
+ * where staff already are when selling a simple stock item.
+ * `POST /api/inventory-items/:id/quick-sale` pairs an OUT StockMovement
+ * with an INCOME TreasuryEntry atomically. Edit/delete afterward only ever
+ * happens through the stock movement itself (المخزن → سجل الحركة) — the
+ * paired treasury entry follows automatically, never edited directly.
+ */
+function QuickSaleDialog({
+  items,
+  categories,
+  onClose,
+}: {
+  items: InventoryItem[];
+  categories: TreasuryCategory[];
+  onClose: () => void;
+}) {
+  const [itemId, setItemId] = useState('');
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  const [quantity, setQuantity] = useState('1');
+  const [unitPrice, setUnitPrice] = useState('');
+  const [method, setMethod] = useState<PaymentMethod>('CASH');
+  const [category, setCategory] = useState('');
+  const [customCategory, setCustomCategory] = useState(false);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const selectItem = (item: InventoryItem) => {
+    setItemId(item.id);
+    setSelectedItem(item);
+    setUnitPrice(item.salePrice !== null ? String(item.salePrice) : '');
+  };
+
+  const parsedQuantity = Number(quantity);
+  const parsedUnitPrice = Number(unitPrice);
+  const total = parsedQuantity > 0 && parsedUnitPrice >= 0 ? parsedQuantity * parsedUnitPrice : 0;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    if (!selectedItem) {
+      setError('اختر الصنف أولًا');
+      return;
+    }
+    if (!quantity || Number.isNaN(parsedQuantity) || parsedQuantity <= 0) {
+      setError('اكتب كمية أكبر من صفر');
+      return;
+    }
+    if (!unitPrice || Number.isNaN(parsedUnitPrice) || parsedUnitPrice < 0) {
+      setError('اكتب سعر بيع صحيح');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      const input: QuickInventorySaleInput = {
+        quantity: parsedQuantity,
+        unitPrice: parsedUnitPrice,
+        method,
+        category: category || undefined,
+        note: note.trim() || undefined,
+      };
+      await apiPost(`/api/inventory-items/${selectedItem.id}/quick-sale`, input);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تسجيل البيع السريع');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (saved) {
+    return (
+      <Dialog open onOpenChange={onClose}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>تم البيع بنجاح</DialogTitle>
+          </DialogHeader>
+          <p className="text-success text-sm">
+            اتسجل بيع {parsedQuantity.toLocaleString('en-US')} من "{selectedItem?.name}" — خُصمت من المخزون واتسجلت
+            في الخزينة.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              onClick={() => {
+                setSaved(false);
+                setItemId('');
+                setSelectedItem(null);
+                setQuantity('1');
+                setUnitPrice('');
+                setNote('');
+              }}
+            >
+              بيع تاني
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              تم
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>بيع سريع — بدون فاتورة</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <p className="text-muted-foreground text-sm">
+            بيع نقدي مباشر — بيخصم من المخزون ويتسجل في الخزينة على طول، من غير أي فاتورة أو مستند.
+          </p>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">الصنف</span>
+            <InventoryItemCombobox items={items} value={itemId} onChange={selectItem} placeholder="اختر الصنف…" />
+          </label>
+          {selectedItem && (
+            <p className="text-muted-foreground text-sm">
+              الرصيد الحالي: {selectedItem.quantityOnHand.toLocaleString('en-US')}
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block space-y-1 text-sm">
+              <span className="text-muted-foreground">الكمية</span>
+              <input
+                type="number"
+                min={0.001}
+                step="0.001"
+                required
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block space-y-1 text-sm">
+              <span className="text-muted-foreground">سعر القطعة</span>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                required
+                value={unitPrice}
+                onChange={(e) => setUnitPrice(e.target.value)}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+          <p className="text-sm">
+            الإجمالي:{' '}
+            <span className="font-bold" dir="ltr">
+              {total.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </span>{' '}
+            ج.م
+          </p>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">طريقة التحصيل</span>
+            <select
+              value={method}
+              onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {PAYMENT_METHOD_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {PAYMENT_METHOD_LABELS[m]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">تصنيف الخزينة (اختياري — الافتراضي "مبيعات نقدية")</span>
+            {customCategory ? (
+              <div className="flex gap-1.5">
+                <input
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="اكتب تصنيف جديد"
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setCustomCategory(false);
+                    setCategory('');
+                  }}
+                >
+                  إلغاء
+                </Button>
+              </div>
+            ) : (
+              <select
+                value={category}
+                onChange={(e) => {
+                  if (e.target.value === '__custom__') {
+                    setCustomCategory(true);
+                    setCategory('');
+                  } else {
+                    setCategory(e.target.value);
+                  }
+                }}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              >
+                <option value="">مبيعات نقدية (افتراضي)</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.name}>
+                    {c.name}
+                  </option>
+                ))}
+                <option value="__custom__">تصنيف آخر (كتابة يدوية)…</option>
+              </select>
+            )}
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">ملاحظة (اختياري)</span>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'تأكيد البيع'}
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Owner (2026-08-20, "في تاب بند يدوي، البيع السريع يعني إيه؟" → "يسجل قيد
+ * دخل خزينة بس، بدون مخزون") — MANUAL items were never linked to an
+ * inventory item (a free-text, manually-priced line — see MANUAL's own
+ * pricing kind), so there's no stock to deduct here. This is simply a fast
+ * path to a plain treasury income entry, reusing the exact same
+ * `POST /api/treasury-entries` endpoint `TreasuryPage.tsx`'s own "حركة
+ * جديدة" form already uses (rule 5 — no second copy of that logic), just
+ * as a compact modal reachable from the order composer.
+ */
+function QuickManualIncomeDialog({
+  branchId,
+  categories,
+  onClose,
+}: {
+  branchId: string;
+  categories: TreasuryCategory[];
+  onClose: () => void;
+}) {
+  const [amount, setAmount] = useState('');
+  const [method, setMethod] = useState<PaymentMethod>('CASH');
+  const [category, setCategory] = useState('');
+  const [customCategory, setCustomCategory] = useState(false);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const parsedAmount = Number(amount);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    if (!amount || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
+      setError('اكتب مبلغ أكبر من صفر');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      const input: CreateTreasuryEntryInput = {
+        type: 'INCOME',
+        amount: parsedAmount,
+        method,
+        category: category || undefined,
+        note: note.trim() || undefined,
+        date: new Date().toISOString(),
+        branchId,
+      };
+      await apiPost('/api/treasury-entries', input);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تسجيل القيد');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (saved) {
+    return (
+      <Dialog open onOpenChange={onClose}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>تم التسجيل بنجاح</DialogTitle>
+          </DialogHeader>
+          <p className="text-success text-sm">اتسجل قيد دخل بمبلغ {parsedAmount.toLocaleString('en-US')} ج.م في الخزينة.</p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              onClick={() => {
+                setSaved(false);
+                setAmount('');
+                setNote('');
+              }}
+            >
+              قيد تاني
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              تم
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>بيع سريع — قيد خزينة بدون فاتورة</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <p className="text-muted-foreground text-sm">
+            البند اليدوي مش مرتبط بصنف مخزون، فمفيش رصيد يتخصم — ده بس بيسجل مبلغ دخل في الخزينة على طول، من غير
+            فاتورة.
+          </p>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">المبلغ</span>
+            <input
+              autoFocus
+              type="number"
+              min={0}
+              step="0.01"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">طريقة التحصيل</span>
+            <select
+              value={method}
+              onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {PAYMENT_METHOD_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {PAYMENT_METHOD_LABELS[m]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">تصنيف الخزينة (اختياري)</span>
+            {customCategory ? (
+              <div className="flex gap-1.5">
+                <input
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="اكتب تصنيف جديد"
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setCustomCategory(false);
+                    setCategory('');
+                  }}
+                >
+                  إلغاء
+                </Button>
+              </div>
+            ) : (
+              <select
+                value={category}
+                onChange={(e) => {
+                  if (e.target.value === '__custom__') {
+                    setCustomCategory(true);
+                    setCategory('');
+                  } else {
+                    setCategory(e.target.value);
+                  }
+                }}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              >
+                <option value="">— بدون —</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.name}>
+                    {c.name}
+                  </option>
+                ))}
+                <option value="__custom__">تصنيف آخر (كتابة يدوية)…</option>
+              </select>
+            )}
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">ملاحظة (اختياري)</span>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'تأكيد التسجيل'}
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
