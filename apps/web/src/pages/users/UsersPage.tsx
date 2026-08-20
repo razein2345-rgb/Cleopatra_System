@@ -26,6 +26,7 @@ export function UsersPage() {
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [editingRolesFor, setEditingRolesFor] = useState<User | null>(null);
+  const [editingBranchAccessFor, setEditingBranchAccessFor] = useState<User | null>(null);
   const [settingPasswordFor, setSettingPasswordFor] = useState<User | null>(null);
 
   const load = () => {
@@ -194,6 +195,13 @@ export function UsersPage() {
                         <Button
                           variant="secondary"
                           size="sm"
+                          onClick={() => setEditingBranchAccessFor(user)}
+                        >
+                          الفروع
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           disabled={user.isActive && protectedAdmin}
                           title={user.isActive && protectedAdmin ? LAST_ADMIN_TITLE : undefined}
                           onClick={() => void toggleActive(user)}
@@ -236,6 +244,18 @@ export function UsersPage() {
           onClose={() => setEditingRolesFor(null)}
           onSaved={() => {
             setEditingRolesFor(null);
+            load();
+          }}
+        />
+      )}
+
+      {editingBranchAccessFor && (
+        <EditUserBranchAccessPanel
+          user={editingBranchAccessFor}
+          branches={branches}
+          onClose={() => setEditingBranchAccessFor(null)}
+          onSaved={() => {
+            setEditingBranchAccessFor(null);
             load();
           }}
         />
@@ -556,6 +576,89 @@ function EditUserRolesPanel({
       </div>
       <div className="flex gap-2">
         <Button onClick={() => void save()}>حفظ</Button>
+        <Button variant="secondary" onClick={onClose}>
+          إلغاء
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Owner (2026-08-20, "انا مسئول عام المفروض مسئول عن الفرعين متحدنيش
+ * بفرع اختاره") — `PUT /api/users/:id/branch-access` (the exact
+ * mechanism to grant a specific employee access to more than just their
+ * home branch, on top of the automatic SUPER_ADMIN bypass) has existed
+ * since branch scoping was first built, with zero UI ever calling it —
+ * found during a routine "built but hidden" sweep. The employee's own
+ * home branch is always accessible regardless of this list (see
+ * `canAccessBranch`), so it's shown here as a locked/checked row —
+ * only the *additional* branches are toggleable and sent to the API.
+ */
+function EditUserBranchAccessPanel({
+  user,
+  branches,
+  onClose,
+  onSaved,
+}: {
+  user: User;
+  branches: BranchSummary[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const otherBranches = branches.filter((b) => b.id !== user.branchId);
+  const [branchIds, setBranchIds] = useState<string[]>(
+    user.accessibleBranchIds.filter((id) => id !== user.branchId),
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const save = async () => {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPut(`/api/users/${user.id}/branch-access`, { branchIds });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تحديث صلاحيات الفروع');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="border-border bg-card rounded-2xl border p-4">
+      <h2 className="mb-1 font-semibold">فروع {user.name}</h2>
+      <p className="text-muted-foreground mb-3 text-sm">
+        الفرع الأساسي متاح دايمًا. علّم على أي فرع إضافي عايز {user.name} يقدر يعمل فيه عمليات (طلبات، عملاء، أوامر شغل...).
+      </p>
+      {error && <div className="text-destructive mb-2 text-sm">{error}</div>}
+      <div className="mb-4 flex flex-wrap gap-3">
+        <label className="flex items-center gap-1.5 text-sm opacity-60">
+          <input type="checkbox" checked disabled />
+          {branches.find((b) => b.id === user.branchId)?.name ?? '—'} (الفرع الأساسي)
+        </label>
+        {otherBranches.map((b) => {
+          const checked = branchIds.includes(b.id);
+          return (
+            <label key={b.id} className="flex items-center gap-1.5 text-sm">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={(e) =>
+                  setBranchIds((prev) => (e.target.checked ? [...prev, b.id] : prev.filter((id) => id !== b.id)))
+                }
+              />
+              {b.name}
+            </label>
+          );
+        })}
+        {otherBranches.length === 0 && <p className="text-muted-foreground text-sm">مفيش فروع تانية في النظام حاليًا.</p>}
+      </div>
+      <div className="flex gap-2">
+        <Button onClick={() => void save()} disabled={submitting}>
+          {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
+        </Button>
         <Button variant="secondary" onClick={onClose}>
           إلغاء
         </Button>
