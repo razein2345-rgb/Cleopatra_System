@@ -59,7 +59,12 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     'permissions.view',
   ],
   SALES: ['partners.*', 'orders.*', 'quotations.*', 'reports.view', 'inventory.view'],
-  CASHIER: ['treasury.*', 'orders.view', 'partners.view'],
+  // Owner (2026-08-20, "عايز انا بس اللي أقدر اعدل او احذف في المخزن مش كل
+  // الموظفين... هو فقط يقدر يضيف") — deliberately `view`+`create` only, no
+  // `edit`/`delete`/`inventory.*`: a cashier can see stock and record new
+  // movements (restocking, POS sales), but correcting or removing an
+  // already-recorded one stays owner-only unless explicitly granted.
+  CASHIER: ['treasury.*', 'orders.view', 'partners.view', 'inventory.view', 'inventory.create'],
   PRODUCTION_MANAGER: ['work-orders.*', 'machines.*', 'orders.view'],
   DESIGNER: ['work-orders.view', 'work-orders.edit', 'orders.view'],
   PRINTING_OPERATOR: ['work-orders.view', 'work-orders.edit', 'machines.view'],
