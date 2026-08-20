@@ -27,6 +27,7 @@ import type {
   ReadyProduct,
   Service,
   SizeFamily,
+  TreasuryCategory,
   UpdateOrderInput,
   UpdateQuotationInput,
   WorkflowTemplate,
@@ -1477,6 +1478,7 @@ export function NewOrderPage() {
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [pricingReference, setPricingReference] = useState<PricingReference | null>(null);
   const [extraServiceOptions, setExtraServiceOptions] = useState<ExtraServiceOption[]>([]);
+  const [treasuryCategories, setTreasuryCategories] = useState<TreasuryCategory[]>([]);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
   const [editQuotation, setEditQuotation] = useState<Quotation | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1492,10 +1494,11 @@ export function NewOrderPage() {
       apiGet<InventoryItem[]>('/api/inventory-items').catch(() => []),
       apiGet<PricingReference>('/api/pricing-reference'),
       apiGet<ExtraServiceOption[]>('/api/extra-service-options').catch(() => []),
+      apiGet<TreasuryCategory[]>('/api/treasury-categories').catch(() => []),
       editOrderId ? apiGet<Order>(`/api/orders/${editOrderId}`) : Promise.resolve(null),
       editQuotationId ? apiGet<Quotation>(`/api/quotations/${editQuotationId}`) : Promise.resolve(null),
     ])
-      .then(([p, b, rp, s, inv, pricing, extraServices, order, quotation]) => {
+      .then(([p, b, rp, s, inv, pricing, extraServices, categories, order, quotation]) => {
         setPartners(p);
         setBranches(b);
         setReadyProducts(rp);
@@ -1503,6 +1506,7 @@ export function NewOrderPage() {
         setInventoryItems(inv);
         setPricingReference(pricing);
         setExtraServiceOptions(extraServices.filter((o) => o.isActive));
+        setTreasuryCategories(categories.filter((c) => c.isActive));
         setEditOrder(order);
         setEditQuotation(quotation);
       })
@@ -1588,6 +1592,7 @@ export function NewOrderPage() {
       inventoryItems={inventoryItems}
       pricingReference={pricingReference}
       extraServiceOptions={extraServiceOptions}
+      treasuryCategories={treasuryCategories}
       onCreated={setCreated}
       editOrder={editOrder}
       editQuotation={editQuotation}
@@ -1833,6 +1838,7 @@ function NewOrderForm({
   inventoryItems,
   pricingReference,
   extraServiceOptions,
+  treasuryCategories,
   onCreated,
   editOrder,
   editQuotation,
@@ -1845,6 +1851,7 @@ function NewOrderForm({
   inventoryItems: InventoryItem[];
   pricingReference: PricingReference;
   extraServiceOptions: ExtraServiceOption[];
+  treasuryCategories: TreasuryCategory[];
   onCreated: (result: CreatedResult) => void;
   /** FEATURE-007 — full item-replacement edit (owner, 2026-08-12: "استبدال كامل للأصناف"). Present only when reached via `/orders/new?editOrder=<id>`. */
   editOrder?: Order | null;
@@ -1908,6 +1915,8 @@ function NewOrderForm({
   const [activeSubTabId, setActiveSubTabId] = useState<string | undefined>('LOOSE_PAPER');
   const [draft, setDraft] = useState<DraftItem>(() => emptyDraftItem('LOOSE_PAPER', extraServiceOptions));
   const [itemError, setItemError] = useState<string | null>(null);
+  /** MANUAL kind's اسم البند picker — starts in "select from التصنيفات" mode, "تصنيف آخر" switches to free-text. */
+  const [manualCategoryCustom, setManualCategoryCustom] = useState(false);
   /** Owner (2026-08-17, "عايز لما ادوس على بند في السلة... أقدر أعدل عليه") — the `CartLine.key` currently loaded into the composer for editing, or null when composing a brand-new item. `addToCart` checks this to decide "update in place" vs "append". */
   const [editingKey, setEditingKey] = useState<string | null>(null);
   /** "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — set by `duplicateLineAsVariant`, read once by the next `addToCart` to link the new line to its source line's group, then cleared. */
@@ -2929,7 +2938,7 @@ function NewOrderForm({
               picker below), never freely typed — asking for it here was
               pure redundant friction, and inviting a typed name that could
               drift from the actual stock item's registered name. */}
-          {draft.kind !== 'INVENTORY_RETAIL' && (
+          {draft.kind !== 'INVENTORY_RETAIL' && draft.kind !== 'MANUAL' && (
             <label className="block space-y-1 text-sm">
               <span className="text-muted-foreground">اسم البند / العملية</span>
               <input
@@ -2938,6 +2947,60 @@ function NewOrderForm({
                 placeholder="مثال: فلايرز، كروت شخصية..."
                 className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
               />
+            </label>
+          )}
+
+          {/* Owner (2026-08-20, "عايزها تظهر فيها تصنيفات الخزينة لأنها
+              زيها زي الحركات اللي بتتعمل من الخزينة") — the manual line's
+              own name reuses the exact same admin-managed التصنيفات
+              catalog التصنيف dropdown already used in تسجيل حركة الخزينة
+              (نفس المصدر، نفس شكل "تصنيف آخر" اليدوي)، بدل كتابة الاسم
+              حر كل مرة من الصفر. */}
+          {draft.kind === 'MANUAL' && (
+            <label className="block space-y-1 text-sm">
+              <span className="text-muted-foreground">اسم البند</span>
+              {manualCategoryCustom ? (
+                <div className="flex gap-1.5">
+                  <input
+                    autoFocus
+                    value={draft.itemType}
+                    onChange={(e) => updateDraft({ itemType: e.target.value })}
+                    placeholder="اكتب اسم البند"
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setManualCategoryCustom(false);
+                      updateDraft({ itemType: '' });
+                    }}
+                  >
+                    إلغاء
+                  </Button>
+                </div>
+              ) : (
+                <select
+                  value={draft.itemType}
+                  onChange={(e) => {
+                    if (e.target.value === '__custom__') {
+                      setManualCategoryCustom(true);
+                      updateDraft({ itemType: '' });
+                    } else {
+                      updateDraft({ itemType: e.target.value });
+                    }
+                  }}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  <option value="">— اختر —</option>
+                  {treasuryCategories.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                  <option value="__custom__">بند آخر (كتابة يدوية)…</option>
+                </select>
+              )}
             </label>
           )}
 
