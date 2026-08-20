@@ -59,6 +59,7 @@ export function EmployeeProfilePage() {
   const [showAddAdvance, setShowAddAdvance] = useState(false);
   const [showSetPin, setShowSetPin] = useState(false);
   const [showAssignLocation, setShowAssignLocation] = useState(false);
+  const [showAddAttendance, setShowAddAttendance] = useState(false);
 
   const load = () => {
     if (!id) return;
@@ -167,7 +168,23 @@ export function EmployeeProfilePage() {
       </div>
 
       <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
-        <h2 className="font-semibold">الحضور والانصراف — آخر الأيام</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">الحضور والانصراف — آخر الأيام</h2>
+          <Button variant="secondary" size="sm" onClick={() => setShowAddAttendance(true)}>
+            + إضافة يوم حضور (يوم سابق ماكانش مسجّل)
+          </Button>
+        </div>
+        {showAddAttendance && (
+          <AddAttendanceDialog
+            staffId={user.id}
+            branchId={user.branchId}
+            onClose={() => setShowAddAttendance(false)}
+            onSaved={() => {
+              setShowAddAttendance(false);
+              load();
+            }}
+          />
+        )}
         {attendance.length === 0 ? (
           <p className="text-muted-foreground text-sm">لا توجد سجلات حضور بعد.</p>
         ) : (
@@ -478,6 +495,7 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
   const [hireDate, setHireDate] = useState(user.hireDate?.slice(0, 10) ?? '');
   const [payFrequency, setPayFrequency] = useState<PayFrequency | ''>(user.payFrequency ?? '');
   const [baseSalary, setBaseSalary] = useState(user.baseSalary != null ? String(user.baseSalary) : '');
+  const [payDayOfMonth, setPayDayOfMonth] = useState(user.payDayOfMonth != null ? String(user.payDayOfMonth) : '');
   const [shiftStartTime, setShiftStartTime] = useState(user.shiftStartTime ?? '');
   const [shiftEndTime, setShiftEndTime] = useState(user.shiftEndTime ?? '');
   const [workingDays, setWorkingDays] = useState<number[]>(user.workingDays);
@@ -498,6 +516,7 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
                 setHireDate(user.hireDate?.slice(0, 10) ?? '');
                 setPayFrequency(user.payFrequency ?? '');
                 setBaseSalary(user.baseSalary != null ? String(user.baseSalary) : '');
+                setPayDayOfMonth(user.payDayOfMonth != null ? String(user.payDayOfMonth) : '');
                 setShiftStartTime(user.shiftStartTime ?? '');
                 setShiftEndTime(user.shiftEndTime ?? '');
                 setWorkingDays(user.workingDays);
@@ -517,6 +536,9 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
         </p>
         <p className="text-sm">
           دورة الصرف: <span className="font-medium">{user.payFrequency ? PAY_FREQUENCY_LABELS[user.payFrequency] : '—'}</span>
+          {user.payFrequency === 'MONTHLY' && (
+            <span className="text-muted-foreground"> — يبدأ يوم {user.payDayOfMonth ?? 1} من الشهر</span>
+          )}
         </p>
         <p className="text-sm">
           الراتب الأساسي:{' '}
@@ -557,6 +579,7 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
         hireDate: hireDate === '' ? null : hireDate,
         payFrequency: payFrequency === '' ? null : payFrequency,
         baseSalary: baseSalary.trim() === '' ? null : Number(baseSalary),
+        payDayOfMonth: payDayOfMonth.trim() === '' ? null : Number(payDayOfMonth),
         shiftStartTime: shiftStartTime === '' ? null : shiftStartTime,
         shiftEndTime: shiftEndTime === '' ? null : shiftEndTime,
         workingDays,
@@ -615,6 +638,21 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           />
         </label>
+        {payFrequency === 'MONTHLY' && (
+          <label className="space-y-1 text-sm">
+            <span className="text-muted-foreground">يوم استلام الراتب من الشهر (فارغ = يوم 1)</span>
+            <input
+              type="number"
+              min={1}
+              max={31}
+              step={1}
+              value={payDayOfMonth}
+              onChange={(e) => setPayDayOfMonth(e.target.value)}
+              placeholder="1"
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+        )}
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground">بداية الوردية</span>
           <input
@@ -662,6 +700,119 @@ function EmployeeHrForm({ user, canEdit, onSaved }: { user: User; canEdit: boole
         </Button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Owner (2026-08-20, "عايز احطله الساعات اللي حضرها... بدور على زرار
+ * التعديل على الجدول مش لاقيه") — the "تعديل" button on `AttendanceRow`
+ * only ever appears for a day that already has an `AttendanceEntry` row
+ * (the table only lists existing entries). A day the employee actually
+ * worked before the system was installed here has no row at all, so
+ * there's nothing to click "تعديل" on. This dialog creates that missing
+ * day directly, reusing the same upsert-by-(staffId,date) endpoint as
+ * `EditAttendanceDialog` below — picking an existing date just corrects
+ * it in place instead of duplicating it.
+ */
+function AddAttendanceDialog({
+  staffId,
+  branchId,
+  onClose,
+  onSaved,
+}: {
+  staffId: string;
+  branchId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [checkIn, setCheckIn] = useState('');
+  const [checkOut, setCheckOut] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    if (checkIn === '' && checkOut === '') {
+      setError('اكتب موعد حضور أو انصراف على الأقل');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPost('/api/attendance', {
+        staffId,
+        branchId,
+        date: new Date(`${date}T00:00:00.000Z`).toISOString(),
+        checkInAt: checkIn === '' ? null : new Date(`${date}T${checkIn}`).toISOString(),
+        checkOutAt: checkOut === '' ? null : new Date(`${date}T${checkOut}`).toISOString(),
+        note: note.trim() === '' ? null : note.trim(),
+      });
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر إضافة سجل الحضور');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>إضافة يوم حضور</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">التاريخ</span>
+            <input
+              type="date"
+              required
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">وقت الحضور</span>
+            <input
+              type="time"
+              value={checkIn}
+              onChange={(e) => setCheckIn(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">وقت الانصراف</span>
+            <input
+              type="time"
+              value={checkOut}
+              onChange={(e) => setCheckOut(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">ملاحظة</span>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

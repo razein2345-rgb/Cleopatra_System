@@ -25,6 +25,10 @@ export const userSchema = z.object({
   hireDate: z.string().nullable(),
   payFrequency: payFrequencySchema.nullable(),
   baseSalary: z.number().nullable(),
+  // Owner (2026-08-20, "عندي موظف بيبدأ قبض من يوم 9 في الشهر مش من يوم 1")
+  // — day-of-month a MONTHLY pay cycle starts on. Null = the 1st (original
+  // behavior). Ignored for WEEKLY staff.
+  payDayOfMonth: z.number().int().min(1).max(31).nullable(),
   shiftStartTime: z.string().nullable(),
   shiftEndTime: z.string().nullable(),
   workingDays: z.array(weekdaySchema),
@@ -80,6 +84,7 @@ export const updateUserSchema = z.object({
   hireDate: z.string().nullable().optional(),
   payFrequency: payFrequencySchema.nullable().optional(),
   baseSalary: z.number().nonnegative().nullable().optional(),
+  payDayOfMonth: z.number().int().min(1).max(31).nullable().optional(),
   shiftStartTime: shiftTimeSchema.nullable().optional(),
   shiftEndTime: shiftTimeSchema.nullable().optional(),
   workingDays: z.array(weekdaySchema).optional(),

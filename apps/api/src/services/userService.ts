@@ -33,6 +33,7 @@ export function mapStaffToUser(staff: StaffWithRoles): User {
     hireDate: staff.hireDate ? staff.hireDate.toISOString() : null,
     payFrequency: staff.payFrequency,
     baseSalary: staff.baseSalary ? staff.baseSalary.toNumber() : null,
+    payDayOfMonth: staff.payDayOfMonth,
     shiftStartTime: staff.shiftStartTime,
     shiftEndTime: staff.shiftEndTime,
     workingDays: staff.workingDays,

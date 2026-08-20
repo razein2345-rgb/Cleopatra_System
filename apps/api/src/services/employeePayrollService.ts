@@ -16,16 +16,55 @@ function utcMidnight(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
-/** WEEKLY → the 7 days ending today (inclusive); MONTHLY → the current calendar month so far. */
-function resolvePeriod(payFrequency: PayFrequency): { periodStart: Date; periodEnd: Date } {
+/** Last valid day-of-month for a given year/month (0-indexed month) — clamps e.g. day 31 against February. */
+function lastDayOfMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+}
+
+function clampToMonth(year: number, month: number, day: number): number {
+  return Math.min(day, lastDayOfMonth(year, month));
+}
+
+/**
+ * WEEKLY → the 7 days ending today (inclusive).
+ * MONTHLY → a full cycle anchored on `payDayOfMonth` (owner, 2026-08-20,
+ * "عندي موظف بيبدأ قبض من يوم 9 في الشهر مش من يوم 1"): the cycle runs from
+ * that day-of-month through the day before its next occurrence. Null (or 1)
+ * keeps the original calendar-month behavior unchanged.
+ */
+function resolvePeriod(payFrequency: PayFrequency, payDayOfMonth: number | null): { periodStart: Date; periodEnd: Date } {
   const today = utcMidnight(new Date());
   if (payFrequency === 'WEEKLY') {
     const periodStart = new Date(today);
     periodStart.setUTCDate(periodStart.getUTCDate() - 6);
     return { periodStart, periodEnd: today };
   }
-  const periodStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
-  const periodEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+
+  if (!payDayOfMonth || payDayOfMonth === 1) {
+    const periodStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    const periodEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+    return { periodStart, periodEnd };
+  }
+
+  let startYear = today.getUTCFullYear();
+  let startMonth = today.getUTCMonth();
+  if (today.getUTCDate() < clampToMonth(startYear, startMonth, payDayOfMonth)) {
+    // This month's pay-day hasn't happened yet — the current cycle started last month.
+    startMonth -= 1;
+    if (startMonth < 0) {
+      startMonth = 11;
+      startYear -= 1;
+    }
+  }
+  const periodStart = new Date(Date.UTC(startYear, startMonth, clampToMonth(startYear, startMonth, payDayOfMonth)));
+
+  let endYear = startYear;
+  let endMonth = startMonth + 1;
+  if (endMonth > 11) {
+    endMonth = 0;
+    endYear += 1;
+  }
+  const periodEnd = new Date(Date.UTC(endYear, endMonth, clampToMonth(endYear, endMonth, payDayOfMonth) - 1));
   return { periodStart, periodEnd };
 }
 
@@ -56,7 +95,7 @@ export async function computeEmployeePayroll(staffId: string): Promise<EmployeeP
     return null;
   }
 
-  const { periodStart, periodEnd } = resolvePeriod(staff.payFrequency);
+  const { periodStart, periodEnd } = resolvePeriod(staff.payFrequency, staff.payDayOfMonth);
   const today = utcMidnight(new Date());
   const effectiveEnd = periodEnd.getTime() < today.getTime() ? periodEnd : today;
 
