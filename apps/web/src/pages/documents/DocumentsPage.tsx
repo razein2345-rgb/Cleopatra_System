@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { BusinessPartner, Order, Quotation, WorkOrder, WorkflowInstanceStatus } from '@cleopatra/shared';
-import { apiGet } from '@/lib/api';
+import type {
+  BusinessPartner,
+  InventoryItem,
+  Order,
+  QuickInventorySaleInput,
+  Quotation,
+  TreasuryCategory,
+  WorkOrder,
+  WorkflowInstanceStatus,
+} from '@cleopatra/shared';
+import { apiGet, apiPost } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
-import { paginate, Pagination, StatusBadge, type StatusTone } from '@/components/cleopatra';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { InventoryItemCombobox, paginate, Pagination, StatusBadge, type StatusTone } from '@/components/cleopatra';
+import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 import {
   ORDER_STATUS_LABELS,
   ORDER_STATUS_TONES,
@@ -76,6 +88,7 @@ export function DocumentsPage() {
   const [rows, setRows] = useState<DocumentRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [showQuickSale, setShowQuickSale] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -183,6 +196,16 @@ export function DocumentsPage() {
               launched off this list. Until that unified screen ships
               (task #211), the only creation entry point is direct
               Order/Invoice creation; this page stays pure browse/status. */}
+          {/* Owner (2026-08-20, "حابب الزرار ده يكون في قسم الطلبات
+              والمستندات") — the quick cash sale (no Order/invoice at all,
+              see QuickSaleDialog below) moved here from the Inventory page
+              per the owner's explicit preference, not duplicated in both
+              places. */}
+          {can('inventory.create') && can('treasury.create') && (
+            <Button type="button" variant="secondary" onClick={() => setShowQuickSale(true)}>
+              + بيع سريع
+            </Button>
+          )}
           {can('orders.create') && (
             <Link
               to="/orders/new"
@@ -248,6 +271,253 @@ export function DocumentsPage() {
         </div>
       ))}
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+      {showQuickSale && <QuickSaleDialog onClose={() => setShowQuickSale(false)} />}
     </div>
+  );
+}
+
+/**
+ * Owner (2026-08-20, "لو حد خد صنف بسيط من قسم بضاعة من المخزون مش مضطر
+ * اطلع عليه فاتورة وعايزة يتسجل في حركة الخزينة ويخصمه من المخزن", then
+ * "حابب الزرار ده يكون في قسم الطلبات والمستندات") — a one-step cash sale
+ * with no Order/invoice at all: `POST /api/inventory-items/:id/quick-sale`
+ * pairs an OUT StockMovement with an INCOME TreasuryEntry atomically. Lives
+ * here (not the Inventory page — the owner's explicit second preference)
+ * since it starts with picking *which* item to sell, same as any other
+ * document-creation entry point on this screen. Edit/delete afterward only
+ * ever happens through the stock movement itself (المخزن → سجل الحركة) —
+ * the paired treasury entry follows automatically, never edited directly.
+ */
+function QuickSaleDialog({ onClose }: { onClose: () => void }) {
+  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [categories, setCategories] = useState<TreasuryCategory[]>([]);
+  const [itemId, setItemId] = useState('');
+  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
+  const [quantity, setQuantity] = useState('1');
+  const [unitPrice, setUnitPrice] = useState('');
+  const [method, setMethod] = useState<QuickInventorySaleInput['method']>('CASH');
+  const [category, setCategory] = useState('');
+  const [customCategory, setCustomCategory] = useState(false);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    apiGet<InventoryItem[]>('/api/inventory-items').then(setItems).catch(() => undefined);
+    apiGet<TreasuryCategory[]>('/api/treasury-categories')
+      .then((all) => setCategories(all.filter((c) => c.isActive)))
+      .catch(() => undefined);
+  }, []);
+
+  const selectItem = (item: InventoryItem) => {
+    setItemId(item.id);
+    setSelectedItem(item);
+    setUnitPrice(item.salePrice !== null ? String(item.salePrice) : '');
+  };
+
+  const parsedQuantity = Number(quantity);
+  const parsedUnitPrice = Number(unitPrice);
+  const total = parsedQuantity > 0 && parsedUnitPrice >= 0 ? parsedQuantity * parsedUnitPrice : 0;
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    if (!selectedItem) {
+      setError('اختر الصنف أولًا');
+      return;
+    }
+    if (!quantity || Number.isNaN(parsedQuantity) || parsedQuantity <= 0) {
+      setError('اكتب كمية أكبر من صفر');
+      return;
+    }
+    if (!unitPrice || Number.isNaN(parsedUnitPrice) || parsedUnitPrice < 0) {
+      setError('اكتب سعر بيع صحيح');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      const input: QuickInventorySaleInput = {
+        quantity: parsedQuantity,
+        unitPrice: parsedUnitPrice,
+        method,
+        category: category || undefined,
+        note: note.trim() || undefined,
+      };
+      await apiPost(`/api/inventory-items/${selectedItem.id}/quick-sale`, input);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تسجيل البيع السريع');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (saved) {
+    return (
+      <Dialog open onOpenChange={onClose}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>تم البيع بنجاح</DialogTitle>
+          </DialogHeader>
+          <p className="text-success text-sm">
+            اتسجل بيع {parsedQuantity.toLocaleString('en-US')} من "{selectedItem?.name}" — خُصمت من المخزون واتسجلت
+            في الخزينة.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              onClick={() => {
+                setSaved(false);
+                setItemId('');
+                setSelectedItem(null);
+                setQuantity('1');
+                setUnitPrice('');
+                setNote('');
+              }}
+            >
+              بيع تاني
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              تم
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>بيع سريع — بدون فاتورة</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <p className="text-muted-foreground text-sm">
+            بيع نقدي مباشر لبضاعة من المخزون — بيخصم من المخزون ويتسجل في الخزينة على طول، من غير أي فاتورة أو
+            مستند.
+          </p>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">الصنف</span>
+            <InventoryItemCombobox items={items} value={itemId} onChange={selectItem} placeholder="اختر الصنف…" />
+          </label>
+          {selectedItem && (
+            <p className="text-muted-foreground text-sm">
+              الرصيد الحالي: {selectedItem.quantityOnHand.toLocaleString('en-US')}
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block space-y-1 text-sm">
+              <span className="text-muted-foreground">الكمية</span>
+              <input
+                type="number"
+                min={0.001}
+                step="0.001"
+                required
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              />
+            </label>
+            <label className="block space-y-1 text-sm">
+              <span className="text-muted-foreground">سعر القطعة</span>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                required
+                value={unitPrice}
+                onChange={(e) => setUnitPrice(e.target.value)}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              />
+            </label>
+          </div>
+          <p className="text-sm">
+            الإجمالي:{' '}
+            <span className="font-bold" dir="ltr">
+              {total.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </span>{' '}
+            ج.م
+          </p>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">طريقة التحصيل</span>
+            <select
+              value={method}
+              onChange={(e) => setMethod(e.target.value as QuickInventorySaleInput['method'])}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {PAYMENT_METHOD_OPTIONS.map(([value]) => (
+                <option key={value} value={value}>
+                  {PAYMENT_METHOD_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">تصنيف الخزينة (اختياري — الافتراضي "مبيعات نقدية")</span>
+            {customCategory ? (
+              <div className="flex gap-1.5">
+                <input
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="اكتب تصنيف جديد"
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setCustomCategory(false);
+                    setCategory('');
+                  }}
+                >
+                  إلغاء
+                </Button>
+              </div>
+            ) : (
+              <select
+                value={category}
+                onChange={(e) => {
+                  if (e.target.value === '__custom__') {
+                    setCustomCategory(true);
+                    setCategory('');
+                  } else {
+                    setCategory(e.target.value);
+                  }
+                }}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              >
+                <option value="">مبيعات نقدية (افتراضي)</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.name}>
+                    {c.name}
+                  </option>
+                ))}
+                <option value="__custom__">تصنيف آخر (كتابة يدوية)…</option>
+              </select>
+            )}
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">ملاحظة (اختياري)</span>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'تأكيد البيع'}
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -5,10 +5,8 @@ import type {
   InventoryItem,
   InventoryUnit,
   MaterialCategory,
-  QuickInventorySaleInput,
   StockMovement,
   StockMovementType,
-  TreasuryCategory,
   UpdateStockMovementInput,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
@@ -17,7 +15,6 @@ import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { StatusBadge, EditableTextCell, paginate, Pagination, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
-import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 
 const PAGE_SIZE = 30;
 
@@ -67,7 +64,6 @@ export function InventoryPage() {
   const [categoryFilter, setCategoryFilter] = useState<MaterialCategory | 'ALL'>('ALL');
   const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
   const [movementItem, setMovementItem] = useState<InventoryItem | null>(null);
-  const [quickSaleItem, setQuickSaleItem] = useState<InventoryItem | null>(null);
   const [page, setPage] = useState(1);
   const confirm = useConfirm();
   useEffect(() => setPage(1), [search, categoryFilter]);
@@ -295,15 +291,6 @@ export function InventoryPage() {
                             تسجيل حركة
                           </button>
                         )}
-                        {can('inventory.create') && can('treasury.create') && (
-                          <button
-                            type="button"
-                            onClick={() => setQuickSaleItem(item)}
-                            className="text-primary text-xs hover:underline"
-                          >
-                            بيع سريع
-                          </button>
-                        )}
                         <button
                           type="button"
                           onClick={() => setHistoryItem(item)}
@@ -337,16 +324,6 @@ export function InventoryPage() {
           onClose={() => setMovementItem(null)}
           onSaved={() => {
             setMovementItem(null);
-            load();
-          }}
-        />
-      )}
-      {quickSaleItem && (
-        <QuickSaleDialog
-          item={quickSaleItem}
-          onClose={() => setQuickSaleItem(null)}
-          onSaved={() => {
-            setQuickSaleItem(null);
             load();
           }}
         />
@@ -442,181 +419,6 @@ function RecordMovementDialog({
           <div className="flex gap-2">
             <Button type="submit" disabled={submitting}>
               {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
-            </Button>
-            <Button type="button" variant="secondary" onClick={onClose}>
-              إلغاء
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/**
- * Owner (2026-08-20, "لو حد خد صنف بسيط من قسم بضاعة من المخزون مش مضطر
- * اطلع عليه فاتورة وعايزة يتسجل في حركة الخزينة ويخصمه من المخزن") — a
- * one-step cash sale with no Order/invoice: `POST /:id/quick-sale` deducts
- * stock and records a linked treasury income entry atomically. Edit/delete
- * later happens only through the stock movement itself
- * (`StockMovementHistoryDialog` below) — the paired treasury entry follows
- * automatically, never edited directly.
- */
-function QuickSaleDialog({ item, onClose, onSaved }: { item: InventoryItem; onClose: () => void; onSaved: () => void }) {
-  const [quantity, setQuantity] = useState('1');
-  const [unitPrice, setUnitPrice] = useState(item.salePrice !== null ? String(item.salePrice) : '');
-  const [method, setMethod] = useState<QuickInventorySaleInput['method']>('CASH');
-  const [categories, setCategories] = useState<TreasuryCategory[]>([]);
-  const [category, setCategory] = useState('');
-  const [customCategory, setCustomCategory] = useState(false);
-  const [note, setNote] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    apiGet<TreasuryCategory[]>('/api/treasury-categories')
-      .then((all) => setCategories(all.filter((c) => c.isActive)))
-      .catch(() => undefined);
-  }, []);
-
-  const parsedQuantity = Number(quantity);
-  const parsedUnitPrice = Number(unitPrice);
-  const total = parsedQuantity > 0 && parsedUnitPrice >= 0 ? parsedQuantity * parsedUnitPrice : 0;
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (submitting) return;
-    if (!quantity || Number.isNaN(parsedQuantity) || parsedQuantity <= 0) {
-      setError('اكتب كمية أكبر من صفر');
-      return;
-    }
-    if (!unitPrice || Number.isNaN(parsedUnitPrice) || parsedUnitPrice < 0) {
-      setError('اكتب سعر بيع صحيح');
-      return;
-    }
-    setError(null);
-    setSubmitting(true);
-    try {
-      const input: QuickInventorySaleInput = {
-        quantity: parsedQuantity,
-        unitPrice: parsedUnitPrice,
-        method,
-        category: category || undefined,
-        note: note.trim() || undefined,
-      };
-      await apiPost(`/api/inventory-items/${item.id}/quick-sale`, input);
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر تسجيل البيع السريع');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>بيع سريع — "{item.name}"</DialogTitle>
-        </DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
-          {error && <p className="text-destructive text-sm">{error}</p>}
-          <p className="text-muted-foreground text-sm">
-            بيع نقدي مباشر بدون فاتورة — بيخصم من المخزون ويتسجل في الخزينة على طول.
-            الرصيد الحالي: {item.quantityOnHand.toLocaleString('en-US')} {UNIT_LABELS[item.unit]}
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block space-y-1 text-sm">
-              <span className="text-muted-foreground">الكمية</span>
-              <input
-                autoFocus
-                type="number"
-                min={0.001}
-                step="0.001"
-                required
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              />
-            </label>
-            <label className="block space-y-1 text-sm">
-              <span className="text-muted-foreground">سعر القطعة</span>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                required
-                value={unitPrice}
-                onChange={(e) => setUnitPrice(e.target.value)}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              />
-            </label>
-          </div>
-          <p className="text-sm">
-            الإجمالي: <span className="font-bold" dir="ltr">{total.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span> ج.م
-          </p>
-          <label className="block space-y-1 text-sm">
-            <span className="text-muted-foreground">طريقة التحصيل</span>
-            <select
-              value={method}
-              onChange={(e) => setMethod(e.target.value as QuickInventorySaleInput['method'])}
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-            >
-              {PAYMENT_METHOD_OPTIONS.map(([value]) => (
-                <option key={value} value={value}>
-                  {PAYMENT_METHOD_LABELS[value]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span className="text-muted-foreground">تصنيف الخزينة (اختياري — الافتراضي "مبيعات نقدية")</span>
-            {customCategory ? (
-              <div className="flex gap-1.5">
-                <input
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  placeholder="اكتب تصنيف جديد"
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-                <Button type="button" variant="secondary" onClick={() => { setCustomCategory(false); setCategory(''); }}>
-                  إلغاء
-                </Button>
-              </div>
-            ) : (
-              <select
-                value={category}
-                onChange={(e) => {
-                  if (e.target.value === '__custom__') {
-                    setCustomCategory(true);
-                    setCategory('');
-                  } else {
-                    setCategory(e.target.value);
-                  }
-                }}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              >
-                <option value="">مبيعات نقدية (افتراضي)</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.name}>
-                    {c.name}
-                  </option>
-                ))}
-                <option value="__custom__">تصنيف آخر (كتابة يدوية)…</option>
-              </select>
-            )}
-          </label>
-          <label className="block space-y-1 text-sm">
-            <span className="text-muted-foreground">ملاحظة (اختياري)</span>
-            <input
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-            />
-          </label>
-          <div className="flex gap-2">
-            <Button type="submit" disabled={submitting}>
-              {submitting ? 'جارٍ الحفظ…' : 'تأكيد البيع'}
             </Button>
             <Button type="button" variant="secondary" onClick={onClose}>
               إلغاء
