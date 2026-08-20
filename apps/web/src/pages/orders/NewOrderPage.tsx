@@ -2891,15 +2891,24 @@ function NewOrderForm({
           ) : (
             <>
 
-          <label className="block space-y-1 text-sm">
-            <span className="text-muted-foreground">اسم البند / العملية</span>
-            <input
-              value={draft.itemType}
-              onChange={(e) => updateDraft({ itemType: e.target.value })}
-              placeholder="مثال: فلايرز، كروت شخصية..."
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-            />
-          </label>
+          {/* Owner (2026-08-20, "لما اكتب المنتج جاهز للبيع ميطلبش مني إسم
+              الصنف لأنه اوريدي إسم الصنف هو الإسم المتسجل في المخزون") —
+              INVENTORY_RETAIL's `itemType` is always auto-set from the
+              picked InventoryItem's own name (barcode scan or manual
+              picker below), never freely typed — asking for it here was
+              pure redundant friction, and inviting a typed name that could
+              drift from the actual stock item's registered name. */}
+          {draft.kind !== 'INVENTORY_RETAIL' && (
+            <label className="block space-y-1 text-sm">
+              <span className="text-muted-foreground">اسم البند / العملية</span>
+              <input
+                value={draft.itemType}
+                onChange={(e) => updateDraft({ itemType: e.target.value })}
+                placeholder="مثال: فلايرز، كروت شخصية..."
+                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              />
+            </label>
+          )}
 
           {isSheetKind && (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
