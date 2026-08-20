@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from 'react';
 import type { DashboardWidgetDefinition } from './types';
 import { WorkflowQueueSummaryProvider } from './providers/WorkflowQueueSummaryProvider';
 import { financialOverviewWidget } from './widgets/FinancialOverviewWidget';
+import { onlineEmployeesWidget } from './widgets/OnlineEmployeesWidget';
 import { openQuotationsWidget } from './widgets/OpenQuotationsWidget';
 import { activeWorkOrdersWidget } from './widgets/ActiveWorkOrdersWidget';
 import { waitingJobsWidget } from './widgets/WaitingJobsWidget';
@@ -27,6 +28,7 @@ import { lowStockWidget } from './widgets/LowStockWidget';
  */
 export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   financialOverviewWidget,
+  onlineEmployeesWidget,
   attendanceWidget,
   openQuotationsWidget,
   activeWorkOrdersWidget,

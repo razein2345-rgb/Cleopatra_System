@@ -8,21 +8,18 @@ import { Button } from '@/components/ui/button';
 import { EditableSelectCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { isLastActiveAdmin } from '@/lib/adminSafety';
+import { isOnlineNow } from '@/lib/onlineStatus';
 
 const LAST_ADMIN_TITLE =
   'هذا آخر مسؤول نشط — تم تعطيل هذا الإجراء لمنع فقدان الوصول إلى النظام بالكامل.';
 
 /**
- * Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") — there's
- * no real session/heartbeat mechanism (auth is stateless Supabase JWT
- * verification per request, see requireAuth.ts), so "online now" is
- * approximated as "made an authenticated request within the last few
- * minutes" — `lastActiveAt` is refreshed server-side (throttled to once/
- * minute) on every authenticated call.
+ * Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") —
+ * `isOnlineNow` lives in `lib/onlineStatus.ts` (shared with the Dashboard's
+ * `OnlineEmployeesWidget.tsx`, "online" defined in one place only).
+ * `AUTO_REFRESH_MS` keeps the "متصل الآن" list feeling live without a real
+ * push mechanism — same polling pattern ProductionBoardPage.tsx already uses.
  */
-const ONLINE_WINDOW_MS = 5 * 60 * 1000;
-const isOnlineNow = (user: User) => Boolean(user.lastActiveAt && Date.now() - new Date(user.lastActiveAt).getTime() < ONLINE_WINDOW_MS);
-/** Keeps the "متصل الآن" list feeling live without a real push mechanism — same polling pattern ProductionBoardPage.tsx already uses. */
 const AUTO_REFRESH_MS = 30_000;
 
 export function UsersPage() {
