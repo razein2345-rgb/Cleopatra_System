@@ -144,6 +144,22 @@ export function InventoryPage() {
         )}
       </div>
 
+      {/* Owner (2026-08-20, "عايز اول ما ادوس تسجيل بضاعه ينزلني على طول
+          للمكان اللي هكتب فيه مش لسه انا هسكرول علشان الاقيها") — this form
+          used to render AFTER the "بضاعة ناقصة" warning card below, which
+          can run long (one row per low-stock item), pushing the actual
+          input fields out of view right when the button is clicked. Moved
+          above it so opening the form always lands on the fields
+          immediately, regardless of how long that warning list is. */}
+      {showForm && (
+        <NewInventoryItemForm
+          onCreated={() => {
+            setShowForm(false);
+            load();
+          }}
+        />
+      )}
+
       {needsSupplier.length > 0 && (
         <Card className="border-danger/40 bg-danger/5 p-4">
           <p className="text-danger mb-2 font-semibold">بضاعة ناقصة — محتاجين نجيبها من المورد</p>
@@ -159,15 +175,6 @@ export function InventoryPage() {
             ))}
           </ul>
         </Card>
-      )}
-
-      {showForm && (
-        <NewInventoryItemForm
-          onCreated={() => {
-            setShowForm(false);
-            load();
-          }}
-        />
       )}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -681,6 +688,7 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground">اسم الصنف</span>
           <input
+            autoFocus
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
