@@ -18,7 +18,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { StatusBadge, EditableDateCell, EditableNumberCell, EditableSelectCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
+import { Combobox, StatusBadge, EditableDateCell, EditableNumberCell, EditableSelectCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 import { TREASURY_TYPE_LABELS, TREASURY_TYPE_OPTIONS, treasuryTypeTone, WALLET_COLORS } from './treasuryLabels';
@@ -906,18 +906,15 @@ function NewEntryForm({
         </label>
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground">العميل/المورّد (اختياري)</span>
-          <select
+          <Combobox
+            items={[{ id: '', nameAr: '— بدون —' }, ...partners]}
             value={partnerId}
-            onChange={(e) => setPartnerId(e.target.value)}
-            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-          >
-            <option value="">— بدون —</option>
-            {partners.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.nameAr}
-              </option>
-            ))}
-          </select>
+            getKey={(p) => p.id}
+            getLabel={(p) => p.nameAr}
+            onChange={(p) => setPartnerId(p.id)}
+            placeholder="— بدون —"
+            searchPlaceholder="اكتب اسم العميل/المورّد…"
+          />
         </label>
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground">التصنيف (اختياري)</span>
@@ -1035,18 +1032,14 @@ function GiveAdvanceDialog({ staff, onClose, onCreated }: { staff: User[]; onClo
           {error && <p className="text-destructive text-sm">{error}</p>}
           <label className="block space-y-1 text-sm">
             <span className="text-muted-foreground">الموظف</span>
-            <select
-              required
+            <Combobox
+              items={staff}
               value={staffId}
-              onChange={(e) => setStaffId(e.target.value)}
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-            >
-              {staff.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+              getKey={(s) => s.id}
+              getLabel={(s) => s.name}
+              onChange={(s) => setStaffId(s.id)}
+              searchPlaceholder="اكتب اسم الموظف…"
+            />
           </label>
           <label className="block space-y-1 text-sm">
             <span className="text-muted-foreground">المبلغ</span>

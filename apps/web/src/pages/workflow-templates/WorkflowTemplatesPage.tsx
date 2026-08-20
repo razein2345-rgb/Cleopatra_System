@@ -14,7 +14,7 @@ import { PRODUCTION_TRACK_LABELS } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { StatusBadge, useConfirm } from '@/components/cleopatra';
+import { Combobox, StatusBadge, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 const STAGE_TYPE_LABELS: Record<WorkflowStageType, string> = { INTERNAL: 'داخلية', EXTERNAL: 'خارجية' };
@@ -566,33 +566,27 @@ function TemplateEditor({
                 </label>
                 <label className="space-y-1 text-sm sm:col-span-2">
                   <span className="text-muted-foreground">القسم المسؤول</span>
-                  <select
+                  <Combobox
+                    items={[{ id: '', name: '— بدون —' }, ...departments]}
                     value={stage.departmentId}
-                    onChange={(e) => updateStage(index, { departmentId: e.target.value })}
-                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                  >
-                    <option value="">— بدون —</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
+                    getKey={(d) => d.id}
+                    getLabel={(d) => d.name}
+                    onChange={(d) => updateStage(index, { departmentId: d.id })}
+                    placeholder="— بدون —"
+                    searchPlaceholder="اكتب اسم القسم…"
+                  />
                 </label>
                 <label className="space-y-1 text-sm sm:col-span-2">
                   <span className="text-muted-foreground">المسؤول الافتراضي (اختياري)</span>
-                  <select
+                  <Combobox
+                    items={[{ id: '', name: '— بدون —' }, ...users]}
                     value={stage.defaultAssignedEmployeeId}
-                    onChange={(e) => updateStage(index, { defaultAssignedEmployeeId: e.target.value })}
-                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                  >
-                    <option value="">— بدون —</option>
-                    {users.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name}
-                      </option>
-                    ))}
-                  </select>
+                    getKey={(u) => u.id}
+                    getLabel={(u) => u.name}
+                    onChange={(u) => updateStage(index, { defaultAssignedEmployeeId: u.id })}
+                    placeholder="— بدون —"
+                    searchPlaceholder="اكتب اسم الموظف…"
+                  />
                 </label>
                 <label className="space-y-1 text-sm sm:col-span-2">
                   <span className="text-muted-foreground">المرحلة التالية عند النجاح</span>

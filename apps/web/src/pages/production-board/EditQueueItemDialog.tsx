@@ -3,6 +3,7 @@ import type { BusinessPartner, User, WorkflowPriority, WorkflowQueueItem } from 
 import { apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Combobox } from '@/components/cleopatra';
 import { PRIORITY_OPTIONS } from './productionBoardLabels';
 
 /**
@@ -109,18 +110,15 @@ export function EditQueueItemDialog({
             </label>
             <label className="space-y-1 text-sm sm:col-span-2">
               <span className="text-muted-foreground">الموظف المسؤول</span>
-              <select
+              <Combobox
+                items={[{ id: '', name: '— بدون —' }, ...employees]}
                 value={assignedEmployeeId}
-                onChange={(e) => setAssignedEmployeeId(e.target.value)}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              >
-                <option value="">— بدون —</option>
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.name}
-                  </option>
-                ))}
-              </select>
+                getKey={(emp) => emp.id}
+                getLabel={(emp) => emp.name}
+                onChange={(emp) => setAssignedEmployeeId(emp.id)}
+                placeholder="— بدون —"
+                searchPlaceholder="اكتب اسم الموظف…"
+              />
             </label>
             <label className="space-y-1 text-sm sm:col-span-2">
               <span className="text-muted-foreground">سبب الانتظار (اختياري)</span>
@@ -143,18 +141,15 @@ export function EditQueueItemDialog({
               <>
                 <label className="space-y-1 text-sm sm:col-span-2">
                   <span className="text-muted-foreground">المورّد الخارجي</span>
-                  <select
+                  <Combobox
+                    items={[{ id: '', nameAr: '— بدون —' }, ...suppliers]}
                     value={assignedSupplierId}
-                    onChange={(e) => setAssignedSupplierId(e.target.value)}
-                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                  >
-                    <option value="">— بدون —</option>
-                    {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.nameAr}
-                      </option>
-                    ))}
-                  </select>
+                    getKey={(s) => s.id}
+                    getLabel={(s) => s.nameAr}
+                    onChange={(s) => setAssignedSupplierId(s.id)}
+                    placeholder="— بدون —"
+                    searchPlaceholder="اكتب اسم المورّد…"
+                  />
                 </label>
                 <label className="space-y-1 text-sm">
                   <span className="text-muted-foreground">تاريخ الاستلام المتوقع</span>

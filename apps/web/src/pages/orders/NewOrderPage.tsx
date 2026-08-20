@@ -47,7 +47,7 @@ import { apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { InventoryItemCombobox, PartnerCombobox, useConfirm } from '@/components/cleopatra';
+import { Combobox, InventoryItemCombobox, PartnerCombobox, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 type PricingKind = OrderItemPricingInput['kind'];
@@ -2944,18 +2944,15 @@ function NewOrderForm({
               </label>
               <label className="space-y-1 text-sm sm:col-span-2">
                 <span className="text-muted-foreground">نوع الورق (يُسحب من المخزن)</span>
-                <select
+                <Combobox
+                  items={[{ id: '', name: '— بدون ورق —' }, ...paperInventoryItems]}
                   value={draft.inventoryItemId}
-                  onChange={(e) => updateDraft({ inventoryItemId: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                >
-                  <option value="">— بدون ورق —</option>
-                  {paperInventoryItems.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
+                  getKey={(p) => p.id}
+                  getLabel={(p) => p.name}
+                  onChange={(p) => updateDraft({ inventoryItemId: p.id })}
+                  placeholder="— بدون ورق —"
+                  searchPlaceholder="اكتب أول كام حرف من اسم الورق…"
+                />
               </label>
             </div>
           )}
@@ -3242,22 +3239,19 @@ function NewOrderForm({
               {Array.from({ length: toNum(draft.copies) }, (_, i) => (
                 <label key={i} className="space-y-1 text-sm">
                   <span className="text-muted-foreground">ورق نسخة {i + 1} (لو مختلف عن الأصل)</span>
-                  <select
+                  <Combobox
+                    items={[{ id: '', name: '— زي ورق الأصل —' }, ...paperInventoryItems]}
                     value={draft.copyMaterials[i] ?? ''}
-                    onChange={(e) => {
+                    getKey={(p) => p.id}
+                    getLabel={(p) => p.name}
+                    onChange={(p) => {
                       const next = [...draft.copyMaterials];
-                      next[i] = e.target.value;
+                      next[i] = p.id;
                       updateDraft({ copyMaterials: next });
                     }}
-                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                  >
-                    <option value="">— زي ورق الأصل —</option>
-                    {paperInventoryItems.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="— زي ورق الأصل —"
+                    searchPlaceholder="اكتب أول كام حرف من اسم الورق…"
+                  />
                 </label>
               ))}
             </div>
@@ -3527,18 +3521,14 @@ function NewOrderForm({
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <label className="space-y-1 text-sm sm:col-span-2">
                       <span className="text-muted-foreground">نوع الورق (يُسحب من المخزن)</span>
-                      <select
+                      <Combobox
+                        items={paperInventoryItems}
                         value={component.inventoryItemId}
-                        onChange={(e) => updateComponent({ inventoryItemId: e.target.value })}
-                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                      >
-                        <option value="">— اختر —</option>
-                        {paperInventoryItems.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
+                        getKey={(p) => p.id}
+                        getLabel={(p) => p.name}
+                        onChange={(p) => updateComponent({ inventoryItemId: p.id })}
+                        searchPlaceholder="اكتب أول كام حرف من اسم الورق…"
+                      />
                     </label>
                     <label className="space-y-1 text-sm">
                       <span className="text-muted-foreground">عرض القطعة (سم)</span>
@@ -3673,19 +3663,14 @@ function NewOrderForm({
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <label className="space-y-1 text-sm sm:col-span-2">
                 <span className="text-muted-foreground">المنتج</span>
-                <select
+                <Combobox
+                  items={readyProducts}
                   value={draft.readyProductId}
-                  onChange={(e) => updateDraft({ readyProductId: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                >
-                  <option value="">— اختر —</option>
-                  {readyProducts.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                      {p.sourceType ? ` (${PRODUCT_SOURCE_TYPE_LABELS[p.sourceType]})` : ''}
-                    </option>
-                  ))}
-                </select>
+                  getKey={(p) => p.id}
+                  getLabel={(p) => `${p.name}${p.sourceType ? ` (${PRODUCT_SOURCE_TYPE_LABELS[p.sourceType]})` : ''}`}
+                  onChange={(p) => updateDraft({ readyProductId: p.id })}
+                  searchPlaceholder="اكتب أول كام حرف من اسم المنتج…"
+                />
               </label>
               <label className="space-y-1 text-sm">
                 <span className="text-muted-foreground">الكمية</span>
@@ -3704,20 +3689,14 @@ function NewOrderForm({
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
               <label className="space-y-1 text-sm sm:col-span-2">
                 <span className="text-muted-foreground">الخدمة</span>
-                <select
+                <Combobox
+                  items={services.filter((s) => !activeSubTab?.serviceCategory || s.category === activeSubTab.serviceCategory)}
                   value={draft.serviceId}
-                  onChange={(e) => updateDraft({ serviceId: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                >
-                  <option value="">— اختر —</option>
-                  {services
-                    .filter((s) => !activeSubTab?.serviceCategory || s.category === activeSubTab.serviceCategory)
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                </select>
+                  getKey={(s) => s.id}
+                  getLabel={(s) => s.name}
+                  onChange={(s) => updateDraft({ serviceId: s.id })}
+                  searchPlaceholder="اكتب أول كام حرف من اسم الخدمة…"
+                />
               </label>
               <label className="space-y-1 text-sm">
                 <span className="text-muted-foreground">الكمية</span>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { BranchSummary, Department, Machine, MachineStatus } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { StatusBadge, useConfirm } from '@/components/cleopatra';
+import { Combobox, StatusBadge, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /**
@@ -225,18 +225,15 @@ function MachineForm({
       </label>
       <label className="w-48 space-y-1 text-sm">
         <span className="text-muted-foreground">القسم (اختياري)</span>
-        <select
+        <Combobox
+          items={[{ id: '', name: '— بدون —' }, ...departments]}
           value={departmentId}
-          onChange={(e) => setDepartmentId(e.target.value)}
-          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-        >
-          <option value="">— بدون —</option>
-          {departments.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
+          getKey={(d) => d.id}
+          getLabel={(d) => d.name}
+          onChange={(d) => setDepartmentId(d.id)}
+          placeholder="— بدون —"
+          searchPlaceholder="اكتب اسم القسم…"
+        />
       </label>
       <Button type="submit" disabled={submitting}>
         {submitting ? 'جارٍ الحفظ…' : 'حفظ'}

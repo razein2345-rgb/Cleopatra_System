@@ -12,7 +12,7 @@ import type {
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { useConfirm } from '@/components/cleopatra';
+import { Combobox, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { LEAD_SOURCE_OPTIONS, PARTNER_ROLE_OPTIONS, PARTNER_STATUS_OPTIONS } from './partnerLabels';
 import { ContactsTab } from './ContactsTab';
@@ -317,19 +317,16 @@ function OverviewForm({
         {staff.length > 0 && (
           <label className="space-y-1 text-sm">
             <span className="text-muted-foreground">مندوب المبيعات (اختياري)</span>
-            <select
+            <Combobox
               disabled={!canEdit}
+              items={[{ id: '', name: '— بدون —' }, ...staff]}
               value={salesRepId}
-              onChange={(e) => setSalesRepId(e.target.value)}
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
-            >
-              <option value="">— بدون —</option>
-              {staff.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+              getKey={(s) => s.id}
+              getLabel={(s) => s.name}
+              onChange={(s) => setSalesRepId(s.id)}
+              placeholder="— بدون —"
+              searchPlaceholder="اكتب اسم الموظف…"
+            />
           </label>
         )}
 

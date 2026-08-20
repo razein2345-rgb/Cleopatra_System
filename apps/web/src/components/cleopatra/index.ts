@@ -1,6 +1,7 @@
 export { StatusBadge } from './StatusBadge';
 export { PartnerCombobox } from './PartnerCombobox';
 export { InventoryItemCombobox } from './InventoryItemCombobox';
+export { Combobox } from './Combobox';
 export type { StatusTone } from './StatusBadge';
 export { EditableTextCell, EditableSelectCell, EditableNumberCell, EditableDateCell, EditableCheckboxCell } from './EditableCell';
 export { Sidebar } from './Sidebar';
