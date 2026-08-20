@@ -15,6 +15,7 @@ import {
   Wrench,
   MonitorSmartphone,
   History,
+  GitBranch,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -42,6 +43,7 @@ const NAV_ITEMS: NavEntry[] = [
     items: [
       { kind: 'link', to: '/production-board', label: 'لوحة الإنتاج', icon: Factory, permission: 'work-orders.view' },
       { kind: 'link', to: '/machines', label: 'الماكينات', icon: Wrench, permission: 'machines.view' },
+      { kind: 'link', to: '/workflow-templates', label: 'قوالب سير العمل', icon: GitBranch, permission: 'workflow-templates.view' },
     ],
   },
   {

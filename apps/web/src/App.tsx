@@ -56,6 +56,9 @@ const WorkOrderTimelinePage = lazy(() =>
   import('@/pages/production-board/WorkOrderTimelinePage').then((m) => ({ default: m.WorkOrderTimelinePage })),
 );
 const MachinesPage = lazy(() => import('@/pages/production-board/MachinesPage').then((m) => ({ default: m.MachinesPage })));
+const WorkflowTemplatesPage = lazy(() =>
+  import('@/pages/workflow-templates/WorkflowTemplatesPage').then((m) => ({ default: m.WorkflowTemplatesPage })),
+);
 const KioskPage = lazy(() => import('@/pages/attendance/KioskPage').then((m) => ({ default: m.KioskPage })));
 
 function RouteFallback() {
@@ -143,6 +146,10 @@ function App() {
 
               <Route element={<ProtectedRoute permission="machines.view" />}>
                 <Route path="/machines" element={<MachinesPage />} />
+              </Route>
+
+              <Route element={<ProtectedRoute permission="workflow-templates.view" />}>
+                <Route path="/workflow-templates" element={<WorkflowTemplatesPage />} />
               </Route>
 
               <Route element={<ProtectedRoute permission="roles.view" />}>
