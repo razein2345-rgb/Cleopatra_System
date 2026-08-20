@@ -2672,7 +2672,20 @@ model StockMovement {
   reference       String?
   date            DateTime          @default(now())
 
+  /// Owner (2026-08-20, "لا عايز اقدر اعدل الحركة واحذفها") — this row was
+  /// originally documented as an immutable ledger (matching TreasuryEntry),
+  /// but the owner explicitly rejected the "record a correction entry
+  /// instead" alternative and asked for real edit/delete. Soft-deleted
+  /// (isDeleted/deletedAt/deletedBy — same columns as every other sensitive
+  /// delete in this codebase, rule 19) rather than a hard delete, and both
+  /// edit and delete are Audit Logged (rule 7) since they change a figure
+  /// that has already fed `StockLevel.quantityOnHand`.
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // ---------------------------------------------------------------------------

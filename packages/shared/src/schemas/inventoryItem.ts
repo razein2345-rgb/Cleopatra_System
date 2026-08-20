@@ -63,6 +63,14 @@ export const createStockMovementSchema = z.object({
   reference: z.string().trim().min(1).max(200).optional(),
 });
 
+/** Owner (2026-08-20, "لا عايز اقدر اعدل الحركة واحذفها") — correcting an already-recorded movement (wrong quantity/type/date/reference), not just adding a new one. */
+export const updateStockMovementSchema = z.object({
+  type: stockMovementTypeSchema.optional(),
+  quantity: z.number().positive().optional(),
+  reference: z.string().trim().min(1).max(200).nullable().optional(),
+  date: z.string().optional(),
+});
+
 export const stockMovementSchema = z.object({
   id: z.string().uuid(),
   inventoryItemId: z.string().uuid(),
@@ -81,3 +89,4 @@ export type CreateInventoryItemInput = z.infer<typeof createInventoryItemSchema>
 export type UpdateInventoryItemInput = z.infer<typeof updateInventoryItemSchema>;
 export type StockMovement = z.infer<typeof stockMovementSchema>;
 export type CreateStockMovementInput = z.infer<typeof createStockMovementSchema>;
+export type UpdateStockMovementInput = z.infer<typeof updateStockMovementSchema>;

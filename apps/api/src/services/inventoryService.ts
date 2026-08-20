@@ -1,5 +1,12 @@
 import type { Prisma } from '../generated/prisma/client.js';
-import type { CreateInventoryItemInput, CreateStockMovementInput, InventoryItem, StockMovement, UpdateInventoryItemInput } from '@cleopatra/shared';
+import type {
+  CreateInventoryItemInput,
+  CreateStockMovementInput,
+  InventoryItem,
+  StockMovement,
+  UpdateInventoryItemInput,
+  UpdateStockMovementInput,
+} from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 
 type InventoryItemRecord = Prisma.InventoryItemGetPayload<{
@@ -52,6 +59,13 @@ export class DuplicateBarcodeError extends Error {
   constructor() {
     super('This barcode is already assigned to another item');
     this.name = 'DuplicateBarcodeError';
+  }
+}
+
+export class StockMovementNotFoundError extends Error {
+  constructor() {
+    super('Stock movement not found');
+    this.name = 'StockMovementNotFoundError';
   }
 }
 
@@ -219,7 +233,7 @@ export async function recordStockMovement(
 /** Owner ("موظف المخزن مقدرش يجاوب 'الرصيد ده نزل امتى وليه'") — every StockMovement for this item, newest first: both order-driven (`deductStockForOrderItem`/`restockForOrderItem`) and manual (`recordStockMovement`) rows already land in the same table. Read-only, no write path changes. */
 export async function listStockMovements(inventoryItemId: string, branchId: string): Promise<StockMovement[]> {
   const rows = await prisma.stockMovement.findMany({
-    where: { inventoryItemId, branchId },
+    where: { inventoryItemId, branchId, isDeleted: false },
     orderBy: { date: 'desc' },
   });
   return rows.map((m) => ({
@@ -232,6 +246,103 @@ export async function listStockMovements(inventoryItemId: string, branchId: stri
     date: m.date.toISOString(),
     createdAt: m.createdAt.toISOString(),
   }));
+}
+
+function movementDelta(type: 'IN' | 'OUT' | 'ADJUSTMENT', quantity: number): number {
+  return type === 'OUT' ? -quantity : quantity;
+}
+
+/**
+ * Owner (2026-08-20, "لا عايز اقدر اعدل الحركة واحذفها") — corrects an
+ * already-recorded movement's type/quantity/reference/date. `StockLevel`
+ * is re-adjusted by the *difference* between the old and new delta inside
+ * the same transaction, never by re-deriving the whole balance from
+ * scratch, mirroring `recordStockMovement`'s own upsert-by-increment style.
+ */
+export async function updateStockMovement(
+  movementId: string,
+  input: UpdateStockMovementInput,
+): Promise<{ item: InventoryItem; previous: StockMovement }> {
+  const existing = await prisma.stockMovement.findUnique({ where: { id: movementId } });
+  if (!existing || existing.isDeleted) throw new StockMovementNotFoundError();
+
+  const previous: StockMovement = {
+    id: existing.id,
+    inventoryItemId: existing.inventoryItemId,
+    branchId: existing.branchId,
+    type: existing.type,
+    quantity: existing.quantity.toNumber(),
+    reference: existing.reference,
+    date: existing.date.toISOString(),
+    createdAt: existing.createdAt.toISOString(),
+  };
+
+  const newType = input.type ?? existing.type;
+  const newQuantity = input.quantity ?? existing.quantity.toNumber();
+  const oldDelta = movementDelta(existing.type, existing.quantity.toNumber());
+  const newDelta = movementDelta(newType, newQuantity);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.stockMovement.update({
+      where: { id: movementId },
+      data: {
+        type: newType,
+        quantity: newQuantity,
+        reference: input.reference,
+        date: input.date !== undefined ? new Date(input.date) : undefined,
+      },
+    });
+    await tx.stockLevel.upsert({
+      where: { inventoryItemId_branchId: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId } },
+      create: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId, quantityOnHand: newDelta - oldDelta },
+      update: { quantityOnHand: { increment: newDelta - oldDelta } },
+    });
+    return tx.inventoryItem.findUniqueOrThrow({ where: { id: existing.inventoryItemId }, include: INCLUDE });
+  });
+
+  return { item: mapInventoryItemToDto(updated, existing.branchId), previous };
+}
+
+/**
+ * Soft-delete (rule 19) — reverses the movement's effect on `StockLevel`
+ * by the same increment-based math `updateStockMovement` uses (delta to
+ * zero, i.e. `-oldDelta`), then marks the row deleted rather than removing
+ * it, so the audit trail this same feature request also implies stays
+ * intact.
+ */
+export async function deleteStockMovement(
+  movementId: string,
+  deletedBy: string,
+): Promise<{ item: InventoryItem; previous: StockMovement }> {
+  const existing = await prisma.stockMovement.findUnique({ where: { id: movementId } });
+  if (!existing || existing.isDeleted) throw new StockMovementNotFoundError();
+
+  const previous: StockMovement = {
+    id: existing.id,
+    inventoryItemId: existing.inventoryItemId,
+    branchId: existing.branchId,
+    type: existing.type,
+    quantity: existing.quantity.toNumber(),
+    reference: existing.reference,
+    date: existing.date.toISOString(),
+    createdAt: existing.createdAt.toISOString(),
+  };
+  const oldDelta = movementDelta(existing.type, existing.quantity.toNumber());
+
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.stockMovement.update({
+      where: { id: movementId },
+      data: { isDeleted: true, deletedAt: new Date(), deletedBy },
+    });
+    await tx.stockLevel.upsert({
+      where: { inventoryItemId_branchId: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId } },
+      create: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId, quantityOnHand: -oldDelta },
+      update: { quantityOnHand: { increment: -oldDelta } },
+    });
+    return tx.inventoryItem.findUniqueOrThrow({ where: { id: existing.inventoryItemId }, include: INCLUDE });
+  });
+
+  return { item: mapInventoryItemToDto(updated, existing.branchId), previous };
 }
 
 export async function deleteInventoryItem(id: string, deletedBy: string): Promise<void> {

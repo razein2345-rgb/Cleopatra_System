@@ -1,8 +1,14 @@
 import type { Request, Response } from 'express';
-import { createInventoryItemSchema, createStockMovementSchema, updateInventoryItemSchema } from '@cleopatra/shared';
+import {
+  createInventoryItemSchema,
+  createStockMovementSchema,
+  updateInventoryItemSchema,
+  updateStockMovementSchema,
+} from '@cleopatra/shared';
 import {
   createInventoryItem,
   deleteInventoryItem,
+  deleteStockMovement,
   DuplicateBarcodeError,
   getInventoryItem,
   getInventoryItemByBarcode,
@@ -12,12 +18,14 @@ import {
   listItemsNeedingSupplier,
   listStockMovements,
   recordStockMovement,
+  StockMovementNotFoundError,
   updateInventoryItem,
+  updateStockMovement,
 } from '../services/inventoryService.js';
 import { recordAudit } from '../services/auditService.js';
 
 function handleServiceError(err: unknown, res: Response): boolean {
-  if (err instanceof InventoryItemNotFoundError) {
+  if (err instanceof InventoryItemNotFoundError || err instanceof StockMovementNotFoundError) {
     res.status(404).json({ success: false, error: { message: err.message } });
     return true;
   }
@@ -143,6 +151,55 @@ export async function recordStockMovementHandler(req: Request<{ id: string }>, r
   });
 
   res.json({ success: true, data: updated });
+}
+
+/** Owner (2026-08-20, "لا عايز اقدر اعدل الحركة واحذفها") — corrects an already-recorded movement's type/quantity/reference/date rather than only ever adding a new one. */
+export async function updateStockMovementHandler(req: Request<{ id: string; movementId: string }>, res: Response) {
+  const auth = req.auth!;
+  const input = updateStockMovementSchema.parse(req.body);
+
+  let result;
+  try {
+    result = await updateStockMovement(req.params.movementId, input);
+  } catch (err) {
+    if (handleServiceError(err, res)) return;
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'StockMovement',
+    entityId: req.params.movementId,
+    action: 'UPDATE',
+    performedById: auth.staffId,
+    branchId: auth.branchId,
+    previousValue: { type: result.previous.type, quantity: result.previous.quantity, reference: result.previous.reference, date: result.previous.date },
+    newValue: input,
+  });
+
+  res.json({ success: true, data: result.item });
+}
+
+export async function deleteStockMovementHandler(req: Request<{ id: string; movementId: string }>, res: Response) {
+  const auth = req.auth!;
+
+  let result;
+  try {
+    result = await deleteStockMovement(req.params.movementId, auth.staffId);
+  } catch (err) {
+    if (handleServiceError(err, res)) return;
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'StockMovement',
+    entityId: req.params.movementId,
+    action: 'DELETE',
+    performedById: auth.staffId,
+    branchId: auth.branchId,
+    previousValue: { type: result.previous.type, quantity: result.previous.quantity, reference: result.previous.reference, date: result.previous.date },
+  });
+
+  res.json({ success: true, data: result.item });
 }
 
 export async function deleteInventoryItemHandler(req: Request<{ id: string }>, res: Response) {

@@ -7,6 +7,7 @@ import type {
   MaterialCategory,
   StockMovement,
   StockMovementType,
+  UpdateStockMovementInput,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -423,14 +424,30 @@ function RecordMovementDialog({
 }
 
 function StockMovementHistoryDialog({ item, onClose }: { item: InventoryItem; onClose: () => void }) {
+  const { can } = useAuth();
+  const confirm = useConfirm();
   const [movements, setMovements] = useState<StockMovement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editingMovement, setEditingMovement] = useState<StockMovement | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     apiGet<StockMovement[]>(`/api/inventory-items/${item.id}/movements`)
       .then(setMovements)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل سجل الحركة'));
-  }, [item.id]);
+  };
+
+  useEffect(load, [item.id]);
+
+  const removeMovement = async (m: StockMovement) => {
+    if (!(await confirm({ title: `تحذف حركة "${MOVEMENT_TYPE_LABELS[m.type]}" بتاريخ ${new Date(m.date).toLocaleDateString('ar-EG')}؟`, description: 'هيتصحح رصيد الصنف تلقائيًا بعد الحذف.', destructive: true }))) return;
+    setError(null);
+    try {
+      await apiDelete(`/api/inventory-items/${item.id}/movements/${m.id}`);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حذف الحركة');
+    }
+  };
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -452,6 +469,7 @@ function StockMovementHistoryDialog({ item, onClose }: { item: InventoryItem; on
                   <th className="p-2">النوع</th>
                   <th className="p-2">الكمية</th>
                   <th className="p-2">مرجع</th>
+                  {(can('inventory.edit') || can('inventory.delete')) && <th className="p-2" />}
                 </tr>
               </thead>
               <tbody>
@@ -466,12 +484,148 @@ function StockMovementHistoryDialog({ item, onClose }: { item: InventoryItem; on
                       {m.quantity.toLocaleString('en-US')} {UNIT_LABELS[item.unit]}
                     </td>
                     <td className="text-muted-foreground p-2">{m.reference ?? '—'}</td>
+                    {(can('inventory.edit') || can('inventory.delete')) && (
+                      <td className="p-2">
+                        <div className="flex gap-2">
+                          {can('inventory.edit') && (
+                            <button type="button" onClick={() => setEditingMovement(m)} className="text-primary text-xs hover:underline">
+                              تعديل
+                            </button>
+                          )}
+                          {can('inventory.delete') && (
+                            <button type="button" onClick={() => void removeMovement(m)} className="text-destructive text-xs hover:underline">
+                              حذف
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+        {editingMovement && (
+          <EditMovementDialog
+            item={item}
+            movement={editingMovement}
+            onClose={() => setEditingMovement(null)}
+            onSaved={() => {
+              setEditingMovement(null);
+              load();
+            }}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Owner (2026-08-20, "لا عايز اقدر اعدل الحركة واحذفها") — correcting an already-recorded movement (wrong quantity/type/date/reference), separate from `RecordMovementDialog` which only ever adds a new one. */
+function EditMovementDialog({
+  item,
+  movement,
+  onClose,
+  onSaved,
+}: {
+  item: InventoryItem;
+  movement: StockMovement;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [type, setType] = useState<StockMovementType>(movement.type);
+  const [quantity, setQuantity] = useState(String(movement.quantity));
+  const [reference, setReference] = useState(movement.reference ?? '');
+  const [date, setDate] = useState(() => {
+    const d = new Date(movement.date);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      const input: UpdateStockMovementInput = {
+        type,
+        quantity: Number(quantity),
+        reference: reference.trim() === '' ? null : reference.trim(),
+        date: new Date(date).toISOString(),
+      };
+      await apiPut(`/api/inventory-items/${item.id}/movements/${movement.id}`, input);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تعديل الحركة');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>تعديل حركة "{item.name}"</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">النوع</span>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as StockMovementType)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {(Object.keys(MOVEMENT_TYPE_LABELS) as StockMovementType[]).map((t) => (
+                <option key={t} value={t}>
+                  {MOVEMENT_TYPE_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">الكمية ({UNIT_LABELS[item.unit]})</span>
+            <input
+              type="number"
+              min={0.001}
+              step="0.001"
+              required
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">التاريخ</span>
+            <input
+              type="datetime-local"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">مرجع</span>
+            <input
+              value={reference}
+              onChange={(e) => setReference(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'حفظ'}
+            </Button>
+          </div>
+        </form>
       </DialogContent>
     </Dialog>
   );

@@ -4,6 +4,7 @@ import { requirePermission } from '../middlewares/requirePermission.js';
 import {
   createInventoryItemHandler,
   deleteInventoryItemHandler,
+  deleteStockMovementHandler,
   getInventoryItemByBarcodeHandler,
   getInventoryItemHandler,
   listInventoryItemsHandler,
@@ -11,6 +12,7 @@ import {
   listStockMovementsHandler,
   recordStockMovementHandler,
   updateInventoryItemHandler,
+  updateStockMovementHandler,
 } from '../controllers/inventoryItems.js';
 
 export const inventoryItemsRouter = Router();
@@ -28,4 +30,6 @@ inventoryItemsRouter.post('/', requirePermission('inventory.create'), createInve
 inventoryItemsRouter.put('/:id', requirePermission('inventory.edit'), updateInventoryItemHandler);
 inventoryItemsRouter.get('/:id/movements', requirePermission('inventory.view'), listStockMovementsHandler);
 inventoryItemsRouter.post('/:id/movements', requirePermission('inventory.create'), recordStockMovementHandler);
+inventoryItemsRouter.put('/:id/movements/:movementId', requirePermission('inventory.edit'), updateStockMovementHandler);
+inventoryItemsRouter.delete('/:id/movements/:movementId', requirePermission('inventory.delete'), deleteStockMovementHandler);
 inventoryItemsRouter.delete('/:id', requirePermission('inventory.delete'), deleteInventoryItemHandler);
