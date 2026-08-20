@@ -68,9 +68,32 @@ function resolvePeriod(payFrequency: PayFrequency, payDayOfMonth: number | null)
   return { periodStart, periodEnd };
 }
 
+/**
+ * Bug found live (2026-08-20, owner: "شيفته من 10 ل 6، بيحضر من 9:30 ل8،
+ * المفروض ليه دقايق مش عليه") — `shiftStartTime`/`shiftEndTime` are
+ * "HH:MM" wall-clock strings meant as Egypt local time (the only branch
+ * timezone this business has), but were being built with `Date.UTC(...)`
+ * directly — i.e. treated as UTC hours, not Cairo hours. The server runs
+ * in UTC (Render), so every scheduled start/end was off by Cairo's real
+ * UTC offset (+2 or +3 depending on Egypt's DST, which resumed in 2023) —
+ * shifting the whole late/early-leave/overtime comparison by 2-3 hours
+ * and turning a normal early-arrival/late-departure day into a wrongly
+ * "docked" one. `getTimezoneOffsetMinutes` reads the IANA `Africa/Cairo`
+ * offset for the given day (so it keeps working correctly across DST
+ * transitions, not just today), rather than a fixed hardcoded number.
+ */
+const BUSINESS_TIMEZONE = 'Africa/Cairo';
+
+function getTimezoneOffsetMinutes(date: Date, timeZone: string): number {
+  const utcAsLocal = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
+  const tzAsLocal = new Date(date.toLocaleString('en-US', { timeZone }));
+  return (tzAsLocal.getTime() - utcAsLocal.getTime()) / 60000;
+}
+
 function combineDayAndTime(day: Date, hhmm: string): Date {
   const [h, m] = hhmm.split(':').map(Number);
-  return new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), h, m));
+  const offsetMinutes = getTimezoneOffsetMinutes(day, BUSINESS_TIMEZONE);
+  return new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), h, m) - offsetMinutes * 60000);
 }
 
 function eachDay(start: Date, end: Date): Date[] {
