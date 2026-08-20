@@ -1,3 +1,4 @@
+import type { Response } from 'express';
 import { prisma } from '../lib/prisma.js';
 
 export type AuthenticatedUser = {
@@ -71,6 +72,16 @@ export async function loadAuthContext(supabaseUserId: string): Promise<Authentic
 export function canAccessBranch(user: AuthenticatedUser, branchId: string): boolean {
   if (user.roleNames.includes('SUPER_ADMIN')) return true;
   return user.accessibleBranchIds.includes(branchId);
+}
+
+/**
+ * Shared 403 response for every `canAccessBranch` check across controllers
+ * (audit pass, 2026-08-20 — see orders.ts's `loadOrderBranchOr404` for the
+ * original write-up of the gap this closes). One shared function instead
+ * of each controller redefining its own identical helper.
+ */
+export function forbidBranch(res: Response): void {
+  res.status(403).json({ success: false, error: { message: 'You do not have access to this branch' } });
 }
 
 /**

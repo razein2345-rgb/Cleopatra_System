@@ -7,6 +7,7 @@ import {
   mapPartnerToDto,
 } from '../services/businessPartnerService.js';
 import { recordAudit } from '../services/auditService.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 
 /** `lastContactedAt`/`nextFollowUpAt` arrive as ISO strings (Zod's date convention throughout this codebase) but Prisma's DateTime columns need real `Date`s — same explicit-conversion pattern `orderService.ts`'s `deliveryDate` handling already uses, not implicit string coercion. */
 function toDate(value: string | null | undefined): Date | null | undefined {
@@ -54,6 +55,11 @@ export async function createBusinessPartner(req: Request, res: Response) {
   const auth = req.auth!;
   const input = createBusinessPartnerSchema.parse(req.body);
 
+  if (!canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
+
   if (input.status === 'ACTIVE' && !hasValidContactMethod(input)) {
     res.status(400).json({
       success: false,
@@ -96,6 +102,10 @@ export async function updateBusinessPartner(req: Request<{ id: string }>, res: R
   const existing = await prisma.businessPartner.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Business partner not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId) || (input.branchId && !canAccessBranch(auth, input.branchId))) {
+    forbidBranch(res);
     return;
   }
 
@@ -171,10 +181,14 @@ export async function deleteBusinessPartner(req: Request<{ id: string }>, res: R
   // need to fetch the rest of the row for an existence/state check.
   const existing = await prisma.businessPartner.findUnique({
     where: { id: req.params.id },
-    select: { isDeleted: true },
+    select: { isDeleted: true, branchId: true },
   });
   if (!existing || existing.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Business partner not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
     return;
   }
 

@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { mapPartnerToDto } from '../services/businessPartnerService.js';
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 
 /**
  * Only entry point that may change `categoryId` — a plain nullable FK on
@@ -16,6 +17,10 @@ export async function setPartnerCategory(req: Request<{ partnerId: string }>, re
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   const input = setPartnerCategorySchema.parse(req.body);
 
@@ -100,6 +105,10 @@ export async function setPartnerTags(req: Request<{ partnerId: string }>, res: R
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   const input = setPartnerTagsSchema.parse(req.body);
   const tagIds = Array.from(new Set(input.tagIds));

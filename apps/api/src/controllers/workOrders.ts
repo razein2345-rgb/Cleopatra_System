@@ -16,6 +16,7 @@ import {
 } from '../services/orderService.js';
 import { getLatestPublishedTemplate } from '../services/workflowTemplateService.js';
 import { recordAudit } from '../services/auditService.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 
 /**
  * All current callers are internal staff (no Customer Portal exists yet) —
@@ -46,6 +47,10 @@ export async function createWorkOrder(req: Request, res: Response) {
   const order = await prisma.order.findUnique({ where: { id: input.orderId } });
   if (!order || order.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Order not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, order.branchId)) {
+    forbidBranch(res);
     return;
   }
 
@@ -157,6 +162,16 @@ export async function updateWorkOrderItemProduction(req: Request<{ workOrderId: 
   const auth = req.auth!;
   const input = updateOrderItemProductionSchema.parse(req.body);
 
+  const workOrder = await prisma.workOrder.findUnique({ where: { id: req.params.workOrderId }, select: { branchId: true, isDeleted: true } });
+  if (!workOrder || workOrder.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Work order not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, workOrder.branchId)) {
+    forbidBranch(res);
+    return;
+  }
+
   let updated;
   try {
     updated = await updateOrderItemProduction(req.params.workOrderId, req.params.itemId, input, auth.staffId);
@@ -190,6 +205,16 @@ export async function updateWorkOrderItemProduction(req: Request<{ workOrderId: 
  */
 export async function deleteWorkOrder(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+  const existing = await prisma.workOrder.findUnique({ where: { id: req.params.id }, select: { branchId: true, isDeleted: true } });
+  if (!existing || existing.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Work order not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
+    return;
+  }
+
   let result;
   try {
     result = await deleteWorkOrderService(req.params.id, auth.staffId);

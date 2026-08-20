@@ -31,12 +31,7 @@ import { buildPricingContext, computeItemPricing, PricingInputError } from '../s
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
 import { tryAutoCreateWorkOrders } from '../services/workOrderService.js';
-import { canAccessBranch } from '../services/authContext.js';
-
-/** Same gap-close as `orders.ts`'s `loadOrderBranchOr404` — see its doc comment. */
-function forbidBranch(res: Response): void {
-  res.status(403).json({ success: false, error: { message: 'You do not have access to this branch' } });
-}
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 
 /**
  * All current callers are internal staff (this route is gated on

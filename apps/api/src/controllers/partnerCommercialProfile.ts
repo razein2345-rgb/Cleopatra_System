@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { mapCommercialProfileToDto } from '../services/partnerCommercialProfileService.js';
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 
 /**
  * Returns `null` (not 404) when no profile has been created yet — a fresh
@@ -39,6 +40,10 @@ export async function upsertPartnerCommercialProfile(
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   const input = upsertPartnerCommercialProfileSchema.parse(req.body);
 

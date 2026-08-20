@@ -9,6 +9,7 @@ import {
   setExclusiveDefault,
 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 
 async function loadAddressOr404(partnerId: string, addressId: string, res: Response) {
   const address = await prisma.partnerAddress.findUnique({ where: { id: addressId } });
@@ -34,6 +35,10 @@ export async function createPartnerAddress(req: Request<{ partnerId: string }>, 
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   const input = createPartnerAddressSchema.parse(req.body);
   const address = await prisma.partnerAddress.create({
@@ -60,6 +65,10 @@ export async function updatePartnerAddress(
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const existing = await loadAddressOr404(partner.id, req.params.addressId, res);
   if (!existing) return;
 
@@ -126,6 +135,10 @@ export async function setDefaultPartnerAddress(
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const existing = await loadAddressOr404(partner.id, req.params.addressId, res);
   if (!existing) return;
 
@@ -193,6 +206,10 @@ export async function deletePartnerAddress(
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const existing = await loadAddressOr404(partner.id, req.params.addressId, res);
   if (!existing) return;
 

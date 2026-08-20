@@ -20,7 +20,7 @@ import { QuotationItemValidationError, validateQuotationItemRefs } from '../serv
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
 import { DayClosedError } from '../services/treasuryService.js';
-import { canAccessBranch } from '../services/authContext.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 
 /**
  * Owner (2026-08-20, "الموظف اللي انا محدد إنه من فرع برينتنج هاوس مينفعش
@@ -41,10 +41,6 @@ async function loadOrderBranchOr404(id: string, res: Response): Promise<string |
     return null;
   }
   return order.branchId;
-}
-
-function forbidBranch(res: Response): void {
-  res.status(403).json({ success: false, error: { message: 'You do not have access to this branch' } });
 }
 
 /**

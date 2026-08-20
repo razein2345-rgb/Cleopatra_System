@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { mapNoteToDto, NOTE_ORDER_BY } from '../services/partnerNoteService.js';
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 
 async function loadNoteOr404(partnerId: string, noteId: string, res: Response) {
   const note = await prisma.partnerNote.findUnique({ where: { id: noteId } });
@@ -43,6 +44,10 @@ export async function createPartnerNote(req: Request<{ partnerId: string }>, res
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   const input = createPartnerNoteSchema.parse(req.body);
   // PRODUCT_ROADMAP.md §2 — a new note is itself an act of contact, so
@@ -81,6 +86,10 @@ export async function updatePartnerNote(
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const existing = await loadNoteOr404(partner.id, req.params.noteId, res);
   if (!existing) return;
 
@@ -117,6 +126,10 @@ export async function setPartnerNotePinned(
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const existing = await loadNoteOr404(partner.id, req.params.noteId, res);
   if (!existing) return;
 
@@ -154,6 +167,10 @@ export async function deletePartnerNote(
   const auth = req.auth!;
   const partner = await loadPartnerOr404(req.params.partnerId, res);
   if (!partner) return;
+  if (!canAccessBranch(auth, partner.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const existing = await loadNoteOr404(partner.id, req.params.noteId, res);
   if (!existing) return;
 
