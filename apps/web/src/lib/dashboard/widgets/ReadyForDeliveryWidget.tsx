@@ -21,7 +21,7 @@ function ReadyForDeliveryWidgetComponent() {
   }, []);
 
   const ready = orders?.filter((o) => o.status === 'READY') ?? [];
-  const partnerName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? '—') : 'عميل نقدي');
+  const partnerName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? '—') : 'عميل');
 
   return (
     <Card className="p-4">

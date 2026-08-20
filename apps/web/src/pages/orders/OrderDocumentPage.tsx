@@ -50,7 +50,7 @@ export function OrderDocumentPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
-  /** Owner (2026-08-20, "وهل ممكن اكتب عميل فقط بلاش عميل نقدي") — toggle an existing invoice between a real customer and "عميل نقدي". */
+  /** Owner (2026-08-20, "وهل ممكن اكتب عميل فقط بلاش عميل نقدي") — toggle an existing invoice between a real customer and no customer at all (displayed simply as "عميل", not "عميل نقدي" — owner's explicit follow-up). */
   const [editingPartner, setEditingPartner] = useState(false);
   const [allPartners, setAllPartners] = useState<BusinessPartner[]>([]);
   const [newPartnerId, setNewPartnerId] = useState('');
@@ -140,7 +140,7 @@ export function OrderDocumentPage() {
   const confirmGoWalkIn = async () => {
     if (
       !(await confirm({
-        title: 'تحويل الفاتورة لفاتورة نقدية بدون عميل؟',
+        title: 'تحويل الفاتورة لفاتورة بدون عميل؟',
         description: partner ? `هتتشال من سجل "${partner.nameAr}".` : undefined,
       }))
     )
@@ -243,12 +243,12 @@ export function OrderDocumentPage() {
               {!editingPartner ? (
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <span className="text-muted-foreground">
-                    العميل: <span className="text-foreground font-medium">{partner ? partner.nameAr : 'عميل نقدي'}</span>
+                    العميل: <span className="text-foreground font-medium">{partner ? partner.nameAr : 'عميل'}</span>
                   </span>
                   {partner ? (
                     canGoWalkIn && (
                       <button type="button" onClick={() => void confirmGoWalkIn()} className="text-primary text-xs hover:underline">
-                        خليها فاتورة نقدية (بدون عميل)
+                        خليها بدون عميل
                       </button>
                     )
                   ) : (
@@ -322,7 +322,7 @@ export function OrderDocumentPage() {
         documentTypeLabel="فاتورة"
         documentNumber={order.invoiceNumber}
         date={order.date}
-        partnerName={partner ? partner.nameAr : 'عميل نقدي'}
+        partnerName={partner ? partner.nameAr : 'عميل'}
         partnerPhone={partner?.phone}
         partnerSalutation={partner ? partnerSalutation(partner) : ''}
         items={items}

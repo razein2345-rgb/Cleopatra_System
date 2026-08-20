@@ -53,7 +53,7 @@ interface DocumentRow {
 /**
  * Owner (2026-08-20, "فاتورة بدون إسم العميل") — walk-in/cash orders
  * (INVENTORY_RETAIL/MANUAL items, no BusinessPartner) all fall into this one
- * shared bucket ("عميل نقدي"), since there's no real customer identity to
+ * shared bucket ("عميل"), since there's no real customer identity to
  * group them by.
  */
 const NO_PARTNER_KEY = '__none__';
@@ -85,7 +85,7 @@ export function DocumentsPage() {
       apiGet<BusinessPartner[]>('/api/partners'),
     ])
       .then(([quotations, orders, workOrders, partners]) => {
-        const partnerName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? id) : 'عميل نقدي');
+        const partnerName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? id) : 'عميل');
         const orderById = new Map(orders.map((o) => [o.id, o]));
 
         const quotationRows: DocumentRow[] = quotations.map((q) => ({

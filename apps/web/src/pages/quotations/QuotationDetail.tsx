@@ -382,7 +382,7 @@ function QuotationSummary({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  /** Owner (2026-08-20, "وهل ممكن اكتب عميل فقط بلاش عميل نقدي") — toggle an existing quotation between a real customer and "عميل نقدي". */
+  /** Owner (2026-08-20, "وهل ممكن اكتب عميل فقط بلاش عميل نقدي") — toggle an existing quotation between a real customer and no customer at all (displayed simply as "عميل"). */
   const [editingPartner, setEditingPartner] = useState(false);
   const [allPartners, setAllPartners] = useState<BusinessPartner[]>([]);
   const [newPartnerId, setNewPartnerId] = useState('');
@@ -422,7 +422,7 @@ function QuotationSummary({
   const confirmGoWalkIn = async () => {
     if (
       !(await confirm({
-        title: 'تحويل عرض السعر لعرض نقدي بدون عميل؟',
+        title: 'تحويل عرض السعر لعرض بدون عميل؟',
         description: partner ? `هيتشال من سجل "${partner.nameAr}".` : undefined,
       }))
     )
@@ -462,7 +462,7 @@ function QuotationSummary({
           <span className="text-muted-foreground">العميل</span>
           {!editingPartner ? (
             <div className="border-input bg-muted/30 flex w-full flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
-              <span>{partner ? `${partner.nameAr}${partner.nameEn ? ` (${partner.nameEn})` : ''}` : 'عميل نقدي'}</span>
+              <span>{partner ? `${partner.nameAr}${partner.nameEn ? ` (${partner.nameEn})` : ''}` : 'عميل'}</span>
               {canEdit &&
                 (partner ? (
                   canGoWalkIn && (

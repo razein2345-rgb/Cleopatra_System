@@ -2831,7 +2831,7 @@ function NewOrderForm({
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">العميل</span>
               {walkIn ? (
-                <p className="border-input bg-muted/30 text-muted-foreground rounded-md border px-3 py-2">عميل نقدي — بدون اسم</p>
+                <p className="border-input bg-muted/30 text-muted-foreground rounded-md border px-3 py-2">عميل — بدون اسم</p>
               ) : (
                 <div className="flex items-center gap-1">
                   <PartnerCombobox partners={localPartners} value={partnerId} onChange={setPartnerId} disabled={isEditing} />
@@ -2849,7 +2849,7 @@ function NewOrderForm({
               {!isEditing && (
                 <label className="text-muted-foreground flex items-center gap-1.5 pt-0.5 text-xs font-normal">
                   <input type="checkbox" checked={walkIn} onChange={(e) => setWalkIn(e.target.checked)} />
-                  <span>فاتورة بدون عميل (نقدي) — للبضاعة من المخزون والبنود اليدوية فقط</span>
+                  <span>فاتورة بدون عميل — للبضاعة من المخزون والبنود اليدوية فقط</span>
                 </label>
               )}
             </label>

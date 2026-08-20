@@ -496,7 +496,7 @@ export function WorkOrderDocumentPage() {
           documentTypeLabel="أمر شغل"
           documentNumber={workOrder.workOrderNumber}
           date={workOrder.createdAt}
-          partnerName={partner ? partner.nameAr : 'عميل نقدي'}
+          partnerName={partner ? partner.nameAr : 'عميل'}
           partnerPhone={partner?.phone}
           partnerSalutation={partner ? partnerSalutation(partner) : ''}
           items={items}
@@ -584,7 +584,7 @@ export function WorkOrderDocumentPage() {
 
         <OffsetItemCards
           items={workOrder.items}
-          partnerName={partner ? partner.nameAr : 'عميل نقدي'}
+          partnerName={partner ? partner.nameAr : 'عميل'}
           sizeFamilyLabelByKey={new Map((pricingReference?.sizeFamilies ?? []).map((f) => [f.key, f.label]))}
         />
 

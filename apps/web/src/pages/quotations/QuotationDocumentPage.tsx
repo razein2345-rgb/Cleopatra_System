@@ -171,7 +171,7 @@ export function QuotationDocumentPage() {
         documentTypeLabel="عرض سعر"
         documentNumber={quotation.quotationNumber}
         date={quotation.date}
-        partnerName={partner ? partner.nameAr : 'عميل نقدي'}
+        partnerName={partner ? partner.nameAr : 'عميل'}
         partnerPhone={partner?.phone}
         partnerSalutation={partner ? partnerSalutation(partner) : ''}
         items={items}
