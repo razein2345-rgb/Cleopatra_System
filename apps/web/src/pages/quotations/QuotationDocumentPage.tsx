@@ -36,7 +36,9 @@ export function QuotationDocumentPage() {
       .then((q) => {
         setQuotation(q);
         return Promise.all([
-          apiGet<BusinessPartner>(`/api/partners/${q.partnerId}`),
+          // Owner (2026-08-20, "فاتورة بدون إسم العميل") — a walk-in/cash
+          // quotation has no BusinessPartner to fetch.
+          q.partnerId ? apiGet<BusinessPartner>(`/api/partners/${q.partnerId}`) : Promise.resolve(null),
           apiGet<BusinessIdentity>('/api/settings/business-identity'),
           apiGet<BranchSummary[]>('/api/branches').catch(() => []),
         ]);
@@ -50,7 +52,7 @@ export function QuotationDocumentPage() {
   }, [id]);
 
   if (error) return <div className="text-destructive">{error}</div>;
-  if (!quotation || !partner || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+  if (!quotation || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
 
   /**
    * Owner (2026-08-17, "تتبع العدد بس، من غير منع") — visibility-only
@@ -121,7 +123,7 @@ export function QuotationDocumentPage() {
           <Breadcrumbs
             items={[
               { label: 'المستندات', to: '/quotations' },
-              { label: partner.nameAr, to: `/partners/${quotation.partnerId}` },
+              ...(partner ? [{ label: partner.nameAr, to: `/partners/${quotation.partnerId}` }] : []),
               { label: `عرض سعر ${quotation.quotationNumber}` },
             ]}
           />
@@ -169,9 +171,9 @@ export function QuotationDocumentPage() {
         documentTypeLabel="عرض سعر"
         documentNumber={quotation.quotationNumber}
         date={quotation.date}
-        partnerName={partner.nameAr}
-        partnerPhone={partner.phone}
-        partnerSalutation={partnerSalutation(partner)}
+        partnerName={partner ? partner.nameAr : 'عميل نقدي'}
+        partnerPhone={partner?.phone}
+        partnerSalutation={partner ? partnerSalutation(partner) : ''}
         items={items}
         totals={{
           subtotal: quotation.subtotal,

@@ -212,7 +212,7 @@ export async function softDeleteWorkOrderTx(
 export async function deleteWorkOrder(
   workOrderId: string,
   deletedBy: string,
-): Promise<{ branchId: string; partnerId: string }> {
+): Promise<{ branchId: string; partnerId: string | null }> {
   const existing = await prisma.workOrder.findUnique({
     where: { id: workOrderId },
     include: {

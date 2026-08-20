@@ -42,7 +42,9 @@ export function QuotationDetail({ quotationId }: { quotationId: string }) {
     apiGet<Quotation>(`/api/quotations/${quotationId}`)
       .then((q) => {
         setQuotation(q);
-        return apiGet<BusinessPartner>(`/api/partners/${q.partnerId}`);
+        // Owner (2026-08-20, "فاتورة بدون إسم العميل") — a walk-in/cash
+        // quotation has no BusinessPartner to fetch.
+        return q.partnerId ? apiGet<BusinessPartner>(`/api/partners/${q.partnerId}`) : Promise.resolve(null);
       })
       .then(setPartner)
       .catch((err: unknown) =>
@@ -396,7 +398,7 @@ function QuotationSummary({
         <div className="space-y-1 text-sm">
           <span className="text-muted-foreground">العميل</span>
           <p className="border-input bg-muted/30 w-full rounded-md border px-3 py-2">
-            {partner ? `${partner.nameAr}${partner.nameEn ? ` (${partner.nameEn})` : ''}` : '—'}
+            {partner ? `${partner.nameAr}${partner.nameEn ? ` (${partner.nameEn})` : ''}` : 'عميل نقدي'}
           </p>
         </div>
         <label className="space-y-1 text-sm">

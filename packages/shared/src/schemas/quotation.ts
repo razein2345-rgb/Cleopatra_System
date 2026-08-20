@@ -17,7 +17,9 @@ export const quotationSchema = z.object({
   id: z.string().uuid(),
   quotationNumber: z.string(),
   branchId: z.string().uuid(),
-  partnerId: z.string().uuid(),
+  // Owner (2026-08-20, "فاتورة بدون إسم العميل") — nullable for walk-in/cash
+  // quotations (INVENTORY_RETAIL/MANUAL items only); see createQuotationSchema.
+  partnerId: z.string().uuid().nullable(),
   staffId: z.string().uuid(),
   date: z.string(),
   validUntil: z.string().nullable(),
@@ -63,7 +65,9 @@ export const quotationSchema = z.object({
  * `Setting.vatRate` — identical to `createOrderSchema`.
  */
 export const createQuotationSchema = z.object({
-  partnerId: z.string().uuid(),
+  // Owner (2026-08-20, "فاتورة بدون إسم العميل") — same walk-in/cash rule as
+  // createOrderSchema.partnerId, enforced server-side in quotationService.
+  partnerId: z.string().uuid().nullable().optional(),
   branchId: z.string().uuid(),
   validUntil: z.string().optional(),
   discountPercent: z.number().min(0).max(100).optional(),

@@ -37,6 +37,28 @@ export class InconsistentProductionTrackError extends Error {
   }
 }
 
+/**
+ * Owner (2026-08-20, "فاتورة بدون إسم العميل") — a walk-in/cash sale (no
+ * `BusinessPartner`) is only valid when every item is INVENTORY_RETAIL or
+ * MANUAL; anything else (a produced job, a service, a catalog product)
+ * needs a real customer to track. Checked here, not in the Zod schema,
+ * because the rule depends on both `partnerId` and `items` together.
+ */
+export class PartnerRequiredError extends Error {
+  constructor() {
+    super('partnerId is required unless every item is INVENTORY_RETAIL or MANUAL');
+    this.name = 'PartnerRequiredError';
+  }
+}
+
+const WALK_IN_ALLOWED_KINDS = new Set(['INVENTORY_RETAIL', 'MANUAL']);
+
+export function assertPartnerPresentUnlessWalkIn(partnerId: string | null | undefined, items: { pricing: { kind: string } }[]) {
+  if (partnerId) return;
+  if (items.every((item) => WALK_IN_ALLOWED_KINDS.has(item.pricing.kind))) return;
+  throw new PartnerRequiredError();
+}
+
 const UNAMBIGUOUS_TRACK_BY_KIND: Partial<Record<string, ProductionTrack>> = {
   LOOSE_PAPER: 'OFFSET',
   NOTEBOOK: 'OFFSET',
@@ -392,7 +414,7 @@ export async function resolveItemCatalogNames(
  */
 export async function createOrder(
   input: {
-    partnerId: string;
+    partnerId?: string | null;
     branchId: string;
     staffId: string;
     discountPercent?: number;
@@ -406,8 +428,9 @@ export async function createOrder(
     payments?: CreatePaymentInput[];
   },
   itemNames: Map<string, string>,
-): Promise<{ id: string; branchId: string; partnerId: string; invoiceNumber: string; itemCount: number }> {
+): Promise<{ id: string; branchId: string; partnerId: string | null; invoiceNumber: string; itemCount: number }> {
   assertDeliveryDateNotBeforeOrderDate(input.deliveryDate, new Date());
+  assertPartnerPresentUnlessWalkIn(input.partnerId, input.items);
 
   for (const item of input.items) {
     assertProductionTrackConsistentWithKind(item.pricing.kind, item.productionTrack);
@@ -448,7 +471,7 @@ export async function createOrder(
       data: {
         invoiceNumber,
         branchId: input.branchId,
-        partnerId: input.partnerId,
+        partnerId: input.partnerId ?? null,
         staffId: input.staffId,
         subtotal,
         discountPercent,
@@ -678,7 +701,7 @@ export async function updateOrder(
   // which this function previously had no other identity to fall back on
   // for the new Work Order reconciliation's `deletedBy`/`performedById`).
   performedById: string,
-): Promise<{ id: string; invoiceNumber: string; branchId: string; partnerId: string }> {
+): Promise<{ id: string; invoiceNumber: string; branchId: string; partnerId: string | null }> {
   const existing = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
@@ -970,7 +993,7 @@ export async function updateOrderItemProduction(
 export async function deleteOrder(
   orderId: string,
   deletedBy: string,
-): Promise<{ branchId: string; partnerId: string }> {
+): Promise<{ branchId: string; partnerId: string | null }> {
   const existing = await prisma.order.findUnique({
     where: { id: orderId },
     // Multi-material pricing (2026-08-17) — `materials` needed for the

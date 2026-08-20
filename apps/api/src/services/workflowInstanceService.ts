@@ -476,7 +476,7 @@ async function queryWorkflowQueue(filter: {
     ...mapStageInstanceToDto(row, true),
     workOrderId: row.workflowInstance.workOrderId,
     workOrderNumber: row.workflowInstance.workOrder?.workOrderNumber ?? null,
-    customerName: row.workflowInstance.workOrder?.order.partner.nameAr ?? null,
+    customerName: row.workflowInstance.workOrder?.order.partner?.nameAr ?? null,
   }));
 }
 
@@ -570,7 +570,7 @@ export async function listWorkflowInstances(status: WorkflowInstanceStatus): Pro
   return rows.map((row: WorkflowInstanceListRecord) => ({
     ...mapWorkflowInstanceToDto(row, true),
     workOrderNumber: row.workOrder?.workOrderNumber ?? null,
-    customerName: row.workOrder?.order.partner.nameAr ?? null,
+    customerName: row.workOrder?.order.partner?.nameAr ?? null,
     itemNames: row.workOrder?.items.map((i) => i.modelName || i.kind || 'صنف') ?? [],
   }));
 }

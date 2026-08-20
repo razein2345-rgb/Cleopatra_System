@@ -11,6 +11,7 @@ import {
   OrderHasWorkOrderError,
   OrderNotFoundError,
   ORDER_INCLUDE,
+  PartnerRequiredError,
   PricingInputError,
   recordPayment,
   resolveItemCatalogNames,
@@ -97,8 +98,10 @@ export async function createOrderHandler(req: Request, res: Response) {
   const auth = req.auth!;
   const input = createOrderSchema.parse(req.body);
 
-  const partner = await loadPartnerOr404(input.partnerId, res);
-  if (!partner) return;
+  if (input.partnerId) {
+    const partner = await loadPartnerOr404(input.partnerId, res);
+    if (!partner) return;
+  }
 
   if (!canAccessBranch(auth, input.branchId)) {
     forbidBranch(res);
@@ -123,6 +126,10 @@ export async function createOrderHandler(req: Request, res: Response) {
   } catch (err) {
     if (err instanceof PricingInputError) {
       res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_PRICING_INPUT' } });
+      return;
+    }
+    if (err instanceof PartnerRequiredError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'PARTNER_REQUIRED' } });
       return;
     }
     if (err instanceof DeliveryDateBeforeOrderDateError) {

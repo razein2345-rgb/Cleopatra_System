@@ -50,7 +50,12 @@ interface DocumentRow {
   link: string | null;
 }
 
-/** A customer with no resolvable partnerId (shouldn't normally happen) falls into its own bucket, sorted last. */
+/**
+ * Owner (2026-08-20, "فاتورة بدون إسم العميل") — walk-in/cash orders
+ * (INVENTORY_RETAIL/MANUAL items, no BusinessPartner) all fall into this one
+ * shared bucket ("عميل نقدي"), since there's no real customer identity to
+ * group them by.
+ */
 const NO_PARTNER_KEY = '__none__';
 
 /** UX_PRODUCT_AUDIT.md § مشكلة 12.2 — pages by customer GROUP, not flat row, so every one customer's documents stay together instead of splitting across a page boundary. */
@@ -80,7 +85,7 @@ export function DocumentsPage() {
       apiGet<BusinessPartner[]>('/api/partners'),
     ])
       .then(([quotations, orders, workOrders, partners]) => {
-        const partnerName = (id: string) => partners.find((p) => p.id === id)?.nameAr ?? id;
+        const partnerName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? id) : 'عميل نقدي');
         const orderById = new Map(orders.map((o) => [o.id, o]));
 
         const quotationRows: DocumentRow[] = quotations.map((q) => ({

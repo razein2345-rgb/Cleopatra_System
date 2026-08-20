@@ -45,7 +45,9 @@ export function OrderDocumentPage() {
       .then((o) => {
         setOrder(o);
         return Promise.all([
-          apiGet<BusinessPartner>(`/api/partners/${o.partnerId}`),
+          // Owner (2026-08-20, "فاتورة بدون إسم العميل") — a walk-in/cash
+          // invoice has no BusinessPartner to fetch.
+          o.partnerId ? apiGet<BusinessPartner>(`/api/partners/${o.partnerId}`) : Promise.resolve(null),
           apiGet<BusinessIdentity>('/api/settings/business-identity'),
           apiGet<BranchSummary[]>('/api/branches').catch(() => []),
           apiGet<User[]>('/api/users').catch(() => []),
@@ -61,7 +63,7 @@ export function OrderDocumentPage() {
   }, [id]);
 
   if (error) return <div className="text-destructive">{error}</div>;
-  if (!order || !partner || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+  if (!order || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
 
   const removeOrder = async () => {
     if (
@@ -135,7 +137,7 @@ export function OrderDocumentPage() {
           <Breadcrumbs
             items={[
               { label: 'المستندات', to: '/quotations' },
-              { label: partner.nameAr, to: `/partners/${order.partnerId}` },
+              ...(partner ? [{ label: partner.nameAr, to: `/partners/${order.partnerId}` }] : []),
               { label: `فاتورة ${order.invoiceNumber}` },
             ]}
           />
@@ -188,9 +190,9 @@ export function OrderDocumentPage() {
         documentTypeLabel="فاتورة"
         documentNumber={order.invoiceNumber}
         date={order.date}
-        partnerName={partner.nameAr}
-        partnerPhone={partner.phone}
-        partnerSalutation={partnerSalutation(partner)}
+        partnerName={partner ? partner.nameAr : 'عميل نقدي'}
+        partnerPhone={partner?.phone}
+        partnerSalutation={partner ? partnerSalutation(partner) : ''}
         items={items}
         totals={{
           subtotal: order.subtotal,

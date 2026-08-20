@@ -359,7 +359,9 @@ export function WorkOrderDocumentPage() {
       .then((o) => {
         setOrder(o);
         return Promise.all([
-          apiGet<BusinessPartner>(`/api/partners/${o.partnerId}`),
+          // Owner (2026-08-20, "فاتورة بدون إسم العميل") — a walk-in order
+          // never reaches production, but guard defensively all the same.
+          o.partnerId ? apiGet<BusinessPartner>(`/api/partners/${o.partnerId}`) : Promise.resolve(null),
           apiGet<BusinessIdentity>('/api/settings/business-identity'),
           apiGet<User[]>('/api/users').catch(() => []),
           apiGet<BranchSummary[]>('/api/branches').catch(() => []),
@@ -377,7 +379,7 @@ export function WorkOrderDocumentPage() {
   }, [id]);
 
   if (error) return <div className="text-destructive">{error}</div>;
-  if (!workOrder || !order || !partner || !business) {
+  if (!workOrder || !order || !business) {
     return <div className="text-muted-foreground">جارٍ التحميل…</div>;
   }
 
@@ -457,7 +459,7 @@ export function WorkOrderDocumentPage() {
             <Breadcrumbs
               items={[
                 { label: 'المستندات', to: '/quotations' },
-                { label: partner.nameAr, to: `/partners/${order.partnerId}` },
+                ...(partner ? [{ label: partner.nameAr, to: `/partners/${order.partnerId}` }] : []),
                 { label: `أمر شغل ${workOrder.workOrderNumber}` },
               ]}
             />
@@ -494,9 +496,9 @@ export function WorkOrderDocumentPage() {
           documentTypeLabel="أمر شغل"
           documentNumber={workOrder.workOrderNumber}
           date={workOrder.createdAt}
-          partnerName={partner.nameAr}
-          partnerPhone={partner.phone}
-          partnerSalutation={partnerSalutation(partner)}
+          partnerName={partner ? partner.nameAr : 'عميل نقدي'}
+          partnerPhone={partner?.phone}
+          partnerSalutation={partner ? partnerSalutation(partner) : ''}
           items={items}
           customerNotes={order.customerNotes}
         />
@@ -512,7 +514,7 @@ export function WorkOrderDocumentPage() {
           <Breadcrumbs
             items={[
               { label: 'المستندات', to: '/quotations' },
-              { label: partner.nameAr, to: `/partners/${order.partnerId}` },
+              ...(partner ? [{ label: partner.nameAr, to: `/partners/${order.partnerId}` }] : []),
               { label: `أمر شغل ${workOrder.workOrderNumber}` },
             ]}
           />
@@ -582,7 +584,7 @@ export function WorkOrderDocumentPage() {
 
         <OffsetItemCards
           items={workOrder.items}
-          partnerName={partner.nameAr}
+          partnerName={partner ? partner.nameAr : 'عميل نقدي'}
           sizeFamilyLabelByKey={new Map((pricingReference?.sizeFamilies ?? []).map((f) => [f.key, f.label]))}
         />
 

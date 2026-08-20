@@ -1404,8 +1404,13 @@ model Order {
 
   branchId  String          @db.Uuid
   branch    Branch          @relation(fields: [branchId], references: [id])
-  partnerId String          @db.Uuid
-  partner   BusinessPartner @relation(fields: [partnerId], references: [id])
+  /// Owner (2026-08-20, "فاتورة بدون إسم العميل") — nullable for walk-in/cash
+  /// sales (INVENTORY_RETAIL, MANUAL line items) that don't need a
+  /// `BusinessPartner` record at all. Application-level rule (not enforced
+  /// at the DB level): required unless every item on the order is one of
+  /// those two kinds — see `orderService.ts`'s `createOrder`.
+  partnerId String?         @db.Uuid
+  partner   BusinessPartner? @relation(fields: [partnerId], references: [id])
   staffId   String          @db.Uuid
   staff     StaffProfile    @relation(fields: [staffId], references: [id])
 
@@ -1642,8 +1647,10 @@ model Quotation {
 
   branchId  String          @db.Uuid
   branch    Branch          @relation(fields: [branchId], references: [id])
-  partnerId String          @db.Uuid
-  partner   BusinessPartner @relation(fields: [partnerId], references: [id])
+  /// Owner (2026-08-20, "فاتورة بدون إسم العميل") — see Order.partnerId's
+  /// doc comment; same nullable walk-in/cash rule applies here.
+  partnerId String?         @db.Uuid
+  partner   BusinessPartner? @relation(fields: [partnerId], references: [id])
   staffId   String          @db.Uuid
   staff     StaffProfile    @relation(fields: [staffId], references: [id])
 

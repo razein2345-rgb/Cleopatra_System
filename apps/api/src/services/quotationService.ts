@@ -4,6 +4,9 @@ import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
+import { assertPartnerPresentUnlessWalkIn, PartnerRequiredError } from './orderService.js';
+
+export { PartnerRequiredError };
 
 /**
  * Centralized here (not duplicated per controller) — mirrors
@@ -222,7 +225,7 @@ export async function validateQuotationItemRefs(
  */
 export async function createQuotation(
   input: {
-    partnerId: string;
+    partnerId?: string | null;
     branchId: string;
     staffId: string;
     validUntil?: string;
@@ -234,6 +237,7 @@ export async function createQuotation(
   },
   itemNames: Map<string, string>,
 ): Promise<QuotationRecord> {
+  assertPartnerPresentUnlessWalkIn(input.partnerId, input.items);
   const ctx = await buildPricingContext(input.items);
   const priced = input.items.map((item) => computeItemPricing(item, ctx));
 
@@ -266,7 +270,7 @@ export async function createQuotation(
       data: {
         quotationNumber,
         branchId: input.branchId,
-        partnerId: input.partnerId,
+        partnerId: input.partnerId ?? null,
         staffId: input.staffId,
         validUntil: input.validUntil ? new Date(input.validUntil) : null,
         subtotal,

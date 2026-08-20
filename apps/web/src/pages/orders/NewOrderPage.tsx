@@ -74,6 +74,17 @@ const KIND_LABELS: Record<PricingKind, string> = {
 };
 
 /**
+ * Owner (2026-08-20, "فاتورة بدون إسم العميل... ده عميل مش ثابت ومش هحتاج
+ * احطه اصلا في الداتا بيز") — a walk-in/cash sale skips the customer field
+ * entirely, but only when every cart item is one of these two kinds
+ * (nothing produced, nothing that needs a customer to track). Mirrors
+ * `orderService.ts`'s `WALK_IN_ALLOWED_KINDS` exactly — server-side is the
+ * real enforcement, this is just the matching client-side guard so the
+ * error surfaces before a failed submit.
+ */
+const WALK_IN_ALLOWED_KINDS = new Set<PricingKind>(['INVENTORY_RETAIL', 'MANUAL']);
+
+/**
  * "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — which tracks' seeded
  * WorkflowTemplate starts with a skippable Design stage, i.e. which
  * tracks the "يحتاج تصميم؟" toggle is even meaningful for. Hardcoded here
@@ -1617,7 +1628,7 @@ function SaveAsTemplateSection({
 }: {
   itemsSnapshot: CreateOrderItemInput[];
   branchId: string;
-  partnerId: string;
+  partnerId: string | null;
 }) {
   const [step, setStep] = useState<'ASK' | 'NAME' | 'SAVED'>('ASK');
   const [name, setName] = useState('');
@@ -1629,7 +1640,7 @@ function SaveAsTemplateSection({
     setSaving(true);
     setError(null);
     try {
-      const input: CreateOrderTemplateInput = { name: name.trim(), branchId, partnerId, itemsSnapshot };
+      const input: CreateOrderTemplateInput = { name: name.trim(), branchId, partnerId: partnerId ?? undefined, itemsSnapshot };
       await apiPost('/api/order-templates', input);
       setStep('SAVED');
     } catch (err) {
@@ -1873,6 +1884,10 @@ function NewOrderForm({
   const [partnerId, setPartnerId] = useState(
     editOrder?.partnerId ?? editQuotation?.partnerId ?? presetPartnerId ?? partners[0]?.id ?? '',
   );
+  /** Owner (2026-08-20, "فاتورة بدون إسم العميل") — see `WALK_IN_ALLOWED_KINDS`. */
+  const [walkIn, setWalkIn] = useState(
+    Boolean((editOrder && !editOrder.partnerId) || (editQuotation && !editQuotation.partnerId)),
+  );
   const [branchId, setBranchId] = useState(editOrder?.branchId ?? editQuotation?.branchId ?? branches[0]?.id ?? '');
   // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16, owner: "الغيها خالص —
   // النظام يحدد لوحده") — supersedes the old single order-level
@@ -1939,7 +1954,7 @@ function NewOrderForm({
   // therefore doesn't warn either — only a real, human-made edit does.
   // Native `beforeunload` only fires on real page unload, not in-app
   // `navigate()` calls, so a successful save never triggers it.
-  const trackedFields = { cart, payments, partnerId, branchId, requiresDesignByTrack, deliveryDate, paymentTerms, discountPercent, vatOn, customerNotes, internalNotes };
+  const trackedFields = { cart, payments, partnerId, walkIn, branchId, requiresDesignByTrack, deliveryDate, paymentTerms, discountPercent, vatOn, customerNotes, internalNotes };
   const initialSnapshot = useRef<string | undefined>(undefined);
   if (initialSnapshot.current === undefined) {
     initialSnapshot.current = JSON.stringify(trackedFields);
@@ -1948,7 +1963,7 @@ function NewOrderForm({
   useEffect(() => {
     setHasUnsavedChanges(JSON.stringify(trackedFields) !== initialSnapshot.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, payments, partnerId, branchId, requiresDesignByTrack, deliveryDate, paymentTerms, discountPercent, vatOn, customerNotes, internalNotes]);
+  }, [cart, payments, partnerId, walkIn, branchId, requiresDesignByTrack, deliveryDate, paymentTerms, discountPercent, vatOn, customerNotes, internalNotes]);
 
   useEffect(() => {
     if (!hasUnsavedChanges) return;
@@ -2255,16 +2270,23 @@ function NewOrderForm({
     if (submitting) return;
     setError(null);
 
-    // FEATURE-016 — the customer field is no longer a native `<select
-    // required>` (now `PartnerCombobox`, a button/search combo with no
-    // built-in HTML5 form validation), so this replaces that lost gate.
-    if (!partnerId) {
-      setError('اختر العميل أولًا');
+    if (cart.length === 0) {
+      setError('أضف بندًا واحدًا على الأقل للفاتورة قبل الحفظ');
       return;
     }
 
-    if (cart.length === 0) {
-      setError('أضف بندًا واحدًا على الأقل للفاتورة قبل الحفظ');
+    // FEATURE-016 — the customer field is no longer a native `<select
+    // required>` (now `PartnerCombobox`, a button/search combo with no
+    // built-in HTML5 form validation), so this replaces that lost gate.
+    // Owner (2026-08-20, "فاتورة بدون إسم العميل") — skipped entirely for a
+    // walk-in/cash sale, but only when every item qualifies.
+    if (walkIn) {
+      if (cart.some((line) => !WALK_IN_ALLOWED_KINDS.has(line.pricing.kind))) {
+        setError('فاتورة بدون عميل متاحة بس لو كل البنود "بضاعة من المخزون" أو "بند يدوي"');
+        return;
+      }
+    } else if (!partnerId) {
+      setError('اختر العميل أولًا');
       return;
     }
     // Same item shape either way — `createQuotationItemSchema` and
@@ -2305,7 +2327,7 @@ function NewOrderForm({
         navigate(`/quotations/${quotation.id}`);
       } else if (documentType === 'QUOTATION') {
         const input: CreateQuotationInput = {
-          partnerId,
+          partnerId: walkIn ? undefined : partnerId,
           branchId,
           validUntil: validUntil ? new Date(validUntil).toISOString() : undefined,
           discountPercent: discountNum,
@@ -2338,7 +2360,7 @@ function NewOrderForm({
           .filter((p) => toOptionalNum(p.amount) && toNum(p.amount) > 0)
           .map((p) => ({ method: p.method, amount: toNum(p.amount) }));
         const input: CreateOrderInput = {
-          partnerId,
+          partnerId: walkIn ? undefined : partnerId,
           branchId,
           discountPercent: discountNum,
           vatOn,
@@ -2803,14 +2825,28 @@ function NewOrderForm({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">العميل</span>
-              <div className="flex items-center gap-1">
-                <PartnerCombobox partners={localPartners} value={partnerId} onChange={setPartnerId} disabled={isEditing} />
-                {can('partners.create') && (
-                  <Button type="button" variant="secondary" size="sm" onClick={() => setShowAddPartner(true)}>
-                    + عميل جديد
-                  </Button>
-                )}
-              </div>
+              {walkIn ? (
+                <p className="border-input bg-muted/30 text-muted-foreground rounded-md border px-3 py-2">عميل نقدي — بدون اسم</p>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <PartnerCombobox partners={localPartners} value={partnerId} onChange={setPartnerId} disabled={isEditing} />
+                  {can('partners.create') && (
+                    <Button type="button" variant="secondary" size="sm" onClick={() => setShowAddPartner(true)}>
+                      + عميل جديد
+                    </Button>
+                  )}
+                </div>
+              )}
+              {/* Owner (2026-08-20, "فاتورة بدون إسم العميل... ده عميل مش
+                  ثابت ومش هحتاج احطه اصلا في الداتا بيز") — only meaningful
+                  when every cart item is INVENTORY_RETAIL/MANUAL; enforced
+                  again at submit time, this is just the entry point. */}
+              {!isEditing && (
+                <label className="text-muted-foreground flex items-center gap-1.5 pt-0.5 text-xs font-normal">
+                  <input type="checkbox" checked={walkIn} onChange={(e) => setWalkIn(e.target.checked)} />
+                  <span>فاتورة بدون عميل (نقدي) — للبضاعة من المخزون والبنود اليدوية فقط</span>
+                </label>
+              )}
             </label>
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">الفرع</span>

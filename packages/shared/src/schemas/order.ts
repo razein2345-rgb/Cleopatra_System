@@ -150,7 +150,9 @@ export const orderSchema = z.object({
   id: z.string().uuid(),
   invoiceNumber: z.string(),
   branchId: z.string().uuid(),
-  partnerId: z.string().uuid(),
+  // Owner (2026-08-20, "فاتورة بدون إسم العميل") — nullable for walk-in/cash
+  // sales (INVENTORY_RETAIL/MANUAL items only); see createOrderSchema.
+  partnerId: z.string().uuid().nullable(),
   staffId: z.string().uuid(),
   date: z.string(),
   subtotal: z.number(),
@@ -249,7 +251,11 @@ export const createOrderItemSchema = z.object({
  * that this system never invents a second pricing engine at the call site.
  */
 export const createOrderSchema = z.object({
-  partnerId: z.string().uuid(),
+  // Owner (2026-08-20, "فاتورة بدون إسم العميل") — omitted/null is only
+  // valid when every item is INVENTORY_RETAIL or MANUAL (a walk-in/cash
+  // sale); enforced server-side in orderService.createOrder, since that's
+  // the only place both the partner and the items are known together.
+  partnerId: z.string().uuid().nullable().optional(),
   branchId: z.string().uuid(),
   discountPercent: z.number().min(0).max(100).optional(),
   vatOn: z.boolean().optional(),

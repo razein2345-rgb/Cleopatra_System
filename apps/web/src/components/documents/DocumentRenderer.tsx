@@ -200,7 +200,7 @@ export function DocumentRenderer({
         <div className="mb-4 flex items-start justify-between">
           <div>
             <div className="text-[var(--doc-accent)] text-lg font-bold">
-              {partnerSalutation} / {partnerName}
+              {partnerSalutation ? `${partnerSalutation} / ${partnerName}` : partnerName}
             </div>
             {partnerPhone && (
               <div className="text-xs">

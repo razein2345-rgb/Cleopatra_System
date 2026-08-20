@@ -14,6 +14,7 @@ import {
   IllegalStatusTransitionError,
   mapQuotationToDto,
   nextQuotationNumber,
+  PartnerRequiredError,
   QUOTATION_INCLUDE,
   QuotationItemValidationError,
   recordQuotationPrint,
@@ -53,6 +54,10 @@ function handleQuotationItemError(err: unknown, res: Response): boolean {
   }
   if (err instanceof PricingInputError) {
     res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_PRICING_INPUT' } });
+    return true;
+  }
+  if (err instanceof PartnerRequiredError) {
+    res.status(400).json({ success: false, error: { message: err.message, code: 'PARTNER_REQUIRED' } });
     return true;
   }
   return false;
@@ -115,8 +120,10 @@ export async function createQuotation(req: Request, res: Response) {
   const auth = req.auth!;
   const input = createQuotationSchema.parse(req.body);
 
-  const partner = await loadPartnerOr404(input.partnerId, res);
-  if (!partner) return;
+  if (input.partnerId) {
+    const partner = await loadPartnerOr404(input.partnerId, res);
+    if (!partner) return;
+  }
 
   if (!canAccessBranch(auth, input.branchId)) {
     forbidBranch(res);
