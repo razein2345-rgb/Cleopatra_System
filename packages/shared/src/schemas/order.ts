@@ -301,6 +301,21 @@ export const updateOrderSchema = z.object({
 });
 
 /**
+ * Owner (2026-08-20, "فاتورة كانت معمولة... كانت فاتورة بدون عميل فا
+ * محتاج اعدلها واخليها بدون عميل") — a dedicated single-purpose mutation
+ * (mirrors `setQuotationStatusSchema`'s own separateness from the full
+ * item-replacement edit above), not folded into `updateOrderSchema`: this
+ * never touches items/pricing, just which customer (if any) the invoice is
+ * attributed to. `null` is only accepted server-side when every item is
+ * INVENTORY_RETAIL/MANUAL — same rule `createOrderSchema.partnerId`
+ * enforces at creation time (see `orderService.ts`'s
+ * `assertPartnerPresentUnlessWalkIn`).
+ */
+export const setOrderPartnerSchema = z.object({
+  partnerId: z.string().uuid().nullable(),
+});
+
+/**
  * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — the one mutation path
  * for an OrderItem's own production progress; deliberately separate from
  * `updateOrderSchema` (which replaces the whole cart) since this touches
@@ -315,12 +330,20 @@ export const updateOrderItemProductionSchema = z.object({
   status: orderItemProductionStatusSchema.optional(),
 });
 
-/** UX_PRODUCT_AUDIT.md § مشكلة 2.1 — the owner-only Dashboard financial widget's sales figures. */
+/**
+ * UX_PRODUCT_AUDIT.md § مشكلة 2.1 — the owner-only Dashboard financial
+ * widget's sales figures. `receivablesTotal`/`receivablesCount` (owner,
+ * 2026-08-20: "المفروض يبانلي انا ليا كام مستحقات عند الناس") — sum of
+ * every non-cancelled order's `remainingBalance` still above zero, across
+ * all time (not scoped to today/week like the sales figures above it).
+ */
 export const salesSummarySchema = z.object({
   todayTotal: z.number(),
   todayCount: z.number().int(),
   weekTotal: z.number(),
   weekCount: z.number().int(),
+  receivablesTotal: z.number(),
+  receivablesCount: z.number().int(),
 });
 
 export type SalesSummary = z.infer<typeof salesSummarySchema>;
@@ -332,4 +355,5 @@ export type Order = z.infer<typeof orderSchema>;
 export type CreateOrderItemInput = z.infer<typeof createOrderItemSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;
+export type SetOrderPartnerInput = z.infer<typeof setOrderPartnerSchema>;
 export type UpdateOrderItemProductionInput = z.infer<typeof updateOrderItemProductionSchema>;

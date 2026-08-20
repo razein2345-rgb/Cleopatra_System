@@ -95,6 +95,11 @@ export const setQuotationApprovalStateSchema = z.object({
   approvalState: quotationApprovalStateSchema,
 });
 
+/** Owner (2026-08-20, "خليها بدون عميل") — see `setOrderPartnerSchema`'s doc comment, identical rule. */
+export const setQuotationPartnerSchema = z.object({
+  partnerId: z.string().uuid().nullable(),
+});
+
 export type QuotationStatus = z.infer<typeof quotationStatusSchema>;
 export type QuotationApprovalState = z.infer<typeof quotationApprovalStateSchema>;
 export type Quotation = z.infer<typeof quotationSchema>;
@@ -102,3 +107,4 @@ export type CreateQuotationInput = z.infer<typeof createQuotationSchema>;
 export type UpdateQuotationInput = z.infer<typeof updateQuotationSchema>;
 export type SetQuotationStatusInput = z.infer<typeof setQuotationStatusSchema>;
 export type SetQuotationApprovalStateInput = z.infer<typeof setQuotationApprovalStateSchema>;
+export type SetQuotationPartnerInput = z.infer<typeof setQuotationPartnerSchema>;

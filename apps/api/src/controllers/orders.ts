@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { createOrderSchema, createPaymentSchema, hasPermission, updateOrderSchema } from '@cleopatra/shared';
+import { createOrderSchema, createPaymentSchema, hasPermission, setOrderPartnerSchema, updateOrderSchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
   createOrder,
@@ -15,6 +15,7 @@ import {
   PricingInputError,
   recordPayment,
   resolveItemCatalogNames,
+  setOrderPartner,
   updateOrder,
 } from '../services/orderService.js';
 import { QuotationItemValidationError, validateQuotationItemRefs } from '../services/quotationService.js';
@@ -215,6 +216,58 @@ export async function updateOrderHandler(req: Request<{ id: string }>, res: Resp
     branchId: updated.branchId,
     partnerId: updated.partnerId,
     newValue: { invoiceNumber: updated.invoiceNumber, itemCount: input.items.length },
+  });
+
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: updated.id }, include: ORDER_INCLUDE });
+  res.json({ success: true, data: mapOrderToDto(order, true) });
+}
+
+/**
+ * Owner (2026-08-20, "فاتورة كانت معمولة عند نادي المهندسين... محتاج
+ * اعدلها واخليها بدون عميل") — the real UI path for the manual DB
+ * correction done the first time this came up. Deliberately separate from
+ * `updateOrderHandler` (full item replacement) — changes only which
+ * customer (if any) the invoice is attributed to.
+ */
+export async function setOrderPartnerHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const orderBranchId = await loadOrderBranchOr404(req.params.id, res);
+  if (!orderBranchId) return;
+  if (!canAccessBranch(auth, orderBranchId)) {
+    forbidBranch(res);
+    return;
+  }
+
+  const input = setOrderPartnerSchema.parse(req.body);
+
+  if (input.partnerId) {
+    const partner = await loadPartnerOr404(input.partnerId, res);
+    if (!partner) return;
+  }
+
+  let updated;
+  try {
+    updated = await setOrderPartner(req.params.id, input.partnerId);
+  } catch (err) {
+    if (err instanceof OrderNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof PartnerRequiredError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'PARTNER_REQUIRED' } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'Order',
+    entityId: updated.id,
+    action: 'UPDATE',
+    performedById: auth.staffId,
+    branchId: updated.branchId,
+    partnerId: updated.partnerId,
+    newValue: { partnerId: updated.partnerId, invoiceNumber: updated.invoiceNumber },
   });
 
   const order = await prisma.order.findUniqueOrThrow({ where: { id: updated.id }, include: ORDER_INCLUDE });

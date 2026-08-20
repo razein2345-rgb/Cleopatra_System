@@ -4,6 +4,7 @@ import { hasPermission, quotationStatusSchema, resolveRequiredQuantity } from '@
 import {
   createQuotationSchema,
   setQuotationApprovalStateSchema,
+  setQuotationPartnerSchema,
   setQuotationStatusSchema,
   updateQuotationSchema,
 } from '@cleopatra/shared';
@@ -22,6 +23,7 @@ import {
   validateQuotationItemRefs,
 } from '../services/quotationService.js';
 import {
+  assertPartnerPresentUnlessWalkIn,
   buildOrderItemCreate,
   mapOrderToDto,
   nextInvoiceNumber,
@@ -368,6 +370,62 @@ export async function setQuotationApprovalState(req: Request<{ id: string }>, re
     partnerId: updated.partnerId,
     previousValue: { approvalState: existing.approvalState },
     newValue: { approvalState: input.approvalState },
+  });
+
+  res.json({ success: true, data: mapQuotationToDto(updated, true) });
+}
+
+/**
+ * Owner (2026-08-20, "فاتورة كانت معمولة عند نادي المهندسين... محتاج اعدلها
+ * واخليها بدون عميل") — same walk-in-toggle path as `setOrderPartnerHandler`
+ * (orders.ts), for Quotations. `null` only accepted when every existing
+ * item is INVENTORY_RETAIL/MANUAL, enforced by the same
+ * `assertPartnerPresentUnlessWalkIn` creation-time uses.
+ */
+export async function setQuotationPartner(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const existing = await prisma.quotation.findUnique({ where: { id: req.params.id }, include: { items: true } });
+  if (!existing || existing.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
+    return;
+  }
+
+  const input = setQuotationPartnerSchema.parse(req.body);
+
+  if (input.partnerId) {
+    const partner = await loadPartnerOr404(input.partnerId, res);
+    if (!partner) return;
+  }
+
+  try {
+    assertPartnerPresentUnlessWalkIn(
+      input.partnerId,
+      existing.items.map((item) => ({ pricing: { kind: (item.breakdown as { kind?: string } | null)?.kind ?? '' } })),
+    );
+  } catch (err) {
+    if (handleQuotationItemError(err, res)) return;
+    throw err;
+  }
+
+  const updated = await prisma.quotation.update({
+    where: { id: existing.id },
+    data: { partnerId: input.partnerId },
+    include: QUOTATION_INCLUDE,
+  });
+
+  await recordAudit({
+    entityType: 'Quotation',
+    entityId: updated.id,
+    action: 'UPDATE',
+    performedById: auth.staffId,
+    branchId: updated.branchId,
+    partnerId: updated.partnerId,
+    previousValue: { partnerId: existing.partnerId },
+    newValue: { partnerId: input.partnerId },
   });
 
   res.json({ success: true, data: mapQuotationToDto(updated, true) });

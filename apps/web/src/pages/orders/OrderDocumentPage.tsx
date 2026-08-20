@@ -1,15 +1,27 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, User } from '@cleopatra/shared';
+import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, PaymentMethod, User } from '@cleopatra/shared';
 import { PRODUCTION_TRACK_LABELS } from '@cleopatra/shared';
-import { apiDelete, apiGet } from '@/lib/api';
+import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Breadcrumbs, useConfirm } from '@/components/cleopatra';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Breadcrumbs, PartnerCombobox, useConfirm } from '@/components/cleopatra';
 import { DocumentRenderer, type DocumentRendererItem } from '@/components/documents/DocumentRenderer';
 import { resolveDocumentSnapshot } from '@/lib/documents/documentSnapshot';
 import { downloadDocumentAsPdf } from '@/lib/documents/exportPdf';
 import { partnerSalutation } from '@/lib/documents/partnerSalutation';
 import { useAuth } from '@/state/AuthContext';
+
+/** Owner (2026-08-20, "خليها بدون عميل") — mirrors orderService.ts's WALK_IN_ALLOWED_KINDS exactly. */
+const WALK_IN_ALLOWED_KINDS = new Set(['INVENTORY_RETAIL', 'MANUAL']);
+
+const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
+  CASH: 'كاش',
+  BANK_ACCOUNT: 'حساب بنكي',
+  VODAFONE_CASH: 'فودافون كاش',
+  INSTAPAY: 'انستاباي',
+};
+const PAYMENT_METHOD_OPTIONS = Object.keys(PAYMENT_METHOD_LABELS) as PaymentMethod[];
 
 /**
  * FEATURE-006 M9 / FEATURE-007 — the first page that actually mounts
@@ -38,6 +50,18 @@ export function OrderDocumentPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
+  /** Owner (2026-08-20, "وهل ممكن اكتب عميل فقط بلاش عميل نقدي") — toggle an existing invoice between a real customer and "عميل نقدي". */
+  const [editingPartner, setEditingPartner] = useState(false);
+  const [allPartners, setAllPartners] = useState<BusinessPartner[]>([]);
+  const [newPartnerId, setNewPartnerId] = useState('');
+  const [partnerSaving, setPartnerSaving] = useState(false);
+  const [partnerError, setPartnerError] = useState<string | null>(null);
+  /** Owner (2026-08-20, "عايز اضيف دفعة اعمل ده ازاي") — recording a payment after creation had no UI anywhere, only at composer time. */
+  const [showAddPayment, setShowAddPayment] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
+  const [paymentSaving, setPaymentSaving] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -82,6 +106,67 @@ export function OrderDocumentPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر حذف الفاتورة');
       setDeleting(false);
+    }
+  };
+
+  const canGoWalkIn = order.items.every((i) => WALK_IN_ALLOWED_KINDS.has((i.breakdown as { kind?: string } | null)?.kind ?? ''));
+
+  const startEditingPartner = () => {
+    setEditingPartner(true);
+    setPartnerError(null);
+    setNewPartnerId('');
+    if (allPartners.length === 0) {
+      apiGet<BusinessPartner[]>('/api/partners')
+        .then(setAllPartners)
+        .catch(() => undefined);
+    }
+  };
+
+  const applyPartnerChange = async (partnerId: string | null) => {
+    setPartnerSaving(true);
+    setPartnerError(null);
+    try {
+      const updated = await apiPut<Order>(`/api/orders/${order.id}/partner`, { partnerId });
+      setOrder(updated);
+      setPartner(partnerId ? (allPartners.find((p) => p.id === partnerId) ?? (await apiGet<BusinessPartner>(`/api/partners/${partnerId}`))) : null);
+      setEditingPartner(false);
+    } catch (err) {
+      setPartnerError(err instanceof Error ? err.message : 'تعذر تغيير العميل');
+    } finally {
+      setPartnerSaving(false);
+    }
+  };
+
+  const confirmGoWalkIn = async () => {
+    if (
+      !(await confirm({
+        title: 'تحويل الفاتورة لفاتورة نقدية بدون عميل؟',
+        description: partner ? `هتتشال من سجل "${partner.nameAr}".` : undefined,
+      }))
+    )
+      return;
+    await applyPartnerChange(null);
+  };
+
+  const submitPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (paymentSaving) return;
+    const amount = Number(paymentAmount);
+    if (!paymentAmount || Number.isNaN(amount) || amount <= 0) {
+      setPaymentError('اكتب مبلغ أكبر من صفر');
+      return;
+    }
+    setPaymentError(null);
+    setPaymentSaving(true);
+    try {
+      const updated = await apiPost<Order>(`/api/orders/${order.id}/payments`, { method: paymentMethod, amount });
+      setOrder(updated);
+      setShowAddPayment(false);
+      setPaymentAmount('');
+    } catch (err) {
+      setPaymentError(err instanceof Error ? err.message : 'تعذر تسجيل الدفعة');
+    } finally {
+      setPaymentSaving(false);
     }
   };
 
@@ -149,8 +234,55 @@ export function OrderDocumentPage() {
               </Link>
             )}
           </div>
+          {/* Owner (2026-08-20, "وهل ممكن اكتب عميل فقط بلاش عميل نقدي") —
+              toggle an existing invoice between a real customer and "عميل
+              نقدي" (only allowed back to walk-in when every item still
+              qualifies — same rule creation enforces). */}
+          {can('orders.edit') && (
+            <div className="mt-1">
+              {!editingPartner ? (
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">
+                    العميل: <span className="text-foreground font-medium">{partner ? partner.nameAr : 'عميل نقدي'}</span>
+                  </span>
+                  {partner ? (
+                    canGoWalkIn && (
+                      <button type="button" onClick={() => void confirmGoWalkIn()} className="text-primary text-xs hover:underline">
+                        خليها فاتورة نقدية (بدون عميل)
+                      </button>
+                    )
+                  ) : (
+                    <button type="button" onClick={startEditingPartner} className="text-primary text-xs hover:underline">
+                      + إضافة عميل
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <PartnerCombobox partners={allPartners} value={newPartnerId} onChange={setNewPartnerId} />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!newPartnerId || partnerSaving}
+                    onClick={() => void applyPartnerChange(newPartnerId)}
+                  >
+                    {partnerSaving ? 'جارٍ الحفظ…' : 'حفظ'}
+                  </Button>
+                  <Button type="button" size="sm" variant="secondary" onClick={() => setEditingPartner(false)}>
+                    إلغاء
+                  </Button>
+                </div>
+              )}
+              {partnerError && <p className="text-destructive text-xs">{partnerError}</p>}
+            </div>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {can('orders.edit') && order.remainingBalance > 0 && (
+            <Button type="button" variant="secondary" onClick={() => setShowAddPayment(true)}>
+              + تسجيل دفعة
+            </Button>
+          )}
           {can('orders.edit') && (
             <Button type="button" variant="secondary" onClick={() => navigate(`/orders/new?editOrder=${order.id}`)}>
               تعديل الفاتورة
@@ -206,6 +338,56 @@ export function OrderDocumentPage() {
         paymentTerms={order.paymentTerms}
         deliveryDate={order.deliveryDate}
       />
+      {showAddPayment && (
+        <Dialog open onOpenChange={(open) => !open && setShowAddPayment(false)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>تسجيل دفعة على فاتورة {order.invoiceNumber}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={submitPayment} className="space-y-3">
+              {paymentError && <p className="text-destructive text-sm">{paymentError}</p>}
+              <p className="text-muted-foreground text-sm">
+                المتبقي: <span className="font-bold" dir="ltr">{order.remainingBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span> ج.م
+              </p>
+              <label className="block space-y-1 text-sm">
+                <span className="text-muted-foreground">المبلغ</span>
+                <input
+                  autoFocus
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  required
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="block space-y-1 text-sm">
+                <span className="text-muted-foreground">طريقة التحصيل</span>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                >
+                  {PAYMENT_METHOD_OPTIONS.map((m) => (
+                    <option key={m} value={m}>
+                      {PAYMENT_METHOD_LABELS[m]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex gap-2">
+                <Button type="submit" disabled={paymentSaving}>
+                  {paymentSaving ? 'جارٍ الحفظ…' : 'تأكيد الدفعة'}
+                </Button>
+                <Button type="button" variant="secondary" onClick={() => setShowAddPayment(false)}>
+                  إلغاء
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

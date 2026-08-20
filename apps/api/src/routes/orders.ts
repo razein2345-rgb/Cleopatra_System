@@ -8,6 +8,7 @@ import {
   getSalesSummaryHandler,
   listOrders,
   recordPaymentHandler,
+  setOrderPartnerHandler,
   updateOrderHandler,
 } from '../controllers/orders.js';
 
@@ -33,3 +34,6 @@ ordersRouter.delete('/:id', requirePermission('orders.delete'), deleteOrderHandl
 // (recording a payment changes the order's collected state, the same
 // authority level as editing it).
 ordersRouter.post('/:id/payments', requirePermission('orders.edit'), recordPaymentHandler);
+// Owner (2026-08-20, "فاتورة كانت معمولة عند نادي المهندسين... محتاج اعدلها
+// واخليها بدون عميل") — assign/remove the customer on an existing invoice.
+ordersRouter.put('/:id/partner', requirePermission('orders.edit'), setOrderPartnerHandler);

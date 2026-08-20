@@ -918,6 +918,32 @@ export async function updateOrder(
   return { id: orderId, invoiceNumber: existing.invoiceNumber, branchId: existing.branchId, partnerId: existing.partnerId };
 }
 
+/**
+ * Owner (2026-08-20, "فاتورة كانت معمولة عند نادي المهندسين... محتاج
+ * اعدلها واخليها بدون عميل") — the first request was a one-off manual DB
+ * correction; this is the real UI path for it going forward. Deliberately
+ * separate from `updateOrder` (which replaces the whole item set) — this
+ * only ever changes which customer (if any) the invoice is attributed to.
+ * Same walk-in rule as creation: `null` only accepted when every existing
+ * item is INVENTORY_RETAIL/MANUAL.
+ */
+export async function setOrderPartner(orderId: string, partnerId: string | null): Promise<{ id: string; branchId: string; partnerId: string | null; invoiceNumber: string }> {
+  const existing = await prisma.order.findUnique({ where: { id: orderId }, include: { items: true } });
+  if (!existing || existing.isDeleted) throw new OrderNotFoundError();
+
+  assertPartnerPresentUnlessWalkIn(
+    partnerId,
+    existing.items.map((item) => ({ pricing: { kind: (item.breakdown as { kind?: string } | null)?.kind ?? '' } })),
+  );
+
+  const updated = await prisma.order.update({
+    where: { id: orderId },
+    data: { partnerId },
+    select: { id: true, branchId: true, partnerId: true, invoiceNumber: true },
+  });
+  return updated;
+}
+
 export class OrderItemNotFoundError extends Error {
   constructor() {
     super('Order item not found');
@@ -1097,7 +1123,7 @@ export async function getSalesSummary(): Promise<SalesSummary> {
   startOfWeek.setDate(startOfWeek.getDate() - 6);
 
   const baseWhere = { isDeleted: false, status: { not: 'CANCELLED' as const } };
-  const [today, week] = await Promise.all([
+  const [today, week, unpaidCandidates] = await Promise.all([
     prisma.order.aggregate({
       where: { ...baseWhere, date: { gte: startOfToday } },
       _sum: { finalTotal: true },
@@ -1108,12 +1134,34 @@ export async function getSalesSummary(): Promise<SalesSummary> {
       _sum: { finalTotal: true },
       _count: true,
     }),
+    // Owner (2026-08-20, "المفروض يبانلي انا ليا كام مستحقات عند الناس") —
+    // `remainingBalance` isn't stored (computed at read time everywhere
+    // else, same discipline), so summing it requires pulling each order's
+    // own total + its payments and computing per-row, same math
+    // `mapOrderToDto` already uses.
+    prisma.order.findMany({
+      where: baseWhere,
+      select: { finalTotal: true, payments: { select: { amount: true } } },
+    }),
   ]);
+
+  let receivablesTotal = 0;
+  let receivablesCount = 0;
+  for (const order of unpaidCandidates) {
+    const paid = order.payments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
+    const remaining = order.finalTotal.toNumber() - paid;
+    if (remaining > 0) {
+      receivablesTotal += remaining;
+      receivablesCount += 1;
+    }
+  }
 
   return {
     todayTotal: today._sum.finalTotal?.toNumber() ?? 0,
     todayCount: today._count,
     weekTotal: week._sum.finalTotal?.toNumber() ?? 0,
     weekCount: week._count,
+    receivablesTotal,
+    receivablesCount,
   };
 }

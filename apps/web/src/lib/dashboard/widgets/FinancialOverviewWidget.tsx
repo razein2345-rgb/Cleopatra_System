@@ -68,7 +68,7 @@ function FinancialOverviewWidgetComponent() {
         <span className="text-sm font-bold">نظرة مالية سريعة</span>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <div>
           <p className="text-muted-foreground text-xs">رصيد الخزينة</p>
           <p className="text-xl font-bold">{balance ? fmt(balance.balance) : '—'}</p>
@@ -85,6 +85,16 @@ function FinancialOverviewWidgetComponent() {
           <p className="text-xl font-bold">
             {sales ? fmt(sales.weekTotal) : '—'}
             {sales && <span className="text-muted-foreground ms-1 text-xs font-normal">({sales.weekCount} فاتورة)</span>}
+          </p>
+        </div>
+        {/* Owner (2026-08-20, "المفروض يبانلي انا ليا كام مستحقات عند الناس") — total outstanding balance across every unpaid/partially-paid invoice. */}
+        <div>
+          <p className="text-muted-foreground text-xs">إجمالي المستحقات</p>
+          <p className={`text-xl font-bold ${sales && sales.receivablesTotal > 0 ? 'text-danger' : ''}`}>
+            {sales ? fmt(sales.receivablesTotal) : '—'}
+            {sales && sales.receivablesCount > 0 && (
+              <span className="text-muted-foreground ms-1 text-xs font-normal">({sales.receivablesCount} فاتورة)</span>
+            )}
           </p>
         </div>
       </div>

@@ -10,6 +10,7 @@ import {
   listQuotations,
   recordQuotationPrintHandler,
   setQuotationApprovalState,
+  setQuotationPartner,
   setQuotationStatus,
   updateQuotation,
 } from '../controllers/quotations.js';
@@ -40,6 +41,10 @@ quotationsRouter.put(
   requirePermission('quotations.edit'),
   setQuotationApprovalState,
 );
+// Owner (2026-08-20, "فاتورة كانت معمولة عند نادي المهندسين... محتاج
+// اعدلها واخليها بدون عميل") — assign/remove the customer on an existing
+// quotation, same as the Order counterpart.
+quotationsRouter.put('/:id/partner', requirePermission('quotations.edit'), setQuotationPartner);
 quotationsRouter.post(
   '/:id/versions',
   requirePermission('quotations.edit'),

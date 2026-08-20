@@ -10,7 +10,7 @@ import type {
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { useConfirm } from '@/components/cleopatra';
+import { PartnerCombobox, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import {
   ITEM_TYPE_LABELS,
@@ -18,6 +18,9 @@ import {
   QUOTATION_APPROVAL_LABELS,
   QUOTATION_STATUS_LABELS,
 } from './quotationLabels';
+
+/** Owner (2026-08-20, "خليها بدون عميل") — mirrors orderService.ts's WALK_IN_ALLOWED_KINDS exactly. */
+const WALK_IN_ALLOWED_KINDS = new Set(['INVENTORY_RETAIL', 'MANUAL']);
 
 /**
  * FEATURE-007 — item creation/pricing now happens exclusively through the
@@ -60,7 +63,16 @@ export function QuotationDetail({ quotationId }: { quotationId: string }) {
   return (
     <div className="space-y-4">
       <QuotationLifecycle quotation={quotation} canEdit={canEdit} onChanged={setQuotation} />
-      <QuotationSummary quotation={quotation} partner={partner} canEdit={canEdit} onSaved={setQuotation} />
+      <QuotationSummary
+        quotation={quotation}
+        partner={partner}
+        canEdit={canEdit}
+        onSaved={setQuotation}
+        onPartnerChanged={(nextPartner, nextQuotation) => {
+          setPartner(nextPartner);
+          setQuotation(nextQuotation);
+        }}
+      />
     </div>
   );
 }
@@ -353,12 +365,15 @@ function QuotationSummary({
   partner,
   canEdit,
   onSaved,
+  onPartnerChanged,
 }: {
   quotation: Quotation;
   partner: BusinessPartner | null;
   canEdit: boolean;
   onSaved: (quotation: Quotation) => void;
+  onPartnerChanged: (partner: BusinessPartner | null, quotation: Quotation) => void;
 }) {
+  const confirm = useConfirm();
   const [validUntil, setValidUntil] = useState(quotation.validUntil?.slice(0, 10) ?? '');
   const [discountPercent, setDiscountPercent] = useState(quotation.discountPercent.toString());
   const [vatOn, setVatOn] = useState(quotation.vatOn);
@@ -366,6 +381,54 @@ function QuotationSummary({
   const [internalNotes, setInternalNotes] = useState(quotation.internalNotes ?? '');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  /** Owner (2026-08-20, "وهل ممكن اكتب عميل فقط بلاش عميل نقدي") — toggle an existing quotation between a real customer and "عميل نقدي". */
+  const [editingPartner, setEditingPartner] = useState(false);
+  const [allPartners, setAllPartners] = useState<BusinessPartner[]>([]);
+  const [newPartnerId, setNewPartnerId] = useState('');
+  const [partnerSaving, setPartnerSaving] = useState(false);
+  const [partnerError, setPartnerError] = useState<string | null>(null);
+
+  const canGoWalkIn = quotation.items.every((i) => WALK_IN_ALLOWED_KINDS.has((i.breakdown as { kind?: string } | null)?.kind ?? ''));
+
+  const startEditingPartner = () => {
+    setEditingPartner(true);
+    setPartnerError(null);
+    setNewPartnerId('');
+    if (allPartners.length === 0) {
+      apiGet<BusinessPartner[]>('/api/partners')
+        .then(setAllPartners)
+        .catch(() => undefined);
+    }
+  };
+
+  const applyPartnerChange = async (partnerId: string | null) => {
+    setPartnerSaving(true);
+    setPartnerError(null);
+    try {
+      const updated = await apiPut<Quotation>(`/api/quotations/${quotation.id}/partner`, { partnerId });
+      const nextPartner = partnerId
+        ? (allPartners.find((p) => p.id === partnerId) ?? (await apiGet<BusinessPartner>(`/api/partners/${partnerId}`)))
+        : null;
+      onPartnerChanged(nextPartner, updated);
+      setEditingPartner(false);
+    } catch (err) {
+      setPartnerError(err instanceof Error ? err.message : 'تعذر تغيير العميل');
+    } finally {
+      setPartnerSaving(false);
+    }
+  };
+
+  const confirmGoWalkIn = async () => {
+    if (
+      !(await confirm({
+        title: 'تحويل عرض السعر لعرض نقدي بدون عميل؟',
+        description: partner ? `هيتشال من سجل "${partner.nameAr}".` : undefined,
+      }))
+    )
+      return;
+    await applyPartnerChange(null);
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -397,9 +460,34 @@ function QuotationSummary({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="space-y-1 text-sm">
           <span className="text-muted-foreground">العميل</span>
-          <p className="border-input bg-muted/30 w-full rounded-md border px-3 py-2">
-            {partner ? `${partner.nameAr}${partner.nameEn ? ` (${partner.nameEn})` : ''}` : 'عميل نقدي'}
-          </p>
+          {!editingPartner ? (
+            <div className="border-input bg-muted/30 flex w-full flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2">
+              <span>{partner ? `${partner.nameAr}${partner.nameEn ? ` (${partner.nameEn})` : ''}` : 'عميل نقدي'}</span>
+              {canEdit &&
+                (partner ? (
+                  canGoWalkIn && (
+                    <button type="button" onClick={() => void confirmGoWalkIn()} className="text-primary text-xs hover:underline">
+                      خليه بدون عميل
+                    </button>
+                  )
+                ) : (
+                  <button type="button" onClick={startEditingPartner} className="text-primary text-xs hover:underline">
+                    + إضافة عميل
+                  </button>
+                ))}
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <PartnerCombobox partners={allPartners} value={newPartnerId} onChange={setNewPartnerId} />
+              <Button type="button" size="sm" disabled={!newPartnerId || partnerSaving} onClick={() => void applyPartnerChange(newPartnerId)}>
+                {partnerSaving ? 'جارٍ الحفظ…' : 'حفظ'}
+              </Button>
+              <Button type="button" size="sm" variant="secondary" onClick={() => setEditingPartner(false)}>
+                إلغاء
+              </Button>
+            </div>
+          )}
+          {partnerError && <p className="text-destructive text-xs">{partnerError}</p>}
         </div>
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground">صالح حتى (اختياري)</span>
