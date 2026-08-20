@@ -132,6 +132,23 @@ function FullTreasuryView() {
         </div>
       </div>
 
+      {/* Owner (2026-08-20, "لما ادوس حركة جديدة يظهرها قدامي على طول
+          مش انا اللي انزل علشان اوصلها") — this form used to render
+          below the balance cards, wallet cards, and branch/day-closure
+          card, so clicking the button never actually scrolled it into
+          view. Moved above all of that, same fix as the inventory
+          "تسجيل بضاعة" form. */}
+      {showForm && (
+        <NewEntryForm
+          branches={branches}
+          partners={partners}
+          onCreated={() => {
+            setShowForm(false);
+            refreshAll();
+          }}
+        />
+      )}
+
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Card className="p-4">
           <p className="text-muted-foreground text-sm">الرصيد الحالي</p>
@@ -195,17 +212,6 @@ function FullTreasuryView() {
             refreshSignal={closureRefreshTick}
           />
         </div>
-      )}
-
-      {showForm && (
-        <NewEntryForm
-          branches={branches}
-          partners={partners}
-          onCreated={() => {
-            setShowForm(false);
-            refreshAll();
-          }}
-        />
       )}
 
       {showAdvanceForm && (
@@ -842,6 +848,7 @@ function NewEntryForm({
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground">النوع</span>
           <select
+            autoFocus
             value={type}
             onChange={(e) => setType(e.target.value as TreasuryType)}
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
