@@ -66,7 +66,7 @@ export function CommandPalette({ entries, open, onOpenChange }: CommandPalettePr
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} title="البحث السريع">
-      <CommandInput placeholder="ابحث عن صفحة، عميل، عرض سعر، منتج أو خدمة…" />
+      <CommandInput placeholder="ابحث عن صفحة، عميل، طلب، أمر شغل، صنف مخزون، موظف أو أي حاجة تانية…" />
       <CommandList>
         <CommandEmpty>لا توجد نتائج مطابقة.</CommandEmpty>
 
