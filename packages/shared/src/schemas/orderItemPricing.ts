@@ -260,6 +260,22 @@ export const inventoryRetailPricingInputSchema = z.object({
   ...extraServiceFields,
 });
 
+/**
+ * Owner (2026-08-20, "اقدر ازود على الفاتورة حركة اكتبها يدوي زي حركات
+ * الخزينة") — a free-text line with a manually-typed price, no pricing
+ * formula behind it at all (the manual amount *is* the total, same "no
+ * calculation, just what the caller typed" discipline `extraServiceFields`
+ * already uses elsewhere — this is that same idea promoted to a full line
+ * item instead of an add-on to one). `itemType` (the parent `OrderItem`
+ * field every kind already has) is the line's own label — no separate
+ * description field needed here.
+ */
+export const manualPricingInputSchema = z.object({
+  kind: z.literal('MANUAL'),
+  unitPrice: z.number().nonnegative(),
+  quantity: z.number().int().positive(),
+});
+
 export const orderItemPricingInputSchema = z.discriminatedUnion('kind', [
   loosePaperPricingInputSchema,
   notebookPricingInputSchema,
@@ -269,6 +285,7 @@ export const orderItemPricingInputSchema = z.discriminatedUnion('kind', [
   digitalPricingInputSchema,
   productOrServicePricingInputSchema,
   inventoryRetailPricingInputSchema,
+  manualPricingInputSchema,
 ]);
 
 // `BoardMaterial` itself is exported from `pricing/boardsCostCalculation.js`
@@ -284,4 +301,5 @@ export type DigitalPricingInput = z.infer<typeof digitalPricingInputSchema>;
 export type DigitalComponentPricingInput = z.infer<typeof digitalComponentSchema>;
 export type ProductOrServicePricingInput = z.infer<typeof productOrServicePricingInputSchema>;
 export type InventoryRetailPricingInput = z.infer<typeof inventoryRetailPricingInputSchema>;
+export type ManualPricingInput = z.infer<typeof manualPricingInputSchema>;
 export type OrderItemPricingInput = z.infer<typeof orderItemPricingInputSchema>;

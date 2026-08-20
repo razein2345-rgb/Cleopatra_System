@@ -613,5 +613,19 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         realSizeLabel: null,
       };
     }
+    // Owner (2026-08-20, "اقدر ازود على الفاتورة حركة اكتبها يدوي زي
+    // حركات الخزينة") — no formula, no catalog: the caller-typed
+    // unitPrice × quantity *is* the total.
+    case 'MANUAL': {
+      const total = pricing.unitPrice * pricing.quantity;
+      return {
+        total,
+        breakdown: { kind: pricing.kind, unitPrice: pricing.unitPrice, quantity: pricing.quantity, total },
+        sheetsNeeded: null,
+        inventoryItemId: null,
+        sizeFamilyKey: null,
+        realSizeLabel: null,
+      };
+    }
   }
 }

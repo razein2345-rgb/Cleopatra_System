@@ -69,6 +69,7 @@ const KIND_LABELS: Record<PricingKind, string> = {
   PRODUCT: 'منتج جاهز',
   SERVICE: 'خدمة',
   INVENTORY_RETAIL: 'بضاعة من المخزون',
+  MANUAL: 'بند يدوي',
 };
 
 /**
@@ -279,6 +280,11 @@ interface DraftItem {
   attachmentFileName: string;
   attachmentUploading: boolean;
   attachmentError: string | null;
+  // MANUAL — owner (2026-08-20, "اقدر ازود على الفاتورة حركة اكتبها يدوي
+  // زي حركات الخزينة"): a free-text line (itemType above is its label),
+  // no formula — this is the whole price, quantity reuses the shared
+  // `quantity` field above.
+  unitPrice: string;
 }
 
 let draftKeySeq = 0;
@@ -346,6 +352,7 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     attachmentFileName: '',
     attachmentUploading: false,
     attachmentError: null,
+    unitPrice: '',
   };
 }
 
@@ -357,9 +364,10 @@ function extraServiceFieldsOf(d: DraftItem) {
   return { extraServices: enabled.length > 0 ? enabled.map((s) => ({ label: s.label, amount: toNum(s.amount) })) : undefined };
 }
 
-/** Client mirror of `pricingEngineService.ts`'s `sumExtraCosts`, used only for the live preview. */
-function sumExtraCosts(pricing: { extraServices?: { label: string; amount: number }[] }): number {
-  return (pricing.extraServices ?? []).reduce((sum, s) => sum + s.amount, 0);
+/** Client mirror of `pricingEngineService.ts`'s `sumExtraCosts`, used only for the live preview. MANUAL has no `extraServices` concept at all (see its own schema comment) — `in` narrows that out instead of a structural type every kind would otherwise need to share at least one property with. */
+function sumExtraCosts(pricing: OrderItemPricingInput): number {
+  if (!('extraServices' in pricing) || !pricing.extraServices) return 0;
+  return pricing.extraServices.reduce((sum, s) => sum + s.amount, 0);
 }
 
 /** Narrows a `DraftItem` into a real `OrderItemPricingInput` — returns null while required fields for that kind aren't filled in yet (not an error, just "not priceable yet"). */
@@ -532,6 +540,9 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
     case 'INVENTORY_RETAIL':
       if (!d.inventoryItemId || !d.quantity) return null;
       return { kind: 'INVENTORY_RETAIL', inventoryItemId: d.inventoryItemId, quantity: toNum(d.quantity), ...extra };
+    case 'MANUAL':
+      if (!d.unitPrice || !d.quantity) return null;
+      return { kind: 'MANUAL', unitPrice: toNum(d.unitPrice), quantity: toNum(d.quantity) };
   }
 }
 
@@ -696,6 +707,10 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       break;
     case 'INVENTORY_RETAIL':
       d.inventoryItemId = p.inventoryItemId;
+      d.quantity = String(p.quantity);
+      break;
+    case 'MANUAL':
+      d.unitPrice = String(p.unitPrice);
       d.quantity = String(p.quantity);
       break;
   }
@@ -957,6 +972,10 @@ function pricingPreviewFromInput(
         const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
         return { total, error: null, result: { unitPrice, extraCosts, total } };
       }
+      case 'MANUAL': {
+        const total = pricing.unitPrice * pricing.quantity;
+        return { total, error: null, result: { unitPrice: pricing.unitPrice, total } };
+      }
     }
   } catch (err) {
     return { total: 0, error: err instanceof Error ? err.message : 'تعذر حساب السعر', result: null };
@@ -986,6 +1005,8 @@ function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Se
       return `${services.find((s) => s.id === d.serviceId)?.name ?? d.itemType} × ${d.quantity}`;
     case 'INVENTORY_RETAIL':
       return `${d.itemType || KIND_LABELS.INVENTORY_RETAIL} × ${d.quantity}`;
+    case 'MANUAL':
+      return `${d.itemType || KIND_LABELS.MANUAL} × ${d.quantity}`;
   }
 }
 
@@ -1027,6 +1048,8 @@ function describeFromPricingInput(
       return `${services.find((s) => s.id === serviceId)?.name ?? itemType} × ${pricing.quantity}`;
     case 'INVENTORY_RETAIL':
       return `${itemType || KIND_LABELS.INVENTORY_RETAIL} × ${pricing.quantity}`;
+    case 'MANUAL':
+      return `${itemType || KIND_LABELS.MANUAL} × ${pricing.quantity}`;
   }
 }
 
@@ -1066,8 +1089,13 @@ function cartLineBreakdownRows(line: CartLine): { costRows: { label: string; val
 
 /** Loosely-typed shape of everything `computeItemPricing` might have merged into a frozen `breakdown` — used only when reconstructing an existing item for editing (see `reconstructPricingInput` below). */
 interface StoredBreakdown {
-  kind?: 'PRODUCT' | 'SERVICE' | 'INVENTORY_RETAIL';
+  kind?: 'PRODUCT' | 'SERVICE' | 'INVENTORY_RETAIL' | 'MANUAL';
   quantity?: number;
+  // MANUAL only — unlike PRODUCT/SERVICE/INVENTORY_RETAIL (which re-price
+  // from the live catalog on edit, see reconstructPricingInput's own doc
+  // comment), a manual line's price has no live source to recompute from,
+  // so it's frozen and faithfully restored on edit instead.
+  unitPrice?: number;
   colorCount?: number;
   sides?: 1 | 2;
   isNewDesign?: boolean;
@@ -1148,7 +1176,8 @@ interface StoredBreakdown {
  * catalog option(s) they were originally split across doesn't.
  */
 function inferStoredKind(sizeFamilyKey: string | null, breakdown: StoredBreakdown): PricingKind | null {
-  if (breakdown.kind === 'PRODUCT' || breakdown.kind === 'SERVICE' || breakdown.kind === 'INVENTORY_RETAIL') return breakdown.kind;
+  if (breakdown.kind === 'PRODUCT' || breakdown.kind === 'SERVICE' || breakdown.kind === 'INVENTORY_RETAIL' || breakdown.kind === 'MANUAL')
+    return breakdown.kind;
   if ('material' in breakdown) return 'BOARDS';
   // Checked before FOLDER — both freeze `sellophaneEnabled`, but only
   // DIGITAL freezes a `components` array (2026-08-17, multi-component —
@@ -1276,6 +1305,8 @@ function reconstructPricingInput(
     case 'INVENTORY_RETAIL':
       if (!inventoryItemId) return null;
       return { kind: 'INVENTORY_RETAIL', inventoryItemId, quantity: b.quantity ?? 1, ...extra };
+    case 'MANUAL':
+      return { kind: 'MANUAL', unitPrice: b.unitPrice ?? 0, quantity: b.quantity ?? 1 };
   }
 }
 
@@ -3771,6 +3802,36 @@ function NewOrderForm({
             </div>
           )}
 
+          {/* Owner (2026-08-20, "اقدر ازود على الفاتورة حركة اكتبها يدوي
+              زي حركات الخزينة") — free-text line (اسم البند above is its
+              label), manually-priced, no formula, no catalog. */}
+          {draft.kind === 'MANUAL' && (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">السعر</span>
+                <input
+                  autoFocus
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.unitPrice}
+                  onChange={(e) => updateDraft({ unitPrice: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              <label className="space-y-1 text-sm">
+                <span className="text-muted-foreground">الكمية</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.quantity}
+                  onChange={(e) => updateDraft({ quantity: e.target.value })}
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+            </div>
+          )}
+
           {/* صيغة تكلفة الطباعة الحية */}
           {hasPrintSection && result && (typeof result.zincCost === 'number' || typeof result.printCost === 'number') && (
             <p className="bg-muted/40 rounded-md p-2 text-xs" dir="rtl">
@@ -3779,7 +3840,8 @@ function NewOrderForm({
             </p>
           )}
 
-          {/* الخدمات الإضافية — قائمة قابلة للإدارة من الإعدادات (owner، 2026-08-17)، ومفلترة حسب القسم النشط (owner، 2026-08-20: "عايز الخدمات الإضافية دي على حسب القسم") — بند فاضي applicableTracks معناه يظهر لكل الأقسام. */}
+          {/* الخدمات الإضافية — قائمة قابلة للإدارة من الإعدادات (owner، 2026-08-17)، ومفلترة حسب القسم النشط (owner، 2026-08-20: "عايز الخدمات الإضافية دي على حسب القسم") — بند فاضي applicableTracks معناه يظهر لكل الأقسام. مش متاحة للبند اليدوي (MANUAL) — السعر كله بيتكتب يدوي أصلاً، مفيش مفهوم "إضافي" عليه. */}
+          {draft.kind !== 'MANUAL' && (
           <div className="space-y-2">
             <p className="text-sm font-medium">الخدمات الإضافية</p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -3827,6 +3889,7 @@ function NewOrderForm({
               )}
             </div>
           </div>
+          )}
 
           {hasPrintSection && (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">

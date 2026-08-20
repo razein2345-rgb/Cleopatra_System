@@ -46,6 +46,7 @@ const UNAMBIGUOUS_TRACK_BY_KIND: Partial<Record<string, ProductionTrack>> = {
   BOARDS: 'BOARDS_SIGNAGE',
   SERVICE: 'SERVICES',
   INVENTORY_RETAIL: undefined, // must resolve to no track at all
+  MANUAL: undefined, // same — a manual/custom line is never a production job
 };
 
 function assertProductionTrackConsistentWithKind(kind: string, productionTrack: ProductionTrack | null | undefined): void {

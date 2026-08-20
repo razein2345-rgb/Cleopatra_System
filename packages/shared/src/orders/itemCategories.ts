@@ -123,6 +123,16 @@ export const ORDER_ITEM_CATEGORIES: OrderItemParentTab[] = [
     kind: 'PRODUCT',
     productionTrack: 'SUBLIMATION_GIFTS',
   },
+  // Owner (2026-08-20, "اقدر ازود على الفاتورة حركة اكتبها يدوي زي حركات
+  // الخزينة") — a free-text line, manually-priced, no catalog and no
+  // pricing formula. No `productionTrack` — same reasoning as
+  // INVENTORY_RETAIL: never a production job.
+  {
+    id: 'MANUAL',
+    label: 'بند يدوي',
+    status: 'ready',
+    kind: 'MANUAL',
+  },
 ];
 
 /** Looks up which `ProductionTrack` a parent tab's items resolve to — the one function both the composer (client-side stamping) and the server (validation) call, so they can never disagree. */
