@@ -10,6 +10,10 @@ import type {
   CreateOrderTemplateInput,
   CreatePaymentInput,
   CreateQuotationInput,
+  DigitalColorMode,
+  DigitalPriceTierDto,
+  DigitalPrintBasis,
+  DigitalSides,
   ExtraServiceOption,
   Gender,
   InventoryItem,
@@ -116,11 +120,14 @@ const PAYMENT_METHOD_OPTIONS = Object.keys(PAYMENT_METHOD_LABELS) as PaymentMeth
  * always caller-entered per item, same as before this change.
  */
 
-/** One DIGITAL component's own draft fields (2026-08-17) — a magazine's cover/interior each get their own size/Yield/paper, computed fully independently then summed. */
+/** One DIGITAL component's own draft fields (2026-08-17; extended 2026-08-20 with printBasis/colorMode/sides — see digitalCostCalculation.ts's doc comment) — a magazine's cover/interior each get their own machine/size/material, computed fully independently then summed. */
 interface DraftDigitalComponent {
   key: string;
   label: string;
   inventoryItemId: string;
+  printBasis: DigitalPrintBasis;
+  colorMode: DigitalColorMode;
+  sides: DigitalSides;
   widthCm: string;
   heightCm: string;
   quantity: string;
@@ -136,6 +143,9 @@ function emptyDigitalComponent(label = ''): DraftDigitalComponent {
     key: `digital-component-${digitalComponentKeySeq}`,
     label,
     inventoryItemId: '',
+    printBasis: 'QUARTER',
+    colorMode: 'COLOR',
+    sides: 'SINGLE',
     widthCm: '',
     heightCm: '',
     quantity: '1',
@@ -482,16 +492,29 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...extra,
       };
     case 'DIGITAL': {
+      // "Yield" is only meaningful for the QUARTER machine (Yield-packed
+      // pieces) — A4_DIRECT/A3_DIRECT never need it, one copy is always
+      // exactly one whole sheet (owner, 2026-08-20).
       const components = d.digitalComponents
-        .filter((c) => c.inventoryItemId && c.widthCm && c.heightCm && c.quantity && c.yieldPerQuarter)
+        .filter(
+          (c) =>
+            c.inventoryItemId &&
+            c.widthCm &&
+            c.heightCm &&
+            c.quantity &&
+            (c.printBasis !== 'QUARTER' || c.yieldPerQuarter),
+        )
         .map((c, idx) => ({
           label: c.label.trim() || `المكوّن ${idx + 1}`,
           inventoryItemId: c.inventoryItemId,
+          printBasis: c.printBasis,
+          colorMode: c.colorMode,
+          sides: c.sides,
           pieceWidthCm: toNum(c.widthCm),
           pieceHeightCm: toNum(c.heightCm),
           quantity: toNum(c.quantity),
-          yieldPerQuarter: toNum(c.yieldPerQuarter),
-          sellophaneEnabled: c.sellophaneEnabled,
+          yieldPerQuarter: c.printBasis === 'QUARTER' ? toNum(c.yieldPerQuarter) : undefined,
+          sellophaneEnabled: c.printBasis === 'QUARTER' ? c.sellophaneEnabled : false,
           boshrPricePerPiece: toOptionalNum(c.boshrPricePerPiece),
         }));
       if (components.length === 0 || components.length !== d.digitalComponents.length) return null;
@@ -656,10 +679,13 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       d.digitalComponents = p.components.map((c) => ({
         ...emptyDigitalComponent(c.label),
         inventoryItemId: c.inventoryItemId,
+        printBasis: c.printBasis,
+        colorMode: c.colorMode,
+        sides: c.sides,
         widthCm: String(c.pieceWidthCm),
         heightCm: String(c.pieceHeightCm),
         quantity: String(c.quantity),
-        yieldPerQuarter: String(c.yieldPerQuarter),
+        yieldPerQuarter: c.yieldPerQuarter !== undefined ? String(c.yieldPerQuarter) : '',
         sellophaneEnabled: c.sellophaneEnabled ?? false,
         boshrPricePerPiece: c.boshrPricePerPiece !== undefined ? String(c.boshrPricePerPiece) : '0',
       }));
@@ -684,6 +710,13 @@ interface PricingCtx {
   sheetPriceByInventoryItemId: Map<string, number>;
   catalogPriceById: Map<string, number>;
   salePriceByInventoryItemId: Map<string, number>;
+  /** Owner (2026-08-20) — every `DigitalPriceTier`, grouped by `digitalTierTableKey` (mirrors the same grouping `pricingEngineService.ts` does server-side, so the live preview matches what submitting will actually charge). */
+  digitalPriceTiersByKey: Map<string, DigitalPriceTierDto[]>;
+}
+
+/** Client-side mirror of `pricingEngineService.ts`'s `digitalTierTableKey` — must stay identical or the live preview picks the wrong tier table. */
+function digitalTierTableKey(basis: DigitalPrintBasis, colorMode: DigitalColorMode, sides: DigitalSides): string {
+  return `${basis}|${colorMode}|${sides}`;
 }
 
 /** Every field any `calculate*Cost` result might carry — display-only (formula strings), never used to compute an actual total. */
@@ -883,9 +916,14 @@ function pricingPreviewFromInput(
         const componentInputs = pricing.components.map((c) => {
           const sheetPrice = ctx.sheetPriceByInventoryItemId.get(c.inventoryItemId);
           if (sheetPrice === undefined) throw new Error('أحد المكونات غير مرتبط بسعر ورق');
+          const printTiers = ctx.digitalPriceTiersByKey.get(digitalTierTableKey(c.printBasis, c.colorMode, c.sides)) ?? [];
           return {
             label: c.label,
             inventoryItemId: c.inventoryItemId,
+            printBasis: c.printBasis,
+            colorMode: c.colorMode,
+            sides: c.sides,
+            printTiers,
             pieceWidthCm: c.pieceWidthCm,
             pieceHeightCm: c.pieceHeightCm,
             quantity: c.quantity,
@@ -1066,6 +1104,12 @@ interface StoredBreakdown {
   components?: {
     label: string;
     inventoryItemId: string;
+    // Added 2026-08-20 alongside printBasis/colorMode/sides — absent on
+    // frozen breakdowns from before that date, defaulted in
+    // `reconstructPricingInput` below.
+    printBasis?: DigitalPrintBasis;
+    colorMode?: DigitalColorMode;
+    sides?: DigitalSides;
     pieceWidthCm: number;
     pieceHeightCm: number;
     quantity: number;
@@ -1209,6 +1253,13 @@ function reconstructPricingInput(
         components: b.components.map((c) => ({
           label: c.label,
           inventoryItemId: c.inventoryItemId,
+          // Frozen breakdowns from before 2026-08-20 have no printBasis/
+          // colorMode/sides at all — default them to the settings that were
+          // the only option back then (QUARTER/COLOR/SINGLE), matching how
+          // every one of those old items was actually priced.
+          printBasis: c.printBasis ?? 'QUARTER',
+          colorMode: c.colorMode ?? 'COLOR',
+          sides: c.sides ?? 'SINGLE',
           pieceWidthCm: c.pieceWidthCm,
           pieceHeightCm: c.pieceHeightCm,
           quantity: c.quantity,
@@ -1887,6 +1938,13 @@ function NewOrderForm({
       salePriceByInventoryItemId: new Map(
         inventoryItems.filter((i) => i.salePrice !== null).map((i) => [i.id, i.salePrice as number]),
       ),
+      digitalPriceTiersByKey: pricingReference.digitalPriceTiers.reduce((map, tier) => {
+        const key = digitalTierTableKey(tier.basis, tier.colorMode, tier.sides);
+        const list = map.get(key);
+        if (list) list.push(tier);
+        else map.set(key, [tier]);
+        return map;
+      }, new Map<string, DigitalPriceTierDto[]>()),
     }),
     [pricingReference, inventoryItems, readyProducts, services],
   );
@@ -3421,6 +3479,42 @@ function NewOrderForm({
                       </Button>
                     )}
                   </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">أساس الطباعة</span>
+                      <select
+                        value={component.printBasis}
+                        onChange={(e) => updateComponent({ printBasis: e.target.value as DigitalPrintBasis })}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      >
+                        <option value="QUARTER">الربع (تنزيلة/Yield)</option>
+                        <option value="A4_DIRECT">A4 مباشر (نسخة = ورقة كاملة)</option>
+                        <option value="A3_DIRECT">A3 مباشر (نسخة = ورقة كاملة)</option>
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">الألوان</span>
+                      <select
+                        value={component.colorMode}
+                        onChange={(e) => updateComponent({ colorMode: e.target.value as DigitalColorMode })}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      >
+                        <option value="COLOR">ألوان</option>
+                        <option value="BW">أبيض وأسود</option>
+                      </select>
+                    </label>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">الأوجه</span>
+                      <select
+                        value={component.sides}
+                        onChange={(e) => updateComponent({ sides: e.target.value as DigitalSides })}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      >
+                        <option value="SINGLE">وجه</option>
+                        <option value="DOUBLE">وجه وظهر</option>
+                      </select>
+                    </label>
+                  </div>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <label className="space-y-1 text-sm sm:col-span-2">
                       <span className="text-muted-foreground">نوع الورق (يُسحب من المخزن)</span>
@@ -3497,24 +3591,28 @@ function NewOrderForm({
                         className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                       />
                     </label>
-                    <label className="space-y-1 text-sm">
-                      <span className="text-muted-foreground">التنزيلة (Yield) — عدد القطع في الربع</span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={component.yieldPerQuarter}
-                        onChange={(e) => updateComponent({ yieldPerQuarter: e.target.value })}
-                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                      />
-                    </label>
-                    <label className="flex items-center gap-2 self-end text-sm">
-                      <input
-                        type="checkbox"
-                        checked={component.sellophaneEnabled}
-                        onChange={(e) => updateComponent({ sellophaneEnabled: e.target.checked })}
-                      />
-                      سلوفان
-                    </label>
+                    {component.printBasis === 'QUARTER' && (
+                      <label className="space-y-1 text-sm">
+                        <span className="text-muted-foreground">التنزيلة (Yield) — عدد القطع في الربع</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={component.yieldPerQuarter}
+                          onChange={(e) => updateComponent({ yieldPerQuarter: e.target.value })}
+                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                        />
+                      </label>
+                    )}
+                    {component.printBasis === 'QUARTER' && (
+                      <label className="flex items-center gap-2 self-end text-sm">
+                        <input
+                          type="checkbox"
+                          checked={component.sellophaneEnabled}
+                          onChange={(e) => updateComponent({ sellophaneEnabled: e.target.checked })}
+                        />
+                        سلوفان
+                      </label>
+                    )}
                     <label className="space-y-1 text-sm">
                       <span className="text-muted-foreground">سعر البشر للقطعة (اختياري)</span>
                       <input

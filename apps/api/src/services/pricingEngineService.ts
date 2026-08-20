@@ -1,5 +1,5 @@
 import type { Prisma } from '../generated/prisma/client.js';
-import type { BoardsPricingConstants, OrderItemPricingInput, PricingConstants } from '@cleopatra/shared';
+import type { BoardsPricingConstants, DigitalColorMode, DigitalPrintBasis, DigitalSides, OrderItemPricingInput, PricingConstants } from '@cleopatra/shared';
 import {
   calculateBoardsCost,
   calculateDigitalMultiComponentCost,
@@ -9,11 +9,17 @@ import {
   calculateNotebookMultiMaterialCost,
   calculateProductOrServiceCost,
   type DigitalComponentInput,
+  type DigitalPriceTier,
   type DigitalPricingConstants,
   type NotebookMaterialOverride,
   type SizeFamilyInput,
 } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
+
+/** Owner (2026-08-20) — one of the 12 admin-managed `DigitalPriceTier` tables (basis × colorMode × sides); shared between `buildPricingContext` (which fetches and groups every row once) and the DIGITAL dispatch case (which looks a specific combination back up), so the two never drift on how a combination is identified. */
+function digitalTierTableKey(basis: DigitalPrintBasis, colorMode: DigitalColorMode, sides: DigitalSides): string {
+  return `${basis}|${colorMode}|${sides}`;
+}
 
 /**
  * FEATURE-007 — extracted out of `orderService.ts` (PE-E) so
@@ -43,6 +49,8 @@ export interface PricingContext {
   catalogPriceById: Map<string, number>;
   /** `INVENTORY_RETAIL` items only (§ held-stock ready-made merchandise) — `InventoryItem.salePrice`, distinct from `sheetPriceByInventoryItemId` (a paper/sheet cost input, never a direct sale price). */
   salePriceByInventoryItemId: Map<string, number>;
+  /** Owner (2026-08-20) — every `DigitalPriceTier` row, grouped by `digitalTierTableKey`. Always fetched in full (12 small tables, cheap) rather than filtered to just the items being priced, since a caller with zero DIGITAL items simply never looks this map up. */
+  digitalPriceTiersByKey: Map<string, DigitalPriceTier[]>;
 }
 
 type SettingRecord = Prisma.SettingGetPayload<object>;
@@ -85,9 +93,9 @@ export function mapSettingToBoardsPricingConstants(setting: SettingRecord): Boar
   };
 }
 
+/** `digitalPrintPricePerQuarter` (Setting column) is deliberately no longer read here — superseded 2026-08-20 by the `DigitalPriceTier` quantity-tier tables (see digitalCostCalculation.ts's doc comment); the column itself stays (rule 2, no deletion without an explicit ask), just unused by the pricing engine from now on. */
 export function mapSettingToDigitalPricingConstants(setting: SettingRecord): DigitalPricingConstants {
   return {
-    digitalPrintPricePerQuarter: setting.digitalPrintPricePerQuarter.toNumber(),
     digitalSellophanePricePerQuarter: setting.digitalSellophanePricePerQuarter.toNumber(),
     digitalQuarterWidthCm: setting.digitalQuarterWidthCm.toNumber(),
     digitalQuarterHeightCm: setting.digitalQuarterHeightCm.toNumber(),
@@ -122,6 +130,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
   const needsSizeFamilies = items.some(
     (i) => i.pricing.kind === 'LOOSE_PAPER' || i.pricing.kind === 'NOTEBOOK' || i.pricing.kind === 'FOLDER',
   );
+  const needsDigitalTiers = items.some((i) => i.pricing.kind === 'DIGITAL');
 
   const inventoryItemIds = [
     ...new Set(
@@ -142,7 +151,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
     ),
   ];
 
-  const [setting, families, inventoryItems, readyProducts, services] = await Promise.all([
+  const [setting, families, inventoryItems, readyProducts, services, digitalPriceTiers] = await Promise.all([
     prisma.setting.findFirstOrThrow(),
     needsSizeFamilies
       ? prisma.sizeFamily.findMany({ where: { isDeleted: false }, include: { entries: true } })
@@ -156,6 +165,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
     catalogIds.length
       ? prisma.service.findMany({ where: { id: { in: catalogIds } }, select: { id: true, price: true } })
       : Promise.resolve([]),
+    needsDigitalTiers ? prisma.digitalPriceTier.findMany() : Promise.resolve([]),
   ]);
 
   const sheetPriceByInventoryItemId = new Map<string, number>();
@@ -171,6 +181,15 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
   for (const p of readyProducts) catalogPriceById.set(p.id, p.price.toNumber());
   for (const s of services) catalogPriceById.set(s.id, s.price.toNumber());
 
+  const digitalPriceTiersByKey = new Map<string, DigitalPriceTier[]>();
+  for (const tier of digitalPriceTiers) {
+    const key = digitalTierTableKey(tier.basis, tier.colorMode, tier.sides);
+    const list = digitalPriceTiersByKey.get(key);
+    const entry = { minQuantity: tier.minQuantity, pricePerUnit: tier.pricePerUnit.toNumber() };
+    if (list) list.push(entry);
+    else digitalPriceTiersByKey.set(key, [entry]);
+  }
+
   return {
     families: families.map(mapSizeFamilyToInput),
     pricingConstants: mapSettingToPricingConstants(setting),
@@ -181,6 +200,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
     paperNameByInventoryItemId,
     catalogPriceById,
     salePriceByInventoryItemId,
+    digitalPriceTiersByKey,
   };
 }
 
@@ -449,9 +469,18 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         if (sheetPrice === undefined) {
           throw new PricingInputError(`Inventory item "${c.inventoryItemId}" has no linked sheet price`);
         }
+        // Owner (2026-08-20) — each component picks its own one of the 12
+        // admin-managed tier tables; a combination with zero tiers defined
+        // yet fails loudly inside calculateDigitalCost (findTierPrice),
+        // not silently as a free item.
+        const printTiers = ctx.digitalPriceTiersByKey.get(digitalTierTableKey(c.printBasis, c.colorMode, c.sides)) ?? [];
         return {
           label: c.label,
           inventoryItemId: c.inventoryItemId,
+          printBasis: c.printBasis,
+          colorMode: c.colorMode,
+          sides: c.sides,
+          printTiers,
           pieceWidthCm: c.pieceWidthCm,
           pieceHeightCm: c.pieceHeightCm,
           quantity: c.quantity,
@@ -474,9 +503,12 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       // reads this full `components` list, not just `materials` below.
       const componentsBreakdown = result.components.map((rc, idx) => ({
         ...rc,
+        printBasis: componentInputs[idx].printBasis,
+        colorMode: componentInputs[idx].colorMode,
+        sides: componentInputs[idx].sides,
         pieceWidthCm: componentInputs[idx].pieceWidthCm,
         pieceHeightCm: componentInputs[idx].pieceHeightCm,
-        yieldPerQuarter: componentInputs[idx].yieldPerQuarter,
+        yieldPerQuarter: componentInputs[idx].yieldPerQuarter ?? null,
         sellophaneEnabled: componentInputs[idx].sellophaneEnabled ?? null,
         boshrPricePerPiece: componentInputs[idx].boshrPricePerPiece ?? null,
         paperName: ctx.paperNameByInventoryItemId.get(rc.inventoryItemId) ?? null,

@@ -102,6 +102,36 @@ enum ProductionTrack {
   SUBLIMATION_GIFTS
 }
 
+/// Owner (2026-08-20, "محتاج تشوف وتعمل سيرش ازاي هتعدل الديجيتال بحيث
+/// يتماشي مع كل الاوردرات") — the digital track's item doesn't always print
+/// on the quarter-sheet machine (Yield-packed pieces); "الداخلي" (a book's
+/// interior pages, for example) usually prints on a separate machine that
+/// runs plain A4/A3 sheets directly, one copy = one whole sheet, no
+/// packing/Yield concept at all. `QUARTER` is the pre-existing mechanism
+/// (`DigitalCostInput`'s Yield math), unchanged; `A4_DIRECT`/`A3_DIRECT`
+/// are new.
+enum DigitalPrintBasis {
+  QUARTER
+  A4_DIRECT
+  A3_DIRECT
+}
+
+/// Owner (2026-08-20, "الألوان مقابل الأبيض والأسود — سعرين منفصلين تمامًا
+/// لكل حالة") — a full second price table, not a percentage of the color
+/// price.
+enum DigitalColorMode {
+  COLOR
+  BW
+}
+
+/// Owner (2026-08-20, "عندي في الإعدادات سعر للطباعة وجه، وسعر للطباعة وجه
+/// وظهر") — same treatment as color: a fully separate price table per
+/// side-count, not a markup added on top of the single-sided price.
+enum DigitalSides {
+  SINGLE
+  DOUBLE
+}
+
 /// @deprecated FEATURE-004 M1. See `WorkOrder.productionStatus`'s own doc
 /// comment — a hardcoded, Printing-specific pipeline the Workflow Engine
 /// replaces. Kept only because the field using it is kept; never
@@ -692,6 +722,13 @@ model StaffProfile {
   /// WEEKLY, a monthly rate if MONTHLY) — never both at once, so no
   /// separate weekly/monthly columns.
   baseSalary     Decimal?      @db.Decimal(12, 2)
+  /// Owner (2026-08-20, "عندي موظف بيبدأ قبض من يوم 9 في الشهر مش من يوم
+  /// 1") — day-of-month the MONTHLY pay cycle starts on, per employee.
+  /// Null = cycle starts on the 1st (the original calendar-month
+  /// behavior, unchanged for every existing employee). Ignored for
+  /// WEEKLY staff. Clamped against short months (e.g. day 31 in
+  /// February) at read time in `employeePayrollService.ts`, not here.
+  payDayOfMonth  Int?
   /// FEATURE-008 (2026-08-13, owner: "يحسب مرتب الناس عن طريق الحضور
   /// والإنصراف عن طريق الساعات") — shift schedule used to derive the
   /// hourly rate (baseSalary ÷ scheduled work days in the pay period ÷
@@ -1022,6 +1059,31 @@ model ExtraServiceOption {
 
   @@index([isDeleted])
   @@index([isActive])
+}
+
+/// Owner (2026-08-20) — "شرائح كمية أعدلها بنفسي من الإعدادات": a fully
+/// admin-managed quantity-tiered price list, one independent table per
+/// (basis, colorMode, sides) combination (12 in total — QUARTER/A4_DIRECT/
+/// A3_DIRECT × COLOR/BW × SINGLE/DOUBLE), replacing the old single flat
+/// `Setting.digitalPrintPricePerQuarter` constant (column kept per rule 2 —
+/// no deletion without an explicit ask — but no longer read by the pricing
+/// engine). `minQuantity` is the tier's lower bound (inclusive); the
+/// engine picks the highest tier whose `minQuantity` is still ≤ the item's
+/// quantity, so tiers don't need an explicit upper bound each — adding a
+/// new tier above the current highest just extends the table.
+model DigitalPriceTier {
+  id           String            @id @default(uuid()) @db.Uuid
+  basis        DigitalPrintBasis
+  colorMode    DigitalColorMode
+  sides        DigitalSides
+  minQuantity  Int
+  pricePerUnit Decimal           @db.Decimal(10, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([basis, colorMode, sides, minQuantity])
+  @@index([basis, colorMode, sides])
 }
 
 /// Join table: which Tags are currently assigned to which BusinessPartner.

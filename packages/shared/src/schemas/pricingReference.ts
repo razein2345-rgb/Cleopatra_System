@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { sizeFamilySchema } from './sizeFamily.js';
+import { digitalPriceTierSchema } from './digitalPriceTier.js';
 
 /**
  * FEATURE-007 PE-E — everything the client-side pricing engine
@@ -39,7 +40,6 @@ export const boardsPricingConstantsSchema = z.object({
 });
 
 export const digitalPricingConstantsSchema = z.object({
-  digitalPrintPricePerQuarter: z.number(),
   digitalSellophanePricePerQuarter: z.number(),
   digitalQuarterWidthCm: z.number(),
   digitalQuarterHeightCm: z.number(),
@@ -53,6 +53,8 @@ export const pricingReferenceSchema = z.object({
   digitalConstants: digitalPricingConstantsSchema,
   vatRate: z.number(),
   sizeFamilies: z.array(sizeFamilySchema),
+  /** Owner (2026-08-20) — every `DigitalPriceTier` row across all 12 (basis, colorMode, sides) tables, for the composer's live client-side preview. */
+  digitalPriceTiers: z.array(digitalPriceTierSchema),
 });
 
 export type PricingConstantsDto = z.infer<typeof pricingConstantsSchema>;

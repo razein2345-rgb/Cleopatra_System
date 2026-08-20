@@ -191,25 +191,39 @@ export const boardsPricingInputSchema = z.object({
   ...extraServiceFields,
 });
 
+/** Owner (2026-08-20) — which digital machine/print-basis a component uses. `QUARTER` is the pre-existing Yield-packed quarter-sheet machine; `A4_DIRECT`/`A3_DIRECT` are a separate machine that prints plain A4/A3 sheets directly, no packing (typically a book's "الداخلي"/interior pages). */
+export const digitalPrintBasisSchema = z.enum(['QUARTER', 'A4_DIRECT', 'A3_DIRECT']);
+/** Owner (2026-08-20, "الألوان مقابل الأبيض والأسود — سعرين منفصلين") — picks which of the two fully independent price tables applies. */
+export const digitalColorModeSchema = z.enum(['COLOR', 'BW']);
+/** Owner (2026-08-20, "سعر للطباعة وجه، وسعر للطباعة وجه وظهر") — same treatment as color, a fully independent price table per side-count. */
+export const digitalSidesSchema = z.enum(['SINGLE', 'DOUBLE']);
+
 /**
  * Multi-component digital items (2026-08-17, owner-approved — CLAUDE.md
- * rule 3). Every digital item is a list of one or more named components
- * (`label`, e.g. "الغلاف"/"الداخلي" for a magazine, or just one entry for a
- * plain digital item), each priced fully independently (own size/Yield/
- * material). Replacing the old single-material fields outright (not kept
- * alongside them) is safe here specifically because no live Order data
- * exists yet in this shape (verified empty at implementation time) — see
- * NOTEBOOK above for the pattern used where backward compatibility with
- * existing rows actually mattered.
+ * rule 3; extended 2026-08-20 with `printBasis`/`colorMode`/`sides` and
+ * quantity-tiered pricing, also owner-approved — see
+ * `digitalCostCalculation.ts`'s own doc comment for the full formula).
+ * Every digital item is a list of one or more named components (`label`,
+ * e.g. "الغلاف"/"الداخلي" for a magazine, or just one entry for a plain
+ * digital item), each priced fully independently (own size/machine/
+ * material). Replacing the component fields outright on both the 2026-08-17
+ * and 2026-08-20 changes is safe here specifically because no live Order/
+ * Quotation data exists in this shape (re-verified empty right before this
+ * change) — see NOTEBOOK above for the pattern used where backward
+ * compatibility with existing rows actually mattered.
  */
 const digitalComponentSchema = z.object({
   label: z.string().trim().min(1).max(100),
   inventoryItemId: z.string().uuid(),
+  printBasis: digitalPrintBasisSchema,
+  colorMode: digitalColorModeSchema,
+  sides: digitalSidesSchema,
   pieceWidthCm: z.number().positive(),
   pieceHeightCm: z.number().positive(),
   quantity: z.number().int().positive(),
-  /** "Yield" — Pre-Press-adjustable, auto-suggested client-side then submitted as a plain number; always required, never recomputed server-side. */
-  yieldPerQuarter: z.number().int().positive(),
+  /** "Yield" — only meaningful for `printBasis: 'QUARTER'` (Pre-Press-adjustable, auto-suggested client-side then submitted as a plain number, never recomputed server-side); ignored for A4_DIRECT/A3_DIRECT, where one copy is always exactly one whole sheet. */
+  yieldPerQuarter: z.number().int().positive().optional(),
+  /** Only meaningful for `printBasis: 'QUARTER'` — not offered for the direct-sheet machine. */
   sellophaneEnabled: z.boolean().optional(),
   /** "سعر البشر" — optional, always caller-entered per piece. */
   boshrPricePerPiece: z.number().nonnegative().optional(),

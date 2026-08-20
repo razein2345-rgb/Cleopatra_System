@@ -30,7 +30,10 @@ const NUMBER_FIELDS: Array<{ key: keyof UpdateSettingInput; label: string; step?
   { key: 'boardsFlex', label: 'فلكس' },
   { key: 'boardsSeasro', label: 'سيسرو' },
   { key: 'boardsGapMM', label: 'المسافة بين القطع (مم)' },
-  { key: 'digitalPrintPricePerQuarter', label: 'سعر طباعة الربع (ديجيتال)' },
+  // "سعر طباعة الربع" انتقل لشرائح الكمية الجديدة (owner، 2026-08-20) —
+  // شاشة "تسعير الديجيتال — شرائح الكمية" تحت نفس تاب الأسعار. العمود في
+  // قاعدة البيانات فضل موجود (قاعدة 2 — لا حذف بدون طلب صريح) بس مبقاش
+  // بيتقرأ من محرك التسعير ولا من هنا.
   { key: 'digitalSellophanePricePerQuarter', label: 'سعر سلوفان الربع (ديجيتال)' },
   { key: 'digitalQuarterWidthCm', label: 'عرض الربع (سم) — مقاس تغذية الماكينة' },
   { key: 'digitalQuarterHeightCm', label: 'ارتفاع الربع (سم) — مقاس تغذية الماكينة' },

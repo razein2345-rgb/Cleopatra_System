@@ -15,13 +15,14 @@ import {
  * business-identity/tax fields that permission is meant to protect.
  */
 export async function getPricingReference(_req: Request, res: Response) {
-  const [setting, families] = await Promise.all([
+  const [setting, families, digitalPriceTiers] = await Promise.all([
     prisma.setting.findFirstOrThrow(),
     prisma.sizeFamily.findMany({
       where: { isDeleted: false },
       include: { entries: { orderBy: { sortOrder: 'asc' } } },
       orderBy: { label: 'asc' },
     }),
+    prisma.digitalPriceTier.findMany(),
   ]);
 
   res.json({
@@ -43,6 +44,16 @@ export async function getPricingReference(_req: Request, res: Response) {
           piecesPerSheet: e.piecesPerSheet.toNumber(),
           sortOrder: e.sortOrder,
         })),
+      })),
+      digitalPriceTiers: digitalPriceTiers.map((t) => ({
+        id: t.id,
+        basis: t.basis,
+        colorMode: t.colorMode,
+        sides: t.sides,
+        minQuantity: t.minQuantity,
+        pricePerUnit: t.pricePerUnit.toNumber(),
+        createdAt: t.createdAt.toISOString(),
+        updatedAt: t.updatedAt.toISOString(),
       })),
     },
   });
