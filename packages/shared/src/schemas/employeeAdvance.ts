@@ -67,14 +67,27 @@ export const createAdvanceRepaymentSchema = z.object({
  * the employee is owed extra, negative means a deduction.
  * `netDue = baseSalary - totalOutstanding + attendanceAdjustment`.
  */
+/**
+ * Owner (2026-08-20, "لو لا طب هنعمل ده ازاي") — `periodStart`/`periodEnd`
+ * mirror `computeEmployeePayroll`'s current-period resolution (null for
+ * anyone with no payroll configured, same as `netDue`); `paidThisPeriod` is
+ * the sum of any `SalaryPayment` rows already recorded for that exact
+ * period, so the "صرف مرتب" screen can warn before a possible double-pay
+ * without hard-blocking it (the owner may legitimately need a correction).
+ */
 export const employeeAdvanceSummarySchema = z.object({
   staffId: z.string().uuid(),
   staffName: z.string(),
+  /** The employee's home branch — pre-fills `createSalaryPaymentSchema.branchId` for the "صرف مرتب" action. */
+  branchId: z.string().uuid(),
   payFrequency: z.enum(['WEEKLY', 'MONTHLY']).nullable(),
   baseSalary: z.number().nullable(),
   totalOutstanding: z.number(),
   attendanceAdjustment: z.number(),
   netDue: z.number().nullable(),
+  periodStart: z.string().nullable(),
+  periodEnd: z.string().nullable(),
+  paidThisPeriod: z.number(),
 });
 
 export type AdvanceRepaymentMethod = z.infer<typeof advanceRepaymentMethodSchema>;

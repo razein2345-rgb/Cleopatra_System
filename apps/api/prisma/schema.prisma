@@ -193,6 +193,10 @@ enum TreasurySourceType {
   /// with an `OUT` StockMovement, no Order/invoice involved at all. See
   /// `TreasuryEntry.stockMovementId`.
   QUICK_SALE
+  /// Owner (2026-08-20, "لو لا طب هنعمل ده ازاي") — a manual "صرف مرتب"
+  /// action, paired atomically with a `SalaryPayment`. See
+  /// `TreasuryEntry.salaryPaymentId`.
+  SALARY_PAYMENT
 }
 
 /// FEATURE-008 (2026-08-13) — how often an employee is paid; drives which
@@ -415,6 +419,7 @@ model Branch {
   stockMovements      StockMovement[]
   auditLogs           AuditLog[]
   employeeAdvances    EmployeeAdvance[]
+  salaryPayments      SalaryPayment[]
   attendanceEntries   AttendanceEntry[]
   fieldAssignments    FieldAssignment[]
   treasuryDayClosures TreasuryDayClosure[]
@@ -783,6 +788,8 @@ model StaffProfile {
   advancesReceived           EmployeeAdvance[]          @relation("EmployeeAdvanceStaff")
   advancesRecorded           EmployeeAdvance[]          @relation("EmployeeAdvanceRecordedBy")
   advanceRepaymentsRecorded  EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
+  salaryPaymentsReceived     SalaryPayment[]            @relation("SalaryPaymentStaff")
+  salaryPaymentsRecorded     SalaryPayment[]            @relation("SalaryPaymentRecordedBy")
   attendanceEntries          AttendanceEntry[]          @relation("AttendanceStaff")
   attendanceEntriesRecorded  AttendanceEntry[]          @relation("AttendanceRecordedBy")
   fieldAssignments           FieldAssignment[]          @relation("FieldAssignmentStaff")
@@ -2304,6 +2311,10 @@ model TreasuryEntry {
   stockMovementId String?        @unique @db.Uuid
   stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id], onDelete: SetNull)
 
+  /// `sourceType: 'SALARY_PAYMENT'` only — see `SalaryPayment`'s own doc comment.
+  salaryPaymentId String?        @unique @db.Uuid
+  salaryPayment   SalaryPayment? @relation(fields: [salaryPaymentId], references: [id], onDelete: SetNull)
+
   staffId  String       @db.Uuid // employee who recorded it (or who saved the source invoice)
   staff    StaffProfile @relation(fields: [staffId], references: [id])
   branchId String       @db.Uuid
@@ -2453,6 +2464,48 @@ model EmployeeAdvanceRepayment {
   createdAt DateTime @default(now())
 
   @@index([advanceId])
+}
+
+/// Owner (2026-08-20, "هل بيطلعلي عملية مباشرة آخر الاسبوع بمرتبات الناس
+/// جاهزة تتخصم من الخزينة؟... لو لا طب هنعمل ده ازاي") — confirmed no
+/// automatic run; a manual "صرف مرتب" button per employee instead. One row
+/// per actual disbursement, created atomically with a `TreasuryEntry`
+/// (EXPENSE), same pattern as `EmployeeAdvance` above. `periodStart`/
+/// `periodEnd` are resolved server-side from `computeEmployeePayroll` at
+/// payment time (never client-supplied) so they always reflect the real
+/// pay period being settled. Deliberately does NOT auto-settle any
+/// outstanding `EmployeeAdvance` rows — those still go through their own
+/// explicit repayment flow; this only records that a salary amount was
+/// physically paid out.
+model SalaryPayment {
+  id String @id @default(uuid()) @db.Uuid
+
+  staffId String       @db.Uuid
+  staff   StaffProfile @relation("SalaryPaymentStaff", fields: [staffId], references: [id])
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  periodStart DateTime
+  periodEnd   DateTime
+  amount      Decimal       @db.Decimal(12, 2)
+  method      PaymentMethod
+  note        String?
+
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation("SalaryPaymentRecordedBy", fields: [recordedById], references: [id])
+
+  treasuryEntry TreasuryEntry?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+
+  @@index([staffId])
+  @@index([branchId])
+  @@index([isDeleted])
 }
 
 // ---------------------------------------------------------------------------

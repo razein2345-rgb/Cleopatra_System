@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { createAdvanceRepaymentSchema, createEmployeeAdvanceSchema } from '@cleopatra/shared';
+import { createAdvanceRepaymentSchema, createEmployeeAdvanceSchema, createSalaryPaymentSchema } from '@cleopatra/shared';
 import { canAccessBranch } from '../services/authContext.js';
 import { recordAudit } from '../services/auditService.js';
 import {
@@ -12,6 +12,7 @@ import {
   MissingWalletMethodError,
 } from '../services/employeeAdvanceService.js';
 import { computeEmployeePayroll } from '../services/employeePayrollService.js';
+import { createSalaryPayment, listSalaryPaymentsForStaff, NoPayrollConfiguredError } from '../services/salaryPaymentService.js';
 import { DayClosedError } from '../services/treasuryService.js';
 
 export async function listAdvancesForStaffHandler(req: Request<{ staffId: string }>, res: Response) {
@@ -88,6 +89,52 @@ export async function createAdvanceRepaymentHandler(req: Request<{ advanceId: st
 export async function getEmployeeAdvanceSummariesHandler(_req: Request, res: Response) {
   const summaries = await getEmployeeAdvanceSummaries();
   res.json({ success: true, data: summaries });
+}
+
+/**
+ * Owner (2026-08-20, "لو لا طب هنعمل ده ازاي") — the manual "صرف مرتب"
+ * action. Same branch-access + day-closed guards `createAdvanceHandler`
+ * above already uses.
+ */
+export async function createSalaryPaymentHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const input = createSalaryPaymentSchema.parse(req.body);
+
+  if (!canAccessBranch(auth, input.branchId)) {
+    res.status(403).json({ success: false, error: { message: 'You do not have access to this branch' } });
+    return;
+  }
+
+  let payment;
+  try {
+    payment = await createSalaryPayment(input, auth.staffId);
+  } catch (err) {
+    if (err instanceof NoPayrollConfiguredError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'NO_PAYROLL_CONFIGURED' } });
+      return;
+    }
+    if (err instanceof DayClosedError) {
+      res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'SalaryPayment',
+    entityId: payment.id,
+    action: 'CREATE',
+    performedById: auth.staffId,
+    branchId: payment.branchId,
+    newValue: { staffId: payment.staffId, amount: payment.amount, periodStart: payment.periodStart, periodEnd: payment.periodEnd },
+  });
+
+  res.status(201).json({ success: true, data: payment });
+}
+
+export async function listSalaryPaymentsForStaffHandler(req: Request<{ staffId: string }>, res: Response) {
+  const payments = await listSalaryPaymentsForStaff(req.params.staffId);
+  res.json({ success: true, data: payments });
 }
 
 /** FEATURE-008 — the day-by-day breakdown behind a summary row's `attendanceAdjustment`, for the employee profile page. Null when the employee has no shift schedule configured yet. */

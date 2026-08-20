@@ -191,14 +191,37 @@ export async function getEmployeeAdvanceSummaries(): Promise<EmployeeAdvanceSumm
       const baseSalary = s.baseSalary ? s.baseSalary.toNumber() : null;
       const payroll = await computeEmployeePayroll(s.id);
       const attendanceAdjustment = payroll?.totalAdjustment ?? 0;
+
+      // Owner (2026-08-20, "لو لا طب هنعمل ده ازاي") — sum of any
+      // SalaryPayment already recorded for this exact period, so the "صرف
+      // مرتب" screen can warn before a possible double-pay (never a hard
+      // block — a legitimate correction/top-up must still be possible).
+      let paidThisPeriod = 0;
+      if (payroll) {
+        const payments = await prisma.salaryPayment.findMany({
+          where: {
+            staffId: s.id,
+            isDeleted: false,
+            periodStart: new Date(payroll.periodStart),
+            periodEnd: new Date(payroll.periodEnd),
+          },
+          select: { amount: true },
+        });
+        paidThisPeriod = payments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
+      }
+
       return {
         staffId: s.id,
         staffName: s.name,
+        branchId: s.branchId,
         payFrequency: s.payFrequency,
         baseSalary,
         totalOutstanding,
         attendanceAdjustment,
         netDue: baseSalary !== null ? baseSalary - totalOutstanding + attendanceAdjustment : null,
+        periodStart: payroll?.periodStart ?? null,
+        periodEnd: payroll?.periodEnd ?? null,
+        paidThisPeriod,
       };
     }),
   );
