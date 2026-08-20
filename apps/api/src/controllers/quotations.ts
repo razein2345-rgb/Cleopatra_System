@@ -31,6 +31,12 @@ import { buildPricingContext, computeItemPricing, PricingInputError } from '../s
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
 import { tryAutoCreateWorkOrders } from '../services/workOrderService.js';
+import { canAccessBranch } from '../services/authContext.js';
+
+/** Same gap-close as `orders.ts`'s `loadOrderBranchOr404` — see its doc comment. */
+function forbidBranch(res: Response): void {
+  res.status(403).json({ success: false, error: { message: 'You do not have access to this branch' } });
+}
 
 /**
  * All current callers are internal staff (this route is gated on
@@ -91,9 +97,13 @@ export async function getQuotation(req: Request<{ id: string }>, res: Response) 
 
 /** Owner (2026-08-17, "تتبع العدد بس، من غير منع") — called from the print button; visibility-only, never blocks. */
 export async function recordQuotationPrintHandler(req: Request<{ id: string }>, res: Response) {
-  const existing = await prisma.quotation.findUnique({ where: { id: req.params.id }, select: { isDeleted: true } });
+  const existing = await prisma.quotation.findUnique({ where: { id: req.params.id }, select: { isDeleted: true, branchId: true } });
   if (!existing || existing.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
+    return;
+  }
+  if (!canAccessBranch(req.auth!, existing.branchId)) {
+    forbidBranch(res);
     return;
   }
   const updated = await recordQuotationPrint(req.params.id);
@@ -112,6 +122,11 @@ export async function createQuotation(req: Request, res: Response) {
 
   const partner = await loadPartnerOr404(input.partnerId, res);
   if (!partner) return;
+
+  if (!canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   try {
     await validateQuotationItemRefs(input.items);
@@ -157,6 +172,10 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
   });
   if (!existing || existing.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
     return;
   }
 
@@ -277,6 +296,10 @@ export async function setQuotationStatus(req: Request<{ id: string }>, res: Resp
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   const input = setQuotationStatusSchema.parse(req.body);
 
@@ -319,6 +342,10 @@ export async function setQuotationApprovalState(req: Request<{ id: string }>, re
   const existing = await prisma.quotation.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
     return;
   }
 
@@ -368,6 +395,10 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
   });
   if (!existing || existing.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
     return;
   }
 
@@ -522,6 +553,10 @@ export async function createQuotationVersion(req: Request<{ id: string }>, res: 
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   const created = await prisma.$transaction(async (tx) => {
     const quotationNumber = await nextQuotationNumber(tx);
@@ -588,6 +623,10 @@ export async function deleteQuotation(req: Request<{ id: string }>, res: Respons
   });
   if (!existing || existing.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
     return;
   }
 

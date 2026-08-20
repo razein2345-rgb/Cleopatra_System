@@ -20,6 +20,32 @@ import { QuotationItemValidationError, validateQuotationItemRefs } from '../serv
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
 import { DayClosedError } from '../services/treasuryService.js';
+import { canAccessBranch } from '../services/authContext.js';
+
+/**
+ * Owner (2026-08-20, "الموظف اللي انا محدد إنه من فرع برينتنج هاوس مينفعش
+ * يعمل عملية لفرع كليوباترا") — found live: none of this file's write
+ * handlers ever checked branch access at all, unlike `users.ts`/
+ * `employeeAdvances.ts`/`workflowInstances.ts`/`treasuryEntries.ts`'s
+ * `resolveTargetBranchId`, which already enforce it. A non-Super-Admin
+ * caller with only their home branch could target any other branch's
+ * order just by id (or by `branchId` in the create body) — closes that
+ * gap without touching `getOrder`/`listOrders` (unaffected, out of scope
+ * for this report — a read-only cross-branch document lookup is a
+ * different, likely-intentional behavior).
+ */
+async function loadOrderBranchOr404(id: string, res: Response): Promise<string | null> {
+  const order = await prisma.order.findUnique({ where: { id }, select: { branchId: true, isDeleted: true } });
+  if (!order || order.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Order not found' } });
+    return null;
+  }
+  return order.branchId;
+}
+
+function forbidBranch(res: Response): void {
+  res.status(403).json({ success: false, error: { message: 'You do not have access to this branch' } });
+}
 
 /**
  * FEATURE-007 — the "المستندات" (Documents) unified list needs every
@@ -78,6 +104,11 @@ export async function createOrderHandler(req: Request, res: Response) {
   const partner = await loadPartnerOr404(input.partnerId, res);
   if (!partner) return;
 
+  if (!canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
+
   try {
     await validateQuotationItemRefs(input.items);
   } catch (err) {
@@ -133,6 +164,13 @@ export async function createOrderHandler(req: Request, res: Response) {
  */
 export async function updateOrderHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+  const orderBranchId = await loadOrderBranchOr404(req.params.id, res);
+  if (!orderBranchId) return;
+  if (!canAccessBranch(auth, orderBranchId)) {
+    forbidBranch(res);
+    return;
+  }
+
   const input = updateOrderSchema.parse(req.body);
 
   try {
@@ -187,6 +225,12 @@ export async function updateOrderHandler(req: Request<{ id: string }>, res: Resp
  */
 export async function deleteOrderHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+  const orderBranchId = await loadOrderBranchOr404(req.params.id, res);
+  if (!orderBranchId) return;
+  if (!canAccessBranch(auth, orderBranchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   let result;
   try {
@@ -225,6 +269,13 @@ export async function deleteOrderHandler(req: Request<{ id: string }>, res: Resp
  */
 export async function recordPaymentHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+  const orderBranchId = await loadOrderBranchOr404(req.params.id, res);
+  if (!orderBranchId) return;
+  if (!canAccessBranch(auth, orderBranchId)) {
+    forbidBranch(res);
+    return;
+  }
+
   const input = createPaymentSchema.parse(req.body);
 
   let result;
