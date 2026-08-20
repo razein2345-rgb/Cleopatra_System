@@ -18,6 +18,7 @@ export function mapStaffToUser(staff: StaffWithRoles): User {
     phone: staff.phone,
     isActive: staff.isActive,
     lastLoginAt: staff.lastLoginAt ? staff.lastLoginAt.toISOString() : null,
+    lastActiveAt: staff.lastActiveAt ? staff.lastActiveAt.toISOString() : null,
     branchId: staff.branchId,
     roles: staff.roles.map((userRole) => ({
       id: userRole.role.id,

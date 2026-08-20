@@ -12,6 +12,19 @@ import { isLastActiveAdmin } from '@/lib/adminSafety';
 const LAST_ADMIN_TITLE =
   'هذا آخر مسؤول نشط — تم تعطيل هذا الإجراء لمنع فقدان الوصول إلى النظام بالكامل.';
 
+/**
+ * Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") — there's
+ * no real session/heartbeat mechanism (auth is stateless Supabase JWT
+ * verification per request, see requireAuth.ts), so "online now" is
+ * approximated as "made an authenticated request within the last few
+ * minutes" — `lastActiveAt` is refreshed server-side (throttled to once/
+ * minute) on every authenticated call.
+ */
+const ONLINE_WINDOW_MS = 5 * 60 * 1000;
+const isOnlineNow = (user: User) => Boolean(user.lastActiveAt && Date.now() - new Date(user.lastActiveAt).getTime() < ONLINE_WINDOW_MS);
+/** Keeps the "متصل الآن" list feeling live without a real push mechanism — same polling pattern ProductionBoardPage.tsx already uses. */
+const AUTO_REFRESH_MS = 30_000;
+
 export function UsersPage() {
   const { can, authContext } = useAuth();
   const confirm = useConfirm();
@@ -46,6 +59,10 @@ export function UsersPage() {
   };
 
   useEffect(load, []);
+  useEffect(() => {
+    const interval = setInterval(load, AUTO_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, []);
 
   // Accounts created via FEATURE-015 store a synthetic `<id>@cleopatra.local`
   // email — showing the bare ID here matches what the owner actually hands
@@ -97,6 +114,26 @@ export function UsersPage() {
         </div>
       </div>
 
+      {/* Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم"). */}
+      {(() => {
+        const onlineUsers = users.filter(isOnlineNow);
+        return (
+          <div className="border-border bg-card flex flex-wrap items-center gap-2 rounded-2xl border p-3 text-sm">
+            <span className="text-muted-foreground">متصل الآن ({onlineUsers.length}):</span>
+            {onlineUsers.length === 0 ? (
+              <span className="text-muted-foreground">لا يوجد أحد متصل حاليًا.</span>
+            ) : (
+              onlineUsers.map((u) => (
+                <span key={u.id} className="bg-success/10 text-success flex items-center gap-1.5 rounded-full px-2.5 py-1">
+                  <span className="bg-success size-1.5 rounded-full" />
+                  {u.name}
+                </span>
+              ))
+            )}
+          </div>
+        );
+      })()}
+
       {showCreate && (
         <CreateUserForm
           roles={roles}
@@ -117,6 +154,7 @@ export function UsersPage() {
               <th className="p-3">الفرع</th>
               <th className="p-3">الأدوار</th>
               <th className="p-3">الحالة</th>
+              <th className="p-3">متصل الآن</th>
               <th className="p-3">آخر دخول</th>
               <th className="p-3"></th>
             </tr>
@@ -178,6 +216,16 @@ export function UsersPage() {
                     <span className={user.isActive ? 'text-success' : 'text-muted-foreground'}>
                       {user.isActive ? 'نشط' : 'غير نشط'}
                     </span>
+                  </td>
+                  <td className="p-3">
+                    {isOnlineNow(user) ? (
+                      <span className="text-success flex items-center gap-1.5">
+                        <span className="bg-success size-1.5 rounded-full" />
+                        متصل الآن
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </td>
                   <td className="text-muted-foreground p-3">
                     {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('ar-EG') : 'لم يسجل الدخول بعد'}

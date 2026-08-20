@@ -1,6 +1,10 @@
 import type { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase.js';
+import { prisma } from '../lib/prisma.js';
 import { loadAuthContext, type AuthenticatedUser } from '../services/authContext.js';
+
+/** Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") — throttle window for the presence-update write below; no need for exact real-time precision, just "recently." */
+const PRESENCE_UPDATE_INTERVAL_MS = 60_000;
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -52,5 +56,18 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   }
 
   req.auth = authContext;
+
+  // Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") — a
+  // "currently online" signal, distinct from `lastLoginAt` (sign-in moment
+  // only). Throttled to at most once/minute per staff member (otherwise
+  // every single API call would write to the DB) and fire-and-forget
+  // (never awaited, never blocks the request, a failed write here must
+  // never fail an otherwise-successful call — this is presence tracking,
+  // not a critical write).
+  const isStale = !authContext.lastActiveAt || Date.now() - authContext.lastActiveAt.getTime() > PRESENCE_UPDATE_INTERVAL_MS;
+  if (isStale) {
+    prisma.staffProfile.update({ where: { id: authContext.staffId }, data: { lastActiveAt: new Date() } }).catch(() => {});
+  }
+
   next();
 }

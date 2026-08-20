@@ -17,6 +17,8 @@ export const userSchema = z.object({
   phone: z.string().nullable(),
   isActive: z.boolean(),
   lastLoginAt: z.string().nullable(),
+  /** Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") — see StaffProfile.lastActiveAt's doc comment. */
+  lastActiveAt: z.string().nullable(),
   branchId: z.string().uuid(),
   roles: z.array(roleSchema),
   accessibleBranchIds: z.array(z.string().uuid()),

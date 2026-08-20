@@ -702,6 +702,14 @@ model StaffProfile {
   phone          String?
   isActive       Boolean   @default(true)
   lastLoginAt    DateTime?
+  /// Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") —
+  /// "currently online" tracking, distinct from `lastLoginAt` (which only
+  /// ever reflects the moment of sign-in). Updated by `requireAuth`
+  /// (throttled — at most once/minute per staff member, fire-and-forget)
+  /// on every authenticated request; the UI treats "within the last few
+  /// minutes" as "online now" since there is no real session/heartbeat
+  /// mechanism (auth is stateless Supabase JWT verification per request).
+  lastActiveAt   DateTime?
 
   branchId String @db.Uuid
   branch   Branch @relation(fields: [branchId], references: [id])

@@ -12,6 +12,8 @@ export type AuthenticatedUser = {
   permissions: string[];
   accessibleBranchIds: string[];
   accessibleDepartmentIds: string[];
+  /** Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") — the value as of the *start* of this request, used by `requireAuth` to decide whether a fresh presence-update write is due. */
+  lastActiveAt: Date | null;
 };
 
 /**
@@ -65,6 +67,7 @@ export async function loadAuthContext(supabaseUserId: string): Promise<Authentic
     permissions: Array.from(permissionSet),
     accessibleBranchIds: Array.from(accessibleBranchIds),
     accessibleDepartmentIds: Array.from(accessibleDepartmentIds),
+    lastActiveAt: staff.lastActiveAt,
   };
 }
 
