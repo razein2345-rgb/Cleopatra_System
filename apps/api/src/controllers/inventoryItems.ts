@@ -40,23 +40,20 @@ function handleServiceError(err: unknown, res: Response): boolean {
   return false;
 }
 
-export async function listInventoryItemsHandler(req: Request, res: Response) {
-  const auth = req.auth!;
-  const items = await listInventoryItems(auth.branchId);
+export async function listInventoryItemsHandler(_req: Request, res: Response) {
+  const items = await listInventoryItems();
   res.json({ success: true, data: items });
 }
 
 /** "بضاعة ناقصة من الموردين" — items at/below reorder level or already negative. */
-export async function listItemsNeedingSupplierHandler(req: Request, res: Response) {
-  const auth = req.auth!;
-  const items = await listItemsNeedingSupplier(auth.branchId);
+export async function listItemsNeedingSupplierHandler(_req: Request, res: Response) {
+  const items = await listItemsNeedingSupplier();
   res.json({ success: true, data: items });
 }
 
 /** POS scan-to-add — exact match by barcode, not a fuzzy search (the scanner's raw input is the lookup key). */
 export async function getInventoryItemByBarcodeHandler(req: Request<{ barcode: string }>, res: Response) {
-  const auth = req.auth!;
-  const item = await getInventoryItemByBarcode(req.params.barcode, auth.branchId);
+  const item = await getInventoryItemByBarcode(req.params.barcode);
   if (!item) {
     res.status(404).json({ success: false, error: { message: 'مفيش صنف بهذا الباركود', code: 'BARCODE_NOT_FOUND' } });
     return;
@@ -65,8 +62,7 @@ export async function getInventoryItemByBarcodeHandler(req: Request<{ barcode: s
 }
 
 export async function getInventoryItemHandler(req: Request<{ id: string }>, res: Response) {
-  const auth = req.auth!;
-  const item = await getInventoryItem(req.params.id, auth.branchId);
+  const item = await getInventoryItem(req.params.id);
   if (!item) {
     res.status(404).json({ success: false, error: { message: 'Inventory item not found' } });
     return;
@@ -124,8 +120,7 @@ export async function updateInventoryItemHandler(req: Request<{ id: string }>, r
 
 /** Owner ("موظف المخزن مقدرش يجاوب 'الرصيد ده نزل امتى وليه'") — read-only, no Audit Log call (this is a view action, not a mutation). */
 export async function listStockMovementsHandler(req: Request<{ id: string }>, res: Response) {
-  const auth = req.auth!;
-  const movements = await listStockMovements(req.params.id, auth.branchId);
+  const movements = await listStockMovements(req.params.id);
   res.json({ success: true, data: movements });
 }
 

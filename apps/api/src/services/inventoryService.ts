@@ -15,9 +15,22 @@ type InventoryItemRecord = Prisma.InventoryItemGetPayload<{
 
 const INCLUDE = { stockLevels: true, sheetType: true } satisfies Prisma.InventoryItemInclude;
 
-/** `quantityOnHand`/`isLowStock` are for the given branch — a multi-branch item has one StockLevel row per branch. */
-function mapInventoryItemToDto(record: InventoryItemRecord, branchId: string): InventoryItem {
-  const quantityOnHand = record.stockLevels.find((sl) => sl.branchId === branchId)?.quantityOnHand.toNumber() ?? 0;
+/**
+ * Owner (2026-08-20, "سجلنا في المخزون من جهاز محمد إن في أقلام روتو احمر
+ * عدد 12 قلم ظاهرين عندي انا صفر") — `quantityOnHand` used to be scoped to
+ * the *viewing* branch only (one `StockLevel` row per branch), so the same
+ * physical item showed a different number depending who was looking and
+ * from where — stock recorded at برينتنج هاوس was invisible from
+ * كليوباترا. Confirmed explicitly: this business runs **one unified
+ * warehouse**, not per-branch stock, so this now sums every branch's
+ * `StockLevel` row into a single company-wide figure. `StockLevel` stays
+ * split per branch internally (harmless bookkeeping — a movement still
+ * records which branch/device it came from, useful for `listStockMovements`'
+ * own history), but nothing reads a single branch's row in isolation
+ * anymore.
+ */
+function mapInventoryItemToDto(record: InventoryItemRecord): InventoryItem {
+  const quantityOnHand = record.stockLevels.reduce((sum, sl) => sum + sl.quantityOnHand.toNumber(), 0);
   const reorderLevel = record.reorderLevel?.toNumber() ?? null;
   return {
     id: record.id,
@@ -93,32 +106,32 @@ function isDuplicateBarcodeError(err: unknown): boolean {
   return Array.isArray(driverFields) && driverFields.includes('barcode');
 }
 
-export async function listInventoryItems(branchId: string): Promise<InventoryItem[]> {
+export async function listInventoryItems(): Promise<InventoryItem[]> {
   const records = await prisma.inventoryItem.findMany({
     where: { isDeleted: false },
     include: INCLUDE,
     orderBy: { name: 'asc' },
   });
-  return records.map((r) => mapInventoryItemToDto(r, branchId));
+  return records.map((r) => mapInventoryItemToDto(r));
 }
 
 /** "بضاعة ناقصة" — items at or below their reorder level, or already run negative by an order that outran stock. */
-export async function listItemsNeedingSupplier(branchId: string): Promise<InventoryItem[]> {
-  const items = await listInventoryItems(branchId);
+export async function listItemsNeedingSupplier(): Promise<InventoryItem[]> {
+  const items = await listInventoryItems();
   return items.filter((item) => item.isLowStock || item.quantityOnHand < 0);
 }
 
 /** POS scan-to-add (system_specifications_v2.md §12.5, second pass 2026-08-16) — exact lookup by the scanner's raw input, `barcode` being `@unique` makes this O(1). */
-export async function getInventoryItemByBarcode(barcode: string, branchId: string): Promise<InventoryItem | null> {
+export async function getInventoryItemByBarcode(barcode: string): Promise<InventoryItem | null> {
   const record = await prisma.inventoryItem.findUnique({ where: { barcode }, include: INCLUDE });
   if (!record || record.isDeleted) return null;
-  return mapInventoryItemToDto(record, branchId);
+  return mapInventoryItemToDto(record);
 }
 
-export async function getInventoryItem(id: string, branchId: string): Promise<InventoryItem | null> {
+export async function getInventoryItem(id: string): Promise<InventoryItem | null> {
   const record = await prisma.inventoryItem.findUnique({ where: { id }, include: INCLUDE });
   if (!record || record.isDeleted) return null;
-  return mapInventoryItemToDto(record, branchId);
+  return mapInventoryItemToDto(record);
 }
 
 /** Registers a new stock item — `initialQuantity` (the owner's "اسجل عليه البضاعه اللي عندي" ask) is recorded as an `IN` movement, not written directly onto `StockLevel`. */
@@ -164,7 +177,7 @@ export async function createInventoryItem(
 
     return tx.inventoryItem.findUniqueOrThrow({ where: { id: item.id }, include: INCLUDE });
   });
-  return mapInventoryItemToDto(created, branchId);
+  return mapInventoryItemToDto(created);
 }
 
 export async function updateInventoryItem(id: string, input: UpdateInventoryItemInput): Promise<InventoryItem> {
@@ -193,10 +206,7 @@ export async function updateInventoryItem(id: string, input: UpdateInventoryItem
     }
     return item;
   });
-  // reorderLevel/quantityOnHand is branch-scoped for the DTO, but this
-  // update path isn't branch-specific — any branch value works to shape
-  // the response since reorderLevel itself is not per-branch.
-  return mapInventoryItemToDto(updated, updated.stockLevels[0]?.branchId ?? '');
+  return mapInventoryItemToDto(updated);
 }
 
 /**
@@ -227,13 +237,21 @@ export async function recordStockMovement(
     });
     return tx.inventoryItem.findUniqueOrThrow({ where: { id: inventoryItemId }, include: INCLUDE });
   });
-  return mapInventoryItemToDto(updated, branchId);
+  return mapInventoryItemToDto(updated);
 }
 
-/** Owner ("موظف المخزن مقدرش يجاوب 'الرصيد ده نزل امتى وليه'") — every StockMovement for this item, newest first: both order-driven (`deductStockForOrderItem`/`restockForOrderItem`) and manual (`recordStockMovement`) rows already land in the same table. Read-only, no write path changes. */
-export async function listStockMovements(inventoryItemId: string, branchId: string): Promise<StockMovement[]> {
+/**
+ * Owner ("موظف المخزن مقدرش يجاوب 'الرصيد ده نزل امتى وليه'") — every
+ * StockMovement for this item, newest first, **across every branch**
+ * (2026-08-20, "مخزون واحد موحّد" — a movement recorded from برينتنج هاوس
+ * must be visible from كليوباترا too, same as the aggregate quantity
+ * itself). Both order-driven (`deductStockForOrderItem`/
+ * `restockForOrderItem`) and manual (`recordStockMovement`) rows already
+ * land in the same table. Read-only, no write path changes.
+ */
+export async function listStockMovements(inventoryItemId: string): Promise<StockMovement[]> {
   const rows = await prisma.stockMovement.findMany({
-    where: { inventoryItemId, branchId, isDeleted: false },
+    where: { inventoryItemId, isDeleted: false },
     orderBy: { date: 'desc' },
   });
   return rows.map((m) => ({
@@ -300,7 +318,7 @@ export async function updateStockMovement(
     return tx.inventoryItem.findUniqueOrThrow({ where: { id: existing.inventoryItemId }, include: INCLUDE });
   });
 
-  return { item: mapInventoryItemToDto(updated, existing.branchId), previous };
+  return { item: mapInventoryItemToDto(updated), previous };
 }
 
 /**
@@ -342,7 +360,7 @@ export async function deleteStockMovement(
     return tx.inventoryItem.findUniqueOrThrow({ where: { id: existing.inventoryItemId }, include: INCLUDE });
   });
 
-  return { item: mapInventoryItemToDto(updated, existing.branchId), previous };
+  return { item: mapInventoryItemToDto(updated), previous };
 }
 
 export async function deleteInventoryItem(id: string, deletedBy: string): Promise<void> {
