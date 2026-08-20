@@ -47,7 +47,7 @@ import { apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { PartnerCombobox, useConfirm } from '@/components/cleopatra';
+import { InventoryItemCombobox, PartnerCombobox, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 type PricingKind = OrderItemPricingInput['kind'];
@@ -3772,23 +3772,11 @@ function NewOrderForm({
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <label className="space-y-1 text-sm sm:col-span-2">
                   <span className="text-muted-foreground">أو اختر يدويًا</span>
-                  <select
+                  <InventoryItemCombobox
+                    items={inventoryItems.filter((i) => i.category === 'READY_MADE' && i.salePrice !== null)}
                     value={draft.inventoryItemId}
-                    onChange={(e) => {
-                      const item = inventoryItems.find((i) => i.id === e.target.value);
-                      updateDraft({ inventoryItemId: e.target.value, itemType: item?.name ?? '' });
-                    }}
-                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                  >
-                    <option value="">— اختر —</option>
-                    {inventoryItems
-                      .filter((i) => i.category === 'READY_MADE' && i.salePrice !== null)
-                      .map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.name} — {money(i.salePrice as number)} ج
-                        </option>
-                      ))}
-                  </select>
+                    onChange={(item) => updateDraft({ inventoryItemId: item.id, itemType: item.name })}
+                  />
                 </label>
                 <label className="space-y-1 text-sm">
                   <span className="text-muted-foreground">الكمية</span>
