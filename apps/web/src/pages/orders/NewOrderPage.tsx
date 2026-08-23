@@ -4194,17 +4194,37 @@ function NewOrderForm({
   );
 }
 
+/** One row in the multi-item quick-sale cart — `key` is a client-only id, never sent to the server. */
+interface QuickSaleLine {
+  key: string;
+  itemId: string;
+  item: InventoryItem | null;
+  quantity: string;
+  unitPrice: string;
+  /** Set once this line's own `POST .../quick-sale` call has succeeded — kept out of the retry set if a later line in the same batch fails. */
+  done: boolean;
+}
+
+let quickSaleLineSeq = 0;
+function emptyQuickSaleLine(): QuickSaleLine {
+  quickSaleLineSeq += 1;
+  return { key: `qsl-${quickSaleLineSeq}`, itemId: '', item: null, quantity: '1', unitPrice: '', done: false };
+}
+
 /**
  * Owner (2026-08-20, "لو حد خد صنف بسيط من قسم بضاعة من المخزون مش مضطر
  * اطلع عليه فاتورة وعايزة يتسجل في حركة الخزينة ويخصمه من المخزن", then
- * "بيع سريع دي تتحط... في قسم بيع من المخزون وقسم البنود اليدوي") — a
- * one-step cash sale with no Order/invoice at all, surfaced right inside
- * the composer's "بضاعة من المخزون" tab (not a separate page) since that's
- * where staff already are when selling a simple stock item.
- * `POST /api/inventory-items/:id/quick-sale` pairs an OUT StockMovement
- * with an INCOME TreasuryEntry atomically. Edit/delete afterward only ever
- * happens through the stock movement itself (المخزن → سجل الحركة) — the
- * paired treasury entry follows automatically, never edited directly.
+ * "بيع سريع دي تتحط... في قسم بيع من المخزون وقسم البنود اليدوي", then
+ * "زيادة العدد في البيع السريع — أقدر اعمل بيع سريع لكذا صنف مع بعض مش
+ * صنف واحد") — a one-step cash sale with no Order/invoice at all, surfaced
+ * right inside the composer's "بضاعة من المخزون" tab. A "sale" here can
+ * cover several different items in one go, sharing one payment method/
+ * category/note — but the backend endpoint (`POST
+ * /api/inventory-items/:id/quick-sale`) is still exactly one item at a
+ * time (its own atomic StockMovement+TreasuryEntry pair, rule 5 — not
+ * touched/duplicated), so this cart submits sequentially, one call per
+ * line, and tracks each line's own success/failure so a mid-batch failure
+ * never re-submits lines that already succeeded.
  */
 function QuickSaleDialog({
   items,
@@ -4215,10 +4235,7 @@ function QuickSaleDialog({
   categories: TreasuryCategory[];
   onClose: () => void;
 }) {
-  const [itemId, setItemId] = useState('');
-  const [selectedItem, setSelectedItem] = useState<InventoryItem | null>(null);
-  const [quantity, setQuantity] = useState('1');
-  const [unitPrice, setUnitPrice] = useState('');
+  const [lines, setLines] = useState<QuickSaleLine[]>([emptyQuickSaleLine()]);
   const [method, setMethod] = useState<PaymentMethod>('CASH');
   const [category, setCategory] = useState('');
   const [customCategory, setCustomCategory] = useState(false);
@@ -4227,48 +4244,68 @@ function QuickSaleDialog({
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const selectItem = (item: InventoryItem) => {
-    setItemId(item.id);
-    setSelectedItem(item);
-    setUnitPrice(item.salePrice !== null ? String(item.salePrice) : '');
+  const updateLine = (key: string, patch: Partial<QuickSaleLine>) => {
+    setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   };
 
-  const parsedQuantity = Number(quantity);
-  const parsedUnitPrice = Number(unitPrice);
-  const total = parsedQuantity > 0 && parsedUnitPrice >= 0 ? parsedQuantity * parsedUnitPrice : 0;
+  const selectLineItem = (key: string, item: InventoryItem) => {
+    updateLine(key, { itemId: item.id, item, unitPrice: item.salePrice !== null ? String(item.salePrice) : '' });
+  };
+
+  const removeLine = (key: string) => {
+    setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
+  };
+
+  const lineTotal = (line: QuickSaleLine) => {
+    const q = Number(line.quantity);
+    const p = Number(line.unitPrice);
+    return q > 0 && p >= 0 ? q * p : 0;
+  };
+  const grandTotal = lines.reduce((sum, l) => sum + lineTotal(l), 0);
+  const pendingLines = lines.filter((l) => !l.done);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    if (!selectedItem) {
-      setError('اختر الصنف أولًا');
-      return;
-    }
-    if (!quantity || Number.isNaN(parsedQuantity) || parsedQuantity <= 0) {
-      setError('اكتب كمية أكبر من صفر');
-      return;
-    }
-    if (!unitPrice || Number.isNaN(parsedUnitPrice) || parsedUnitPrice < 0) {
-      setError('اكتب سعر بيع صحيح');
-      return;
+    for (const line of pendingLines) {
+      const q = Number(line.quantity);
+      const p = Number(line.unitPrice);
+      if (!line.item) {
+        setError('اختر الصنف لكل بند في السلة');
+        return;
+      }
+      if (!line.quantity || Number.isNaN(q) || q <= 0) {
+        setError(`اكتب كمية أكبر من صفر لصنف "${line.item.name}"`);
+        return;
+      }
+      if (!line.unitPrice || Number.isNaN(p) || p < 0) {
+        setError(`اكتب سعر بيع صحيح لصنف "${line.item.name}"`);
+        return;
+      }
     }
     setError(null);
     setSubmitting(true);
-    try {
+
+    let failedCount = 0;
+    for (const line of pendingLines) {
       const input: QuickInventorySaleInput = {
-        quantity: parsedQuantity,
-        unitPrice: parsedUnitPrice,
+        quantity: Number(line.quantity),
+        unitPrice: Number(line.unitPrice),
         method,
         category: category || undefined,
         note: note.trim() || undefined,
       };
-      await apiPost(`/api/inventory-items/${selectedItem.id}/quick-sale`, input);
-      setSaved(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر تسجيل البيع السريع');
-    } finally {
-      setSubmitting(false);
+      try {
+        await apiPost(`/api/inventory-items/${line.item!.id}/quick-sale`, input);
+        updateLine(line.key, { done: true });
+      } catch (err) {
+        failedCount += 1;
+        setError(`تعذر بيع "${line.item!.name}": ${err instanceof Error ? err.message : 'خطأ غير معروف'}`);
+        break; // stop at the first failure — already-done lines stay marked done, not resubmitted on retry.
+      }
     }
+    setSubmitting(false);
+    if (failedCount === 0) setSaved(true);
   };
 
   if (saved) {
@@ -4278,19 +4315,20 @@ function QuickSaleDialog({
           <DialogHeader>
             <DialogTitle>تم البيع بنجاح</DialogTitle>
           </DialogHeader>
-          <p className="text-success text-sm">
-            اتسجل بيع {parsedQuantity.toLocaleString('en-US')} من "{selectedItem?.name}" — خُصمت من المخزون واتسجلت
-            في الخزينة.
-          </p>
+          <div className="text-success space-y-1 text-sm">
+            {lines.map((l) => (
+              <p key={l.key}>
+                {l.quantity} × "{l.item?.name}"
+              </p>
+            ))}
+            <p>خُصمت من المخزون واتسجلت في الخزينة.</p>
+          </div>
           <div className="flex gap-2">
             <Button
               type="button"
               onClick={() => {
                 setSaved(false);
-                setItemId('');
-                setSelectedItem(null);
-                setQuantity('1');
-                setUnitPrice('');
+                setLines([emptyQuickSaleLine()]);
                 setNote('');
               }}
             >
@@ -4314,47 +4352,72 @@ function QuickSaleDialog({
         <form onSubmit={submit} className="space-y-3">
           {error && <p className="text-destructive text-sm">{error}</p>}
           <p className="text-muted-foreground text-sm">
-            بيع نقدي مباشر — بيخصم من المخزون ويتسجل في الخزينة على طول، من غير أي فاتورة أو مستند.
+            بيع نقدي مباشر — ممكن أكتر من صنف مع بعض، بيخصموا من المخزون ويتسجلوا في الخزينة على طول، من غير أي
+            فاتورة أو مستند.
           </p>
-          <label className="block space-y-1 text-sm">
-            <span className="text-muted-foreground">الصنف</span>
-            <InventoryItemCombobox items={items} value={itemId} onChange={selectItem} placeholder="اختر الصنف…" />
-          </label>
-          {selectedItem && (
-            <p className="text-muted-foreground text-sm">
-              الرصيد الحالي: {selectedItem.quantityOnHand.toLocaleString('en-US')}
-            </p>
-          )}
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block space-y-1 text-sm">
-              <span className="text-muted-foreground">الكمية</span>
-              <input
-                type="number"
-                min={0.001}
-                step="0.001"
-                required
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              />
-            </label>
-            <label className="block space-y-1 text-sm">
-              <span className="text-muted-foreground">سعر القطعة</span>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                required
-                value={unitPrice}
-                onChange={(e) => setUnitPrice(e.target.value)}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-              />
-            </label>
+
+          <div className="space-y-2">
+            {lines.map((line, idx) => (
+              <div
+                key={line.key}
+                className={`border-border grid grid-cols-[1fr_auto_auto_auto] items-end gap-2 rounded-lg border p-2 ${line.done ? 'bg-success/5 opacity-60' : ''}`}
+              >
+                <label className="block space-y-1 text-sm">
+                  {idx === 0 && <span className="text-muted-foreground">الصنف</span>}
+                  <InventoryItemCombobox
+                    items={items}
+                    value={line.itemId}
+                    onChange={(item) => selectLineItem(line.key, item)}
+                    placeholder="اختر الصنف…"
+                    disabled={line.done}
+                  />
+                </label>
+                <label className="block w-24 space-y-1 text-sm">
+                  {idx === 0 && <span className="text-muted-foreground">الكمية</span>}
+                  <input
+                    type="number"
+                    min={0.001}
+                    step="0.001"
+                    required
+                    disabled={line.done}
+                    value={line.quantity}
+                    onChange={(e) => updateLine(line.key, { quantity: e.target.value })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
+                  />
+                </label>
+                <label className="block w-28 space-y-1 text-sm">
+                  {idx === 0 && <span className="text-muted-foreground">سعر القطعة</span>}
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    required
+                    disabled={line.done}
+                    value={line.unitPrice}
+                    onChange={(e) => updateLine(line.key, { unitPrice: e.target.value })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
+                  />
+                </label>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={line.done || lines.length === 1}
+                  onClick={() => removeLine(line.key)}
+                  title="حذف الصنف من السلة"
+                >
+                  ✕
+                </Button>
+              </div>
+            ))}
           </div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setLines((prev) => [...prev, emptyQuickSaleLine()])}>
+            + إضافة صنف تاني
+          </Button>
+
           <p className="text-sm">
             الإجمالي:{' '}
             <span className="font-bold" dir="ltr">
-              {total.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              {grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>{' '}
             ج.م
           </p>
@@ -4425,8 +4488,8 @@ function QuickSaleDialog({
             />
           </label>
           <div className="flex gap-2">
-            <Button type="submit" disabled={submitting}>
-              {submitting ? 'جارٍ الحفظ…' : 'تأكيد البيع'}
+            <Button type="submit" disabled={submitting || pendingLines.length === 0}>
+              {submitting ? 'جارٍ الحفظ…' : pendingLines.length < lines.length ? 'إعادة محاولة الباقي' : 'تأكيد البيع'}
             </Button>
             <Button type="button" variant="secondary" onClick={onClose}>
               إلغاء
