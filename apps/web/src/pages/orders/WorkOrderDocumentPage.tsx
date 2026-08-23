@@ -129,6 +129,16 @@ function ProductionProgressSection({
  * were never asked for one.
  */
 interface OffsetItemBreakdown {
+  /**
+   * Owner (2026-08-24, "المفروض المقاس اللي يتحط المقاس اللي بيتحسب عليه
+   * الطباعة... لو شغلانه 20*30 وهما اكتر من 30 دفتر المفروض هيتطبع على
+   * مقاس 30*40 فا هو ده مقاس التكسير") — the real imposition/print size the
+   * pricing engine actually tiered to (`resolveCalcSize`'s `calcLabel`,
+   * `costCalculation.ts`), frozen straight into `breakdown` same as every
+   * other computed value here. Absent on orders priced before this fix —
+   * `OffsetItemCard` falls back to the size family's own catalog label then.
+   */
+  calcLabel?: string;
   quantity?: number;
   sheetsNeeded?: number;
   printRuns?: number;
@@ -327,7 +337,7 @@ function OffsetItemCard({
           <span className="text-muted-foreground">إلى :</span> <span dir="ltr">{b.numberingEnd ?? '—'}</span>
         </span>
       </div>
-      <Field label="مقاس التكسير" value={sizeFamilyLabel} />
+      <Field label="مقاس التكسير" value={b.calcLabel ?? sizeFamilyLabel} />
       <Field label="مقاس الموديل" value={item.realSizeLabel ?? '—'} />
       <Field label="نوع السلوفان" value={b.sellophaneType ?? '—'} />
       <Field label="عدد الألوان" value={<span dir="ltr">{b.colorCount ?? '—'}</span>} />

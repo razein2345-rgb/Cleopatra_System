@@ -198,6 +198,15 @@ export interface LoosePaperCostInput {
 }
 
 export interface LoosePaperCostResult {
+  /**
+   * Owner (2026-08-24, "المفروض المقاس اللي يتحط المقاس اللي بيتحسب عليه
+   * الطباعة... لو شغلانه 20*30 وهما اكتر من 30 دفتر المفروض هيتطبع على
+   * مقاس 30*40 فا هو ده مقاس التكسير") — the size the job is actually
+   * imposed/printed on (`resolveCalcSize`'s own tiered result), already
+   * computed below and previously discarded. Purely additive: no formula
+   * changed, this just surfaces the value that was already there.
+   */
+  calcLabel: string;
   sheetsNeeded: number;
   paperCost: number;
   zincCost: number;
@@ -219,9 +228,10 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
 
   let sheetsNeeded: number;
   let printUnits: number;
+  let calcLabel: string;
 
   if (family.base === 'GAYER') {
-    const { repeat } = resolveCalcSize({
+    const calc = resolveCalcSize({
       familyKey: input.familyKey,
       realLabel: input.realLabel,
       quantity: input.quantity,
@@ -230,8 +240,9 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
       settings: input.settings,
       calcLabelOverride: input.calcSizeOverride,
     });
-    sheetsNeeded = Math.ceil(input.quantity / repeat) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
+    sheetsNeeded = Math.ceil(input.quantity / calc.repeat) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
     printUnits = input.quantity;
+    calcLabel = calc.calcLabel;
   } else {
     const calc = resolveCalcSize({
       familyKey: input.familyKey,
@@ -244,6 +255,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
     });
     printUnits = input.quantity / calc.repeat;
     sheetsNeeded = Math.ceil(printUnits / calc.calcPiecesPerSheet) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
+    calcLabel = calc.calcLabel;
   }
 
   const paperCost = sheetsNeeded * input.sheetPrice;
@@ -277,6 +289,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
   const total = subtotal * (1 + profitPercentUsed / 100);
 
   return {
+    calcLabel,
     sheetsNeeded,
     paperCost,
     zincCost,
@@ -334,6 +347,8 @@ export interface NotebookCostInput {
 }
 
 export interface NotebookCostResult {
+  /** See `LoosePaperCostResult.calcLabel`'s doc comment — same concept, notebook path. */
+  calcLabel: string;
   totalSheetsFlat: number;
   sheetsNeeded: number;
   paperCost: number;
@@ -409,6 +424,7 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
   const total = subtotal * (1 + profitPercentUsed / 100);
 
   return {
+    calcLabel: calc.calcLabel,
     totalSheetsFlat,
     sheetsNeeded,
     paperCost,
@@ -580,6 +596,8 @@ export interface FolderCostInput {
 }
 
 export interface FolderCostResult {
+  /** See `LoosePaperCostResult.calcLabel`'s doc comment — folders reuse loose paper's sheet-count math, same concept. */
+  calcLabel: string;
   sheetsNeeded: number;
   paperCost: number;
   zincCost: number;
@@ -637,6 +655,7 @@ export function calculateFolderCost(input: FolderCostInput): FolderCostResult {
   const total = subtotal * (1 + profitPercentUsed / 100);
 
   return {
+    calcLabel: base.calcLabel,
     sheetsNeeded: base.sheetsNeeded,
     paperCost: base.paperCost,
     zincCost: base.zincCost,
