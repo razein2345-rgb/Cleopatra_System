@@ -371,7 +371,17 @@ function FullTreasuryView() {
                         </button>
                       )}
                     </td>
-                    <td className="text-muted-foreground p-3">{branchName(entry.branchId)}</td>
+                    <td className="text-muted-foreground p-3">
+                      {canEditEntry ? (
+                        <EditableSelectCell
+                          value={entry.branchId}
+                          options={branches.map((b) => [b.id, b.name] as const)}
+                          onSave={(next) => updateEntryField(entry, { branchId: next })}
+                        />
+                      ) : (
+                        branchName(entry.branchId)
+                      )}
+                    </td>
                     <td className="text-muted-foreground p-3">{staffName(entry.staffId)}</td>
                     <td className="text-muted-foreground p-3">
                       {entry.sourceType === 'INVOICE_PAYMENT' ? 'تحصيل فاتورة تلقائي' : entry.sourceType === 'QUICK_SALE' ? 'بيع سريع' : 'يدوي'}

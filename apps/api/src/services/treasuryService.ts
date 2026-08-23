@@ -197,6 +197,7 @@ export async function updateManualTreasuryEntry(
       note: input.note,
       date: input.date ? new Date(input.date) : undefined,
       partnerId: input.partnerId,
+      branchId: input.branchId,
     },
   });
   return mapTreasuryEntryToDto(updated);

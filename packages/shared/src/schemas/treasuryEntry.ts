@@ -87,6 +87,9 @@ export const updateTreasuryEntrySchema = z.object({
   // اعدله") — a manual entry's customer link was write-once until now
   // (only settable at creation). `null` clears it entirely.
   partnerId: z.string().uuid().nullable().optional(),
+  // Owner (2026-08-23, "عايز اقدر اغير الفرع اللي اتباع منه في الخزينه") —
+  // same "was write-once, now correctable" gap as partnerId above.
+  branchId: z.string().uuid().optional(),
 });
 
 export const treasuryBalanceSchema = z.object({
