@@ -18,7 +18,10 @@ export const orderItemReturnSchema = z.object({
 });
 
 export const createOrderItemReturnSchema = z.object({
-  quantity: z.number().positive(),
+  // Owner (2026-08-23, "مينفعش أي كمية تكون بتقبل تبقى كسر") — matches
+  // `inventoryRetailPricingInputSchema.quantity`'s own `.int()` (the
+  // original sale is always whole pieces, so a return of it must be too).
+  quantity: z.number().int().positive(),
   reason: z.string().trim().min(1).max(1000).optional(),
 });
 

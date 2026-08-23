@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Truck } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import type { Department, WorkflowQueueItem } from '@cleopatra/shared';
+import type { BusinessPartner, Department, WorkflowQueueItem } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import type { DashboardWidgetDefinition } from '../types';
@@ -21,6 +21,10 @@ import type { DashboardWidgetDefinition } from '../types';
  */
 function SupplierPickupWidgetComponent() {
   const [items, setItems] = useState<WorkflowQueueItem[] | null>(null);
+  // Owner (2026-08-23, "ويكتبلي في الداش بورد جمب الطلب هيتجاب من عند
+  // (المورد)") — resolve each stage instance's assignedSupplierId (already
+  // on the DTO — see workflowInstanceService.ts) to a display name.
+  const [suppliers, setSuppliers] = useState<BusinessPartner[]>([]);
 
   useEffect(() => {
     apiGet<Department[]>('/api/departments')
@@ -33,8 +37,10 @@ function SupplierPickupWidgetComponent() {
         return apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?departmentId=${externalSupplier.id}`).then(setItems);
       })
       .catch(() => setItems([]));
+    apiGet<BusinessPartner[]>('/api/partners').then(setSuppliers).catch(() => setSuppliers([]));
   }, []);
 
+  const supplierName = (id: string | null) => (id ? (suppliers.find((s) => s.id === id)?.nameAr ?? null) : null);
   const pending = (items ?? []).filter((i) => i.stageType === 'EXTERNAL');
 
   return (
@@ -57,6 +63,9 @@ function SupplierPickupWidgetComponent() {
               >
                 <span>
                   {i.workOrderNumber ?? '—'} — {i.customerName ?? 'عميل'}
+                  {supplierName(i.assignedSupplierId) && (
+                    <span className="text-muted-foreground"> — من عند {supplierName(i.assignedSupplierId)}</span>
+                  )}
                 </span>
                 {i.sentDate && (
                   <span className="text-muted-foreground text-xs">

@@ -743,6 +743,10 @@ function AddReturnDialog({
       setError('اكتب كمية أكبر من صفر');
       return;
     }
+    if (!Number.isInteger(parsed)) {
+      setError('الكمية لازم تكون رقم صحيح، مش كسر');
+      return;
+    }
     if (selected && parsed > selected.returnable) {
       setError(`أقصى كمية قابلة للإرجاع: ${selected.returnable}`);
       return;
