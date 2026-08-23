@@ -83,6 +83,10 @@ export const updateTreasuryEntrySchema = z.object({
   category: z.string().trim().min(1).max(100).nullable().optional(),
   note: z.string().trim().min(1).max(1000).nullable().optional(),
   date: z.string().optional(),
+  // Owner (2026-08-23, "حصل خطأ اتسجل مصروف على عميل وده خطأ فا عايز
+  // اعدله") — a manual entry's customer link was write-once until now
+  // (only settable at creation). `null` clears it entirely.
+  partnerId: z.string().uuid().nullable().optional(),
 });
 
 export const treasuryBalanceSchema = z.object({

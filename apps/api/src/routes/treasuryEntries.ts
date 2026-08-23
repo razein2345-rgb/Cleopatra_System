@@ -6,6 +6,7 @@ import { requirePermission } from '../middlewares/requirePermission.js';
 import {
   closeTreasuryDayHandler,
   createTreasuryEntryHandler,
+  deleteQuickSaleEntryHandler,
   deleteTreasuryEntryHandler,
   getDayClosurePreviewHandler,
   getMyTreasurySummaryHandler,
@@ -13,6 +14,7 @@ import {
   getTreasuryBalanceHandler,
   listTreasuryEntriesHandler,
   reopenTreasuryDayHandler,
+  updateQuickSaleEntryHandler,
   updateTreasuryEntryHandler,
 } from '../controllers/treasuryEntries.js';
 
@@ -60,3 +62,9 @@ treasuryEntriesRouter.post('/reopen-day', requirePermission('treasury.create'), 
 treasuryEntriesRouter.post('/', requirePermission('treasury.create'), createTreasuryEntryHandler);
 treasuryEntriesRouter.put('/:id', requirePermission('treasury.edit'), updateTreasuryEntryHandler);
 treasuryEntriesRouter.delete('/:id', requirePermission('treasury.delete'), deleteTreasuryEntryHandler);
+// Owner (2026-08-23, "البيع السريع المفروض اقدر اعدله من الخزينة") — a
+// QUICK_SALE entry's real source of truth is its StockMovement, so this
+// is gated on `inventory.*` (the permission that already governs editing
+// stock movements directly), not `treasury.*`.
+treasuryEntriesRouter.put('/:id/quick-sale-movement', requirePermission('inventory.edit'), updateQuickSaleEntryHandler);
+treasuryEntriesRouter.delete('/:id/quick-sale-movement', requirePermission('inventory.delete'), deleteQuickSaleEntryHandler);

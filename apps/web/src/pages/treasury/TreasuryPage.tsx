@@ -112,6 +112,18 @@ function FullTreasuryView() {
     refreshAll();
   };
 
+  /** Owner (2026-08-23, "البيع السريع المفروض اقدر اعدله من الخزينة احذفه مثلا وهكذا") — reuses the same StockMovement delete the inventory screen already had (restocks the item automatically), just reached from here. */
+  const removeQuickSaleEntry = async (entry: TreasuryEntry) => {
+    if (!(await confirm({ title: 'حذف حركة البيع السريع دي؟', description: 'هيترجع الصنف للمخزون تلقائيًا.', destructive: true }))) return;
+    setError(null);
+    try {
+      await apiDelete(`/api/treasury-entries/${entry.id}/quick-sale-movement`);
+      refreshAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حذف حركة البيع السريع');
+    }
+  };
+
   if (error) return <div className="text-destructive">{error}</div>;
 
   return (
@@ -335,16 +347,44 @@ function FullTreasuryView() {
                         (entry.note ?? '—')
                       )}
                     </td>
-                    <td className="p-3">{partnerName(entry.partnerId)}</td>
+                    <td className="p-3">
+                      {canEditEntry ? (
+                        <Combobox
+                          items={partners}
+                          value={entry.partnerId ?? ''}
+                          getKey={(p) => p.id}
+                          getLabel={(p) => p.nameAr}
+                          onChange={(p) => updateEntryField(entry, { partnerId: p.id })}
+                          placeholder="— بدون —"
+                          className="min-w-[140px]"
+                        />
+                      ) : (
+                        partnerName(entry.partnerId)
+                      )}
+                      {canEditEntry && entry.partnerId && (
+                        <button
+                          type="button"
+                          onClick={() => void updateEntryField(entry, { partnerId: null })}
+                          className="text-destructive ms-1 text-xs hover:underline"
+                        >
+                          ✕ إزالة
+                        </button>
+                      )}
+                    </td>
                     <td className="text-muted-foreground p-3">{branchName(entry.branchId)}</td>
                     <td className="text-muted-foreground p-3">{staffName(entry.staffId)}</td>
                     <td className="text-muted-foreground p-3">
-                      {entry.sourceType === 'INVOICE_PAYMENT' ? 'تحصيل فاتورة تلقائي' : 'يدوي'}
+                      {entry.sourceType === 'INVOICE_PAYMENT' ? 'تحصيل فاتورة تلقائي' : entry.sourceType === 'QUICK_SALE' ? 'بيع سريع' : 'يدوي'}
                     </td>
                     {can('treasury.delete') && (
                       <td className="p-3">
                         {entry.sourceType === 'MANUAL' && (
                           <Button type="button" variant="ghost" size="sm" onClick={() => void removeEntry(entry)}>
+                            حذف
+                          </Button>
+                        )}
+                        {entry.sourceType === 'QUICK_SALE' && can('inventory.delete') && (
+                          <Button type="button" variant="ghost" size="sm" onClick={() => void removeQuickSaleEntry(entry)}>
                             حذف
                           </Button>
                         )}
@@ -524,7 +564,30 @@ function ReceptionTreasuryView() {
                         (entry.note ?? '—')
                       )}
                     </td>
-                    <td className="p-3">{partnerName(entry.partnerId)}</td>
+                    <td className="p-3">
+                      {canEditEntry ? (
+                        <Combobox
+                          items={partners}
+                          value={entry.partnerId ?? ''}
+                          getKey={(p) => p.id}
+                          getLabel={(p) => p.nameAr}
+                          onChange={(p) => updateEntryField(entry, { partnerId: p.id })}
+                          placeholder="— بدون —"
+                          className="min-w-[140px]"
+                        />
+                      ) : (
+                        partnerName(entry.partnerId)
+                      )}
+                      {canEditEntry && entry.partnerId && (
+                        <button
+                          type="button"
+                          onClick={() => void updateEntryField(entry, { partnerId: null })}
+                          className="text-destructive ms-1 text-xs hover:underline"
+                        >
+                          ✕ إزالة
+                        </button>
+                      )}
+                    </td>
                     <td className="text-muted-foreground p-3">{branchName(entry.branchId)}</td>
                     {can('treasury.delete') && (
                       <td className="p-3">

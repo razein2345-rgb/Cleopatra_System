@@ -1,10 +1,12 @@
 import type { Request, Response } from 'express';
+import { prisma } from '../lib/prisma.js';
 import {
   closeTreasuryDaySchema,
   createTreasuryEntrySchema,
   hasPermission,
   reopenTreasuryDaySchema,
   treasuryTypeSchema,
+  updateStockMovementSchema,
   updateTreasuryEntrySchema,
 } from '@cleopatra/shared';
 import {
@@ -23,6 +25,7 @@ import {
   TreasuryEntryNotFoundError,
   updateManualTreasuryEntry,
 } from '../services/treasuryService.js';
+import { deleteStockMovement, StockMovementNotFoundError, updateStockMovement } from '../services/inventoryService.js';
 import { recordAudit } from '../services/auditService.js';
 
 /**
@@ -232,6 +235,92 @@ export async function updateTreasuryEntryHandler(req: Request<{ id: string }>, r
   });
 
   res.json({ success: true, data: updated });
+}
+
+/**
+ * Owner (2026-08-23, "البيع السريع المفروض اقدر اعدله من الخزينة احذفه
+ * مثلا وهكذا") — a QUICK_SALE-sourced entry couldn't be corrected from
+ * here at all (`updateManualTreasuryEntry`/`deleteManualTreasuryEntry`
+ * are deliberately MANUAL-only, so they never applied to it — see
+ * `ManualEntryOnlyError`). Rather than loosen those to cover every
+ * automatic sourceType (which would let an INVOICE_PAYMENT/RETURN/
+ * SALARY_PAYMENT entry drift out of sync with the Payment/OrderItemReturn/
+ * SalaryPayment row it's paired with), this reuses the existing, already-
+ * correct `updateStockMovement`/`deleteStockMovement` — a quick sale's
+ * real source of truth is its StockMovement, and those two already
+ * cascade the linked TreasuryEntry correctly. This handler is just a
+ * treasury-entry-id-shaped door into that same logic, so the Treasury
+ * screen doesn't need to know the underlying inventory item id.
+ */
+async function loadQuickSaleMovementId(entryId: string, res: Response): Promise<string | null> {
+  const entry = await prisma.treasuryEntry.findUnique({ where: { id: entryId } });
+  if (!entry || entry.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Treasury entry not found' } });
+    return null;
+  }
+  if (entry.sourceType !== 'QUICK_SALE' || !entry.stockMovementId) {
+    res.status(400).json({ success: false, error: { message: 'This entry has no linked quick-sale movement', code: 'NOT_QUICK_SALE' } });
+    return null;
+  }
+  return entry.stockMovementId;
+}
+
+export async function updateQuickSaleEntryHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const movementId = await loadQuickSaleMovementId(req.params.id, res);
+  if (!movementId) return;
+
+  const input = updateStockMovementSchema.parse(req.body);
+  let result;
+  try {
+    result = await updateStockMovement(movementId, input);
+  } catch (err) {
+    if (err instanceof StockMovementNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'StockMovement',
+    entityId: movementId,
+    action: 'UPDATE',
+    performedById: auth.staffId,
+    branchId: result.previous.branchId,
+    previousValue: result.previous,
+    newValue: input,
+  });
+
+  res.json({ success: true, data: result.updatedTreasuryEntry });
+}
+
+export async function deleteQuickSaleEntryHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const movementId = await loadQuickSaleMovementId(req.params.id, res);
+  if (!movementId) return;
+
+  let result;
+  try {
+    result = await deleteStockMovement(movementId, auth.staffId);
+  } catch (err) {
+    if (err instanceof StockMovementNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'StockMovement',
+    entityId: movementId,
+    action: 'DELETE',
+    performedById: auth.staffId,
+    branchId: result.previous.branchId,
+    previousValue: result.previous,
+  });
+
+  res.json({ success: true, data: result.reversedTreasuryEntry });
 }
 
 export async function deleteTreasuryEntryHandler(req: Request<{ id: string }>, res: Response) {
