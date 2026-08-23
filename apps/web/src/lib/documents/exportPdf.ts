@@ -21,11 +21,20 @@
  * both problems entirely, at the cost of the PDF text not being
  * selectable/searchable — an acceptable trade for a printed invoice.
  *
- * `jspdf`/`html2canvas` are loaded via dynamic `import()`, not a static
+ * `jspdf`/`html2canvas-pro` are loaded via dynamic `import()`, not a static
  * top-of-file import — UX_PRODUCT_AUDIT.md § مشكلة 12.1 already flags this
  * app's single ~1.25MB bundle with no code splitting; these two libraries
  * alone add ~600KB, and the overwhelming majority of page loads never
  * touch a document page's "تنزيل PDF" button at all.
+ *
+ * Owner (2026-08-23, "مفيش اوبشن تصدير Pdf دايركت للفاتورة... Attempting
+ * to parse an unsupported color function 'oklab'") — plain `html2canvas`
+ * (last meaningfully maintained before OKLCH/OKLAB became common) can't
+ * read the CSS color functions Tailwind v4's own theme is built on, so
+ * every export threw the moment it tried to screenshot any themed
+ * element. Swapped for `html2canvas-pro`, a drop-in fork with the exact
+ * same API that adds oklch/oklab/lab/color-mix support — no other line in
+ * this file changes.
  */
 export async function downloadDocumentAsPdf(filename: string): Promise<void> {
   const element = document.querySelector<HTMLElement>('.document-print-root');
@@ -33,7 +42,7 @@ export async function downloadDocumentAsPdf(filename: string): Promise<void> {
     throw new Error('لا يوجد مستند لتصديره');
   }
 
-  const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import('jspdf'), import('html2canvas')]);
+  const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import('jspdf'), import('html2canvas-pro')]);
 
   const canvas = await html2canvas(element, {
     scale: 2,
