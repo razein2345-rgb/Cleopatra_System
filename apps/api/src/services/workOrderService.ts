@@ -12,7 +12,7 @@ import { getLatestPublishedTemplate } from './workflowTemplateService.js';
 import { mapOrderItemToDto } from './orderService.js';
 
 export const WORK_ORDER_INCLUDE = {
-  items: { include: { materials: { orderBy: { sortOrder: 'asc' } } } },
+  items: { include: { materials: { orderBy: { sortOrder: 'asc' } }, returns: { orderBy: { createdAt: 'asc' } } } },
   workflowInstance: { include: WORKFLOW_INSTANCE_INCLUDE },
 } satisfies Prisma.WorkOrderInclude;
 

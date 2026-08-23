@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createPaymentSchema, paymentSchema } from './payment.js';
 import { orderItemPricingInputSchema } from './orderItemPricing.js';
+import { orderItemReturnSchema } from './orderItemReturn.js';
 
 export const orderStatusSchema = z.enum([
   'DRAFT',
@@ -137,6 +138,9 @@ export const orderItemSchema = z.object({
   productionStatus: orderItemProductionStatusSchema,
   productionUpdatedAt: z.string().nullable(),
   productionUpdatedById: z.string().uuid().nullable(),
+  // Owner (2026-08-23, "مرتجعات") — INVENTORY_RETAIL items only; empty for
+  // every other kind. Several rows = partial-quantity returns over time.
+  returns: z.array(orderItemReturnSchema),
   createdAt: z.string(),
 });
 
@@ -188,6 +192,13 @@ export const orderSchema = z.object({
   // `isDelayed` (see workflowInstanceService.ts's computeIsDelayed).
   payments: z.array(paymentSchema),
   paidTotal: z.number(),
+  // Owner (2026-08-23, "مرتجعات") — sum of every item's returns' refund
+  // amounts, computed at read time (never stored — same discipline as
+  // `paidTotal`). `finalTotal` itself is never mutated (rule 9 — an
+  // order's own history stays frozen); `netTotal = finalTotal -
+  // returnedTotal` is what `remainingBalance` is actually owed against.
+  returnedTotal: z.number(),
+  netTotal: z.number(),
   remainingBalance: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),

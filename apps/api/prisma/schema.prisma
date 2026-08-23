@@ -197,6 +197,12 @@ enum TreasurySourceType {
   /// action, paired atomically with a `SalaryPayment`. See
   /// `TreasuryEntry.salaryPaymentId`.
   SALARY_PAYMENT
+  /// Owner (2026-08-23, "عند الخطأ في بيع صنف من المخزون: إرجاع الصنف
+  /// الخطأ للمخزون") — a cash refund for a returned `INVENTORY_RETAIL`
+  /// item, paired atomically with an `OrderItemReturn` (and its own `IN`
+  /// StockMovement via `restockForOrderItem`). See
+  /// `TreasuryEntry.orderItemReturnId`.
+  RETURN
 }
 
 /// FEATURE-008 (2026-08-13) — how often an employee is paid; drives which
@@ -439,6 +445,7 @@ model Branch {
   treasuryDayClosures TreasuryDayClosure[]
   machines            Machine[]
   orderTemplates      OrderTemplate[]
+  orderItemReturns    OrderItemReturn[]
 
   @@index([isDeleted])
 }
@@ -814,6 +821,7 @@ model StaffProfile {
   treasuryDayClosuresReopened TreasuryDayClosure[]       @relation("TreasuryDayClosureReopenedBy")
   orderTemplatesCreated      OrderTemplate[]
   orderItemProductionUpdates OrderItem[]                @relation("OrderItemProductionUpdatedBy")
+  orderItemReturnsRecorded   OrderItemReturn[]
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -1629,12 +1637,50 @@ model OrderItem {
   productionUpdatedById String?       @db.Uuid
   productionUpdatedBy   StaffProfile? @relation("OrderItemProductionUpdatedBy", fields: [productionUpdatedById], references: [id])
 
+  /// Owner (2026-08-23, "مرتجعات: بضاعة من المخزون فقط") — only ever
+  /// populated for `breakdown.kind === 'INVENTORY_RETAIL'` items.
+  returns OrderItemReturn[]
+
   createdAt DateTime @default(now())
 
   @@index([inventoryItemId])
   @@index([workOrderId])
   @@index([orderId, productionTrack])
   @@index([groupId])
+}
+
+/// Owner (2026-08-23, "مرتجعات" — عمل مرتجع لبضاعة جاهزة بيعت غلط، رجّع
+/// الصنف الخطأ للمخزون). Deliberately scoped to `INVENTORY_RETAIL` items
+/// only (the confirmed v1 scope — offset/digital production items aren't
+/// returnable this way). Partial-quantity returns are supported: a single
+/// `OrderItem` can have several `OrderItemReturn` rows, capped in the
+/// service layer at `sheetsConsumed` (the quantity originally sold).
+/// Never mutates `Order.finalTotal`/`OrderItem.itemTotal` (rule 9 — history
+/// stays frozen); `returnedTotal`/`netTotal` are computed at read time from
+/// these rows, same discipline as `paidTotal`/`remainingBalance`.
+model OrderItemReturn {
+  id          String    @id @default(uuid()) @db.Uuid
+  orderItemId String    @db.Uuid
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  quantity     Decimal @db.Decimal(14, 3)
+  refundAmount Decimal @db.Decimal(12, 2)
+  reason       String?
+
+  /// Owner (2026-08-20 decision, reused here 2026-08-23, "كاش في الدرج
+  /// دائمًا") — the refund is always paid out as cash, regardless of how
+  /// the original invoice was paid. See the paired `TreasuryEntry`.
+  treasuryEntry TreasuryEntry?
+
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation(fields: [recordedById], references: [id])
+  branchId     String       @db.Uuid
+  branch       Branch       @relation(fields: [branchId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([orderItemId])
+  @@index([branchId])
 }
 
 /// "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19, owner: "عايز أقدر أعمل
@@ -2395,6 +2441,10 @@ model TreasuryEntry {
   /// `sourceType: 'SALARY_PAYMENT'` only — see `SalaryPayment`'s own doc comment.
   salaryPaymentId String?        @unique @db.Uuid
   salaryPayment   SalaryPayment? @relation(fields: [salaryPaymentId], references: [id], onDelete: SetNull)
+
+  /// `sourceType: 'RETURN'` only — see `OrderItemReturn`'s own doc comment.
+  orderItemReturnId String?          @unique @db.Uuid
+  orderItemReturn   OrderItemReturn? @relation(fields: [orderItemReturnId], references: [id], onDelete: SetNull)
 
   staffId  String       @db.Uuid // employee who recorded it (or who saved the source invoice)
   staff    StaffProfile @relation(fields: [staffId], references: [id])

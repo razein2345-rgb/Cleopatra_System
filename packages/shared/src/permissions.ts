@@ -207,6 +207,16 @@ const MODULES: ModuleDef[] = [
       { action: 'convert', label: 'Convert a lead to a business partner' },
     ],
   },
+  {
+    // Owner (2026-08-23, "مرتجعات") — deliberately its own top-level
+    // module, NOT nested under `orders.*` — same reasoning as `payments`
+    // above: a return moves both stock and cash, so it needs a separate,
+    // explicit grant rather than riding along with general order-edit
+    // access.
+    module: 'returns',
+    moduleLabel: 'Returns',
+    actions: [{ action: 'create', label: 'Record a return for a sold inventory item' }],
+  },
 ];
 
 export type PermissionCatalogEntry = { key: string; module: string; label: string };

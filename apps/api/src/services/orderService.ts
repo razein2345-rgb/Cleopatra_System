@@ -1,9 +1,11 @@
 import type { Prisma } from '../generated/prisma/client.js';
 import type {
   CreateOrderItemInput,
+  CreateOrderItemReturnInput,
   CreatePaymentInput,
   Order,
   OrderItem,
+  OrderItemReturn,
   Payment,
   ProductionTrack,
   SalesSummary,
@@ -87,7 +89,15 @@ function assertProductionTrackConsistentWithKind(kind: string, productionTrack: 
  * so `mapOrderToDto` can always compute `paidTotal`/`remainingBalance`.
  */
 export const ORDER_INCLUDE = {
-  items: { include: { materials: { orderBy: { sortOrder: 'asc' } } } },
+  items: {
+    include: {
+      materials: { orderBy: { sortOrder: 'asc' } },
+      // Owner (2026-08-23, "مرتجعات") — needed so `mapOrderToDto` can
+      // always compute `returnedTotal`/`netTotal`, same pattern as
+      // `payments` below.
+      returns: { orderBy: { createdAt: 'asc' } },
+    },
+  },
   quotationOrigin: { select: { id: true } },
   // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was a to-one
   // `workOrder` select; now a filtered list (Prisma supports `where` on a
@@ -99,8 +109,21 @@ export const ORDER_INCLUDE = {
 } satisfies Prisma.OrderInclude;
 
 type OrderRecord = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
-type OrderItemRecord = Prisma.OrderItemGetPayload<{ include: { materials: true } }>;
+type OrderItemRecord = Prisma.OrderItemGetPayload<{ include: { materials: true; returns: true } }>;
 type PaymentRecord = Prisma.PaymentGetPayload<object>;
+type OrderItemReturnRecord = Prisma.OrderItemReturnGetPayload<object>;
+
+export function mapOrderItemReturnToDto(ret: OrderItemReturnRecord): OrderItemReturn {
+  return {
+    id: ret.id,
+    orderItemId: ret.orderItemId,
+    quantity: ret.quantity.toNumber(),
+    refundAmount: ret.refundAmount.toNumber(),
+    reason: ret.reason,
+    recordedById: ret.recordedById,
+    createdAt: ret.createdAt.toISOString(),
+  };
+}
 
 export function mapOrderItemToDto(item: OrderItemRecord): OrderItem {
   return {
@@ -131,6 +154,7 @@ export function mapOrderItemToDto(item: OrderItemRecord): OrderItem {
     productionStatus: item.productionStatus,
     productionUpdatedAt: item.productionUpdatedAt?.toISOString() ?? null,
     productionUpdatedById: item.productionUpdatedById,
+    returns: item.returns.map(mapOrderItemReturnToDto),
     createdAt: item.createdAt.toISOString(),
   };
 }
@@ -218,6 +242,14 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
   const payments = order.payments.map(mapPaymentToDto);
   const paidTotal = payments.reduce((sum, p) => sum + p.amount, 0);
   const finalTotal = order.finalTotal.toNumber();
+  // Owner (2026-08-23, "مرتجعات") — summed across every item's returns.
+  // `finalTotal` itself is never mutated (rule 9); `netTotal` is what's
+  // actually owed once returns are accounted for.
+  const returnedTotal = order.items.reduce(
+    (sum, item) => sum + item.returns.reduce((s, r) => s + r.refundAmount.toNumber(), 0),
+    0,
+  );
+  const netTotal = finalTotal - returnedTotal;
   return {
     id: order.id,
     invoiceNumber: order.invoiceNumber,
@@ -242,7 +274,9 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
     // stored (same discipline as computeIsDelayed).
     payments,
     paidTotal,
-    remainingBalance: finalTotal - paidTotal,
+    returnedTotal,
+    netTotal,
+    remainingBalance: netTotal - paidTotal,
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
   };
@@ -1003,7 +1037,7 @@ export async function updateOrderItemProduction(
       productionUpdatedAt: new Date(),
       productionUpdatedById: updatedById,
     },
-    include: { materials: true },
+    include: { materials: true, returns: true },
   });
   return mapOrderItemToDto(updated);
 }
@@ -1189,6 +1223,98 @@ export async function deletePayment(
   });
 }
 
+/** Thrown for a return that fails a business-rule check (wrong item kind, quantity exceeds what's returnable) — 400, not 404/500. */
+export class ReturnNotAllowedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReturnNotAllowedError';
+  }
+}
+
+/**
+ * Owner (2026-08-23, "مرتجعات: بضاعة من المخزون فقط... يقدر يحدّد الكمية
+ * المرتجعة") — scoped to `INVENTORY_RETAIL` items only (checked via the
+ * frozen `breakdown.kind`, confirmed live to be the same top-level field
+ * `deductStockForOrderItem` already reads via `materialsToDeduct`), and
+ * supports partial-quantity returns: a single item can be returned across
+ * several calls, capped at `sheetsConsumed` minus everything already
+ * returned. Restocks inventory, refunds cash from the drawer (owner,
+ * "كاش في الدرج دائمًا" — always CASH regardless of the original payment
+ * method), and auto-reopens the branch's treasury day if it was already
+ * closed (owner, "يفتح اليوم المقفول تلقائيًا") — same `reopenDayIfClosed`
+ * helper `updatePayment`/`deletePayment` already use. Never mutates
+ * `Order.finalTotal`/`OrderItem.itemTotal` (rule 9 — frozen history);
+ * `returnedTotal`/`netTotal` are computed at read time by `mapOrderToDto`.
+ */
+export async function createReturn(
+  orderId: string,
+  orderItemId: string,
+  input: CreateOrderItemReturnInput,
+  staffId: string,
+): Promise<{ order: OrderRecord; created: OrderItemReturn }> {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({ where: { id: orderId } });
+    if (!order || order.isDeleted) {
+      throw new OrderNotFoundError();
+    }
+    const item = await tx.orderItem.findUnique({ where: { id: orderItemId }, include: { returns: true } });
+    if (!item || item.orderId !== orderId) {
+      throw new OrderItemNotFoundError();
+    }
+
+    const breakdown = item.breakdown as { kind?: string; unitPrice?: number } | null;
+    if (breakdown?.kind !== 'INVENTORY_RETAIL' || !item.inventoryItemId || !item.sheetsConsumed) {
+      throw new ReturnNotAllowedError('Only sold inventory items (INVENTORY_RETAIL) can be returned');
+    }
+
+    const soldQuantity = item.sheetsConsumed.toNumber();
+    const alreadyReturned = item.returns.reduce((sum, r) => sum + r.quantity.toNumber(), 0);
+    const returnable = soldQuantity - alreadyReturned;
+    if (input.quantity > returnable) {
+      throw new ReturnNotAllowedError(`Requested quantity (${input.quantity}) exceeds returnable quantity (${returnable})`);
+    }
+
+    const unitPrice =
+      typeof breakdown.unitPrice === 'number' ? breakdown.unitPrice : (item.itemTotal?.toNumber() ?? 0) / soldQuantity;
+    const refundAmount = Math.round(unitPrice * input.quantity * 100) / 100;
+
+    await restockForOrderItem(tx, item.inventoryItemId, order.branchId, input.quantity, `مرتجع فاتورة ${order.invoiceNumber}`);
+
+    const created = await tx.orderItemReturn.create({
+      data: {
+        orderItemId: item.id,
+        quantity: input.quantity,
+        refundAmount,
+        reason: input.reason,
+        recordedById: staffId,
+        branchId: order.branchId,
+      },
+    });
+
+    await tx.treasuryEntry.create({
+      data: {
+        type: 'EXPENSE',
+        amount: refundAmount,
+        method: 'CASH',
+        category: 'مرتجع',
+        note: `مرتجع على الفاتورة ${order.invoiceNumber}`,
+        date: new Date(),
+        sourceType: 'RETURN',
+        orderId: order.id,
+        orderItemReturnId: created.id,
+        partnerId: order.partnerId,
+        staffId,
+        branchId: order.branchId,
+      },
+    });
+
+    await reopenDayIfClosed(order.branchId, new Date(), staffId, `مرتجع على الفاتورة ${order.invoiceNumber}`, tx);
+
+    const fullOrder = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: ORDER_INCLUDE });
+    return { order: fullOrder, created: mapOrderItemReturnToDto(created) };
+  });
+}
+
 /**
  * UX_PRODUCT_AUDIT.md § مشكلة 2.1 ("مفيش أي Widget مالي/تجاري لصاحب
  * المشروع") — no aggregate sales-total query existed anywhere in the
@@ -1227,7 +1353,13 @@ export async function getSalesSummary(): Promise<SalesSummary> {
     // `mapOrderToDto` already uses.
     prisma.order.findMany({
       where: baseWhere,
-      select: { finalTotal: true, payments: { where: { isDeleted: false }, select: { amount: true } } },
+      select: {
+        finalTotal: true,
+        payments: { where: { isDeleted: false }, select: { amount: true } },
+        // Owner (2026-08-23, "مرتجعات") — subtract returned amounts so a
+        // fully-returned invoice doesn't still count toward receivables.
+        items: { select: { returns: { select: { refundAmount: true } } } },
+      },
     }),
   ]);
 
@@ -1235,7 +1367,11 @@ export async function getSalesSummary(): Promise<SalesSummary> {
   let receivablesCount = 0;
   for (const order of unpaidCandidates) {
     const paid = order.payments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
-    const remaining = order.finalTotal.toNumber() - paid;
+    const returned = order.items.reduce(
+      (sum, item) => sum + item.returns.reduce((s, r) => s + r.refundAmount.toNumber(), 0),
+      0,
+    );
+    const remaining = order.finalTotal.toNumber() - returned - paid;
     if (remaining > 0) {
       receivablesTotal += remaining;
       receivablesCount += 1;

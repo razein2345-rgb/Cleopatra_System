@@ -61,6 +61,9 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     // default (SUPER_ADMIN already covered via the global bypass), but
     // never bundled into any other role's grant automatically.
     'payments.edit',
+    // Owner (2026-08-23, "مرتجعات") — same reasoning as `payments.edit`
+    // above: a deliberately separate grant, ADMIN-only by default.
+    'returns.create',
     'roles.view',
     'permissions.view',
   ],

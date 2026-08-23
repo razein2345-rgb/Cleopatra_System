@@ -35,6 +35,7 @@ export * from './schemas/workflowInstance.js';
 export * from './schemas/workOrder.js';
 export * from './schemas/documentTemplate.js';
 export * from './schemas/payment.js';
+export * from './schemas/orderItemReturn.js';
 export * from './schemas/attachment.js';
 export * from './schemas/treasuryEntry.js';
 export * from './pricing/sizeCalculation.js';

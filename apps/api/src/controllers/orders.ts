@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import {
+  createOrderItemReturnSchema,
   createOrderSchema,
   createPaymentSchema,
   hasPermission,
@@ -10,6 +11,7 @@ import {
 import { prisma } from '../lib/prisma.js';
 import {
   createOrder,
+  createReturn,
   deletePayment,
   DeliveryDateBeforeOrderDateError,
   deleteOrder,
@@ -17,6 +19,7 @@ import {
   mapOrderToDto,
   OrderHasPaymentsError,
   OrderHasWorkOrderError,
+  OrderItemNotFoundError,
   OrderNotFoundError,
   ORDER_INCLUDE,
   PartnerRequiredError,
@@ -24,6 +27,7 @@ import {
   PricingInputError,
   recordPayment,
   resolveItemCatalogNames,
+  ReturnNotAllowedError,
   setOrderPartner,
   updateOrder,
   updatePayment,
@@ -444,6 +448,52 @@ export async function deletePaymentHandler(req: Request<{ id: string; paymentId:
     branchId: order.branchId,
     partnerId: order.partnerId,
     previousValue: { method: previous.method, amount: previous.amount },
+  });
+
+  res.json({ success: true, data: mapOrderToDto(order, true) });
+}
+
+/**
+ * Owner (2026-08-23, "مرتجعات: عمل مرتجع... عند الخطأ في بيع صنف من
+ * المخزون: إرجاع الصنف الخطأ للمخزون، سحب الصنف الصحيح فورًا") — the
+ * "إرجاع الصنف الخطأ" half. Gated on `returns.create`, deliberately
+ * separate from `orders.edit` — see that permission module's own comment.
+ */
+export async function createReturnHandler(req: Request<{ id: string; itemId: string }>, res: Response) {
+  const auth = req.auth!;
+  const orderBranchId = await loadOrderBranchOr404(req.params.id, res);
+  if (!orderBranchId) return;
+  if (!canAccessBranch(auth, orderBranchId)) {
+    forbidBranch(res);
+    return;
+  }
+
+  const input = createOrderItemReturnSchema.parse(req.body);
+
+  let result;
+  try {
+    result = await createReturn(req.params.id, req.params.itemId, input, auth.staffId);
+  } catch (err) {
+    if (err instanceof OrderNotFoundError || err instanceof OrderItemNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof ReturnNotAllowedError) {
+      res.status(400).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+  const { order, created } = result;
+
+  await recordAudit({
+    entityType: 'OrderItemReturn',
+    entityId: created.id,
+    action: 'CREATE',
+    performedById: auth.staffId,
+    branchId: order.branchId,
+    partnerId: order.partnerId,
+    newValue: { orderItemId: created.orderItemId, quantity: created.quantity, refundAmount: created.refundAmount, reason: created.reason },
   });
 
   res.json({ success: true, data: mapOrderToDto(order, true) });

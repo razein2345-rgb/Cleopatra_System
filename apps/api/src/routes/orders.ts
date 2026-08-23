@@ -3,6 +3,7 @@ import { requireAuth } from '../middlewares/requireAuth.js';
 import { requirePermission } from '../middlewares/requirePermission.js';
 import {
   createOrderHandler,
+  createReturnHandler,
   deleteOrderHandler,
   deletePaymentHandler,
   getOrder,
@@ -44,3 +45,6 @@ ordersRouter.delete('/:id/payments/:paymentId', requirePermission('payments.edit
 // Owner (2026-08-20, "فاتورة كانت معمولة عند نادي المهندسين... محتاج اعدلها
 // واخليها بدون عميل") — assign/remove the customer on an existing invoice.
 ordersRouter.put('/:id/partner', requirePermission('orders.edit'), setOrderPartnerHandler);
+// Owner (2026-08-23, "مرتجعات") — deliberately `returns.create`, not
+// `orders.edit` — see permissions.ts's own comment on that module.
+ordersRouter.post('/:id/items/:itemId/return', requirePermission('returns.create'), createReturnHandler);

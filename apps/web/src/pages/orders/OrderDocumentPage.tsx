@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, Payment, PaymentMethod, User } from '@cleopatra/shared';
+import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem, Payment, PaymentMethod, User } from '@cleopatra/shared';
 import { PRODUCTION_TRACK_LABELS } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -66,6 +66,8 @@ export function OrderDocumentPage() {
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [paymentActionError, setPaymentActionError] = useState<string | null>(null);
   const [paymentActionBusy, setPaymentActionBusy] = useState<string | null>(null);
+  /** Owner (2026-08-23, "مرتجعات") — gated on the dedicated `returns.create` permission, not `orders.edit`. */
+  const [showAddReturn, setShowAddReturn] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -114,6 +116,27 @@ export function OrderDocumentPage() {
   };
 
   const canGoWalkIn = order.items.every((i) => WALK_IN_ALLOWED_KINDS.has((i.breakdown as { kind?: string } | null)?.kind ?? ''));
+
+  // Owner (2026-08-23, "مرتجعات: بضاعة من المخزون فقط... يقدر يحدّد
+  // الكمية المرتجعة") — only INVENTORY_RETAIL items, only what's still
+  // returnable (sold minus already returned).
+  const returnableItems = order.items
+    .map((item) => {
+      const breakdown = item.breakdown as { kind?: string; itemName?: string | null } | null;
+      const sold = item.sheetsConsumed ?? 0;
+      const alreadyReturned = item.returns.reduce((sum, r) => sum + r.quantity, 0);
+      const returnable = sold - alreadyReturned;
+      const name = breakdown?.itemName ?? item.kind ?? '—';
+      return { item, name, returnable };
+    })
+    .filter(({ item, returnable }) => (item.breakdown as { kind?: string } | null)?.kind === 'INVENTORY_RETAIL' && returnable > 0);
+
+  const allReturns = order.items.flatMap((item) =>
+    item.returns.map((r) => ({
+      ...r,
+      itemName: (item.breakdown as { itemName?: string | null } | null)?.itemName ?? item.kind ?? '—',
+    })),
+  );
 
   const startEditingPartner = () => {
     setEditingPartner(true);
@@ -308,6 +331,11 @@ export function OrderDocumentPage() {
               + تسجيل دفعة
             </Button>
           )}
+          {can('returns.create') && returnableItems.length > 0 && (
+            <Button type="button" variant="secondary" onClick={() => setShowAddReturn(true)}>
+              + مرتجع
+            </Button>
+          )}
           {can('orders.edit') && (
             <Button type="button" variant="secondary" onClick={() => navigate(`/orders/new?editOrder=${order.id}`)}>
               تعديل الفاتورة
@@ -412,6 +440,50 @@ export function OrderDocumentPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {allReturns.length > 0 && (
+        <div className="border-border bg-card space-y-2 rounded-2xl border p-4 print:hidden">
+          <p className="text-sm font-bold">سجل المرتجعات</p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+                <th className="p-2">التاريخ</th>
+                <th className="p-2">الصنف</th>
+                <th className="p-2">الكمية</th>
+                <th className="p-2">المبلغ المسترد</th>
+                <th className="p-2">السبب</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allReturns.map((r) => (
+                <tr key={r.id} className="border-border border-b last:border-0">
+                  <td className="text-muted-foreground p-2">{new Date(r.createdAt).toLocaleString('ar-EG')}</td>
+                  <td className="p-2">{r.itemName}</td>
+                  <td className="p-2" dir="ltr">
+                    {r.quantity}
+                  </td>
+                  <td className="p-2" dir="ltr">
+                    {r.refundAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </td>
+                  <td className="text-muted-foreground p-2">{r.reason ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showAddReturn && (
+        <AddReturnDialog
+          orderId={order.id}
+          returnableItems={returnableItems}
+          onClose={() => setShowAddReturn(false)}
+          onSaved={(updated) => {
+            setOrder(updated);
+            setShowAddReturn(false);
+          }}
+        />
       )}
 
       {editingPayment && (
@@ -555,6 +627,124 @@ function EditPaymentDialog({
           <div className="flex gap-2">
             <Button type="submit" disabled={submitting}>
               {submitting ? 'جارٍ الحفظ…' : 'حفظ التعديل'}
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Owner (2026-08-23, "مرتجعات: عمل مرتجع... يقدر يحدّد الكمية المرتجعة")
+ * — scoped to INVENTORY_RETAIL items with returnable quantity left
+ * (`OrderDocumentPage`'s `returnableItems`). Restocks inventory and
+ * refunds cash server-side, atomically — see `orderService.createReturn`.
+ */
+function AddReturnDialog({
+  orderId,
+  returnableItems,
+  onClose,
+  onSaved,
+}: {
+  orderId: string;
+  returnableItems: { item: OrderItem; name: string; returnable: number }[];
+  onClose: () => void;
+  onSaved: (order: Order) => void;
+}) {
+  const [itemId, setItemId] = useState(returnableItems[0]?.item.id ?? '');
+  const [quantity, setQuantity] = useState('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const selected = returnableItems.find((r) => r.item.id === itemId);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    const parsed = Number(quantity);
+    if (!itemId) {
+      setError('اختر الصنف');
+      return;
+    }
+    if (!quantity || Number.isNaN(parsed) || parsed <= 0) {
+      setError('اكتب كمية أكبر من صفر');
+      return;
+    }
+    if (selected && parsed > selected.returnable) {
+      setError(`أقصى كمية قابلة للإرجاع: ${selected.returnable}`);
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      const updated = await apiPost<Order>(`/api/orders/${orderId}/items/${itemId}/return`, {
+        quantity: parsed,
+        ...(reason.trim() ? { reason: reason.trim() } : {}),
+      });
+      onSaved(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تسجيل المرتجع');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>مرتجع</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">الصنف</span>
+            <select
+              value={itemId}
+              onChange={(e) => {
+                setItemId(e.target.value);
+                setQuantity('');
+              }}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {returnableItems.map(({ item, name, returnable }) => (
+                <option key={item.id} value={item.id}>
+                  {name} (المتاح للإرجاع: {returnable})
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">الكمية المرتجعة</span>
+            <input
+              autoFocus
+              type="number"
+              min={0}
+              max={selected?.returnable}
+              step="1"
+              required
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">السبب (اختياري)</span>
+            <input
+              type="text"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'تأكيد المرتجع'}
             </Button>
             <Button type="button" variant="secondary" onClick={onClose}>
               إلغاء

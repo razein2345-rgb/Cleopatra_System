@@ -32,6 +32,11 @@ export const treasurySourceTypeSchema = z.enum([
   // action, paired atomically with a `SalaryPayment`. See
   // `salaryPaymentId` below and `salaryPaymentService.createSalaryPayment`.
   'SALARY_PAYMENT',
+  // Owner (2026-08-23, "مرتجعات... إرجاع الصنف الخطأ للمخزون") — a cash
+  // refund for a returned INVENTORY_RETAIL item, paired atomically with an
+  // `OrderItemReturn`. See `orderItemReturnId` below and
+  // `orderService.createReturn`.
+  'RETURN',
 ]);
 
 export const treasuryEntrySchema = z.object({
@@ -51,6 +56,8 @@ export const treasuryEntrySchema = z.object({
   stockMovementId: z.string().uuid().nullable(),
   /** `sourceType: 'SALARY_PAYMENT'` only — the SalaryPayment this entry was paired with at creation. */
   salaryPaymentId: z.string().uuid().nullable(),
+  /** `sourceType: 'RETURN'` only — the OrderItemReturn this entry was paired with at creation. */
+  orderItemReturnId: z.string().uuid().nullable(),
   partnerId: z.string().uuid().nullable(),
   staffId: z.string().uuid(),
   branchId: z.string().uuid(),

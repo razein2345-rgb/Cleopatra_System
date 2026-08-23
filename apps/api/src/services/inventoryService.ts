@@ -523,9 +523,10 @@ export async function restockForOrderItem(
   inventoryItemId: string,
   branchId: string,
   sheetsConsumed: number,
+  reference: string = 'رد استهلاك — تعديل/حذف أوردر',
 ): Promise<void> {
   await tx.stockMovement.create({
-    data: { inventoryItemId, branchId, type: 'IN', quantity: sheetsConsumed, reference: 'رد استهلاك — تعديل/حذف أوردر' },
+    data: { inventoryItemId, branchId, type: 'IN', quantity: sheetsConsumed, reference },
   });
   await tx.stockLevel.upsert({
     where: { inventoryItemId_branchId: { inventoryItemId, branchId } },

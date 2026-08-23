@@ -29,6 +29,7 @@ export function mapTreasuryEntryToDto(entry: TreasuryEntryRecord): TreasuryEntry
     employeeAdvanceRepaymentId: entry.employeeAdvanceRepaymentId,
     stockMovementId: entry.stockMovementId,
     salaryPaymentId: entry.salaryPaymentId,
+    orderItemReturnId: entry.orderItemReturnId,
     partnerId: entry.partnerId,
     staffId: entry.staffId,
     branchId: entry.branchId,
