@@ -77,7 +77,7 @@ export function Combobox<T>({
     <div ref={containerRef} className="relative">
       <Command className="border-primary overflow-visible rounded-md border bg-transparent" shouldFilter>
         <CommandInput autoFocus placeholder={searchPlaceholder} className="h-auto px-3 py-2 text-sm" />
-        <CommandList className="border-border bg-popover absolute z-50 mt-1 max-h-64 w-full rounded-md border shadow-md">
+        <CommandList className="border-border bg-popover absolute top-full z-50 mt-1 max-h-64 w-full rounded-md border shadow-md">
           <CommandEmpty className="text-muted-foreground p-3 text-sm">{emptyText}</CommandEmpty>
           {items.map((item) => {
             const sub = getSubLabel?.(item);
