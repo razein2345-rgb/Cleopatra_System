@@ -217,10 +217,13 @@ function OffsetItemCard({
   item,
   partnerName,
   sizeFamilyLabel,
+  pageBreakBefore,
 }: {
   item: OrderItem;
   partnerName: string;
   sizeFamilyLabel: string;
+  /** Owner (2026-08-23, "عايز أمر الشغل لكل صنف صفحة منفصله عن التانية علشان لما اطبع يطلعلي 3 أوامر شغل") — each item after the first starts a fresh printed page. */
+  pageBreakBefore: boolean;
 }) {
   const b = offsetBreakdown(item);
   const quantityValue = (
@@ -236,7 +239,9 @@ function OffsetItemCard({
   );
 
   return (
-    <div className="border-border mb-6 space-y-0 rounded-lg border p-3 text-base break-inside-avoid">
+    <div
+      className={`border-border mb-6 space-y-0 rounded-lg border p-3 text-base break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}
+    >
       <Field label="العميل" value={partnerName} />
       <Field label="إسم الصنف" value={item.modelName ?? item.kind ?? '—'} />
       <Field label={offsetQuantityLabel(b)} value={quantityValue} />
@@ -298,16 +303,89 @@ function OffsetItemCard({
  * intentionally falls through to the same generic shape until its own is
  * specified — never invented ahead of a real spec.
  */
-type TrackRenderer = 'OFFSET_DETAILED' | 'GENERIC';
+type TrackRenderer = 'OFFSET_DETAILED' | 'READY_PRODUCTS_DETAILED' | 'GENERIC';
 const WORK_ORDER_TRACK_RENDERERS: Record<ProductionTrack, TrackRenderer> = {
   OFFSET: 'OFFSET_DETAILED',
   DIGITAL: 'GENERIC',
   BOARDS_SIGNAGE: 'GENERIC',
   OTHER_PRODUCTS: 'GENERIC',
   SERVICES: 'GENERIC',
-  READY_PRODUCTS: 'GENERIC',
+  // Owner (2026-08-23, "بالنسبة لأمر الشغل بتاع الشغل الجاهز عايز يكون
+  // شكله كالآتي: إسم العميل / صورة الصنف / اللي هيتكتب في التصميم / إسم
+  // المورد / تاريخ الاستلام") — the first real spec for this track's own
+  // job-card shape (same registry pattern OFFSET already established).
+  READY_PRODUCTS: 'READY_PRODUCTS_DETAILED',
   SUBLIMATION_GIFTS: 'GENERIC',
 };
+
+/**
+ * Owner (2026-08-23) — "منتجات جاهزة" job-card: a slip a worker/whoever
+ * deals with the external supplier can take, one item per printed page
+ * (`pageBreakBefore`, same as `OffsetItemCard`). `supplierName` reads the
+ * Work Order's own `assignedSupplierId` (set once the job actually reaches
+ * the "الإحضار من المورد" stage — see `workflowInstance.ts`'s own doc
+ * comment) — blank until then, not invented.
+ */
+function ReadyProductItemCard({
+  item,
+  partnerName,
+  supplierName,
+  deliveryDate,
+  pageBreakBefore,
+}: {
+  item: OrderItem;
+  partnerName: string;
+  supplierName: string;
+  deliveryDate: string | null;
+  pageBreakBefore: boolean;
+}) {
+  const b = (item.breakdown as { referenceImageUrl?: string | null; notes?: string | null } | null) ?? {};
+  return (
+    <div
+      className={`border-border mb-6 space-y-0 rounded-lg border p-3 text-base break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}
+    >
+      <Field label="إسم العميل" value={partnerName} />
+      {b.referenceImageUrl ? (
+        <div className="border-border border-b py-1.5">
+          <div className="text-muted-foreground mb-1">صورة الصنف</div>
+          <img src={b.referenceImageUrl} alt="" className="max-h-48 rounded-md border object-contain" />
+        </div>
+      ) : (
+        <Field label="صورة الصنف" value="—" />
+      )}
+      <Field label="اللي هيتكتب في التصميم" value={b.notes ?? '—'} />
+      <Field label="إسم المورد" value={supplierName || '—'} />
+      <Field label="تاريخ الاستلام" value={deliveryDate ? new Date(deliveryDate).toLocaleDateString('ar-EG') : '—'} />
+    </div>
+  );
+}
+
+function ReadyProductItemCards({
+  items,
+  partnerName,
+  supplierName,
+  deliveryDate,
+}: {
+  items: OrderItem[];
+  partnerName: string;
+  supplierName: string;
+  deliveryDate: string | null;
+}) {
+  return (
+    <div>
+      {items.map((item, index) => (
+        <ReadyProductItemCard
+          key={item.id}
+          item={item}
+          partnerName={partnerName}
+          supplierName={supplierName}
+          deliveryDate={deliveryDate}
+          pageBreakBefore={index > 0}
+        />
+      ))}
+    </div>
+  );
+}
 
 function OffsetItemCards({
   items,
@@ -320,12 +398,13 @@ function OffsetItemCards({
 }) {
   return (
     <div>
-      {items.map((item) => (
+      {items.map((item, index) => (
         <OffsetItemCard
           key={item.id}
           item={item}
           partnerName={partnerName}
           sizeFamilyLabel={(item.sizeFamilyKey && sizeFamilyLabelByKey.get(item.sizeFamilyKey)) || '—'}
+          pageBreakBefore={index > 0}
         />
       ))}
     </div>
@@ -343,6 +422,7 @@ export function WorkOrderDocumentPage() {
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [staff, setStaff] = useState<User[]>([]);
+  const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [pricingReference, setPricingReference] = useState<PricingReference | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -366,14 +446,16 @@ export function WorkOrderDocumentPage() {
           apiGet<User[]>('/api/users').catch(() => []),
           apiGet<BranchSummary[]>('/api/branches').catch(() => []),
           apiGet<PricingReference>('/api/pricing-reference').catch(() => null),
+          apiGet<BusinessPartner[]>('/api/partners').catch(() => []),
         ]);
       })
-      .then(([p, b, s, br, pr]) => {
+      .then(([p, b, s, br, pr, allPartners]) => {
         setPartner(p);
         setBusiness(b);
         setStaff(s);
         setBranches(br);
         setPricingReference(pr);
+        setPartners(allPartners);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل أمر الشغل'));
   }, [id]);
@@ -435,7 +517,13 @@ export function WorkOrderDocumentPage() {
   // every Work Order carries its own frozen track directly, always
   // non-null, no fallback needed.
   const trackRenderer = WORK_ORDER_TRACK_RENDERERS[workOrder.productionTrack];
-  if (trackRenderer !== 'OFFSET_DETAILED') {
+  // Owner (2026-08-23) — the "الإحضار من المورد" stage's own assigned
+  // supplier, resolved to a display name (blank until a supplier is
+  // actually picked during production).
+  const supplierName =
+    partners.find((p) => p.id === workOrder.workflowInstance?.stageInstances.find((s) => s.assignedSupplierId)?.assignedSupplierId)
+      ?.nameAr ?? '';
+  if (trackRenderer === 'GENERIC') {
     // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was `order.items`
     // (every item on the whole Order); now `workOrder.items`, the items
     // belonging to *this* Work Order only — printing two Work Orders for
@@ -558,7 +646,7 @@ export function WorkOrderDocumentPage() {
         <header className="border-border relative mb-6 flex items-start justify-between border-b pb-4">
           <div className="text-end">
             <div className="text-lg font-bold">{effectiveName || '—'}</div>
-            <div className="text-lg font-bold">أمر شغل — أوفست</div>
+            <div className="text-lg font-bold">أمر شغل — {trackRenderer === 'READY_PRODUCTS_DETAILED' ? 'منتجات جاهزة' : 'أوفست'}</div>
             <div className="text-xs">
               رقم: <span dir="ltr">{workOrder.workOrderNumber}</span>
             </div>
@@ -582,11 +670,20 @@ export function WorkOrderDocumentPage() {
           </div>
         </section>
 
-        <OffsetItemCards
-          items={workOrder.items}
-          partnerName={partner ? partner.nameAr : 'عميل'}
-          sizeFamilyLabelByKey={new Map((pricingReference?.sizeFamilies ?? []).map((f) => [f.key, f.label]))}
-        />
+        {trackRenderer === 'READY_PRODUCTS_DETAILED' ? (
+          <ReadyProductItemCards
+            items={workOrder.items}
+            partnerName={partner ? partner.nameAr : 'عميل'}
+            supplierName={supplierName}
+            deliveryDate={order.deliveryDate}
+          />
+        ) : (
+          <OffsetItemCards
+            items={workOrder.items}
+            partnerName={partner ? partner.nameAr : 'عميل'}
+            sizeFamilyLabelByKey={new Map((pricingReference?.sizeFamilies ?? []).map((f) => [f.key, f.label]))}
+          />
+        )}
 
         {order.customerNotes && (
           <section className="mb-3">
