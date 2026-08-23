@@ -327,6 +327,18 @@ export const setOrderPartnerSchema = z.object({
 });
 
 /**
+ * Owner (2026-08-23, "لازم اقدر اغير الفرع... صلاحيات كاملة") — a
+ * dedicated single-purpose mutation, same shape/reasoning as
+ * `setOrderPartnerSchema` above: never touches items/pricing, just which
+ * branch the invoice is attributed to (a correction tool, not a transfer
+ * of stock/production — an already-created invoice's items/Work Orders
+ * stay exactly as they are).
+ */
+export const setOrderBranchSchema = z.object({
+  branchId: z.string().uuid(),
+});
+
+/**
  * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — the one mutation path
  * for an OrderItem's own production progress; deliberately separate from
  * `updateOrderSchema` (which replaces the whole cart) since this touches
@@ -367,4 +379,5 @@ export type CreateOrderItemInput = z.infer<typeof createOrderItemSchema>;
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;
 export type SetOrderPartnerInput = z.infer<typeof setOrderPartnerSchema>;
+export type SetOrderBranchInput = z.infer<typeof setOrderBranchSchema>;
 export type UpdateOrderItemProductionInput = z.infer<typeof updateOrderItemProductionSchema>;

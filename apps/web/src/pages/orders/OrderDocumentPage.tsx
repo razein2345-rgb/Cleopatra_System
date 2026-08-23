@@ -56,6 +56,11 @@ export function OrderDocumentPage() {
   const [newPartnerId, setNewPartnerId] = useState('');
   const [partnerSaving, setPartnerSaving] = useState(false);
   const [partnerError, setPartnerError] = useState<string | null>(null);
+  /** Owner (2026-08-23, "لازم اقدر اغير الفرع") — a correction tool, same shape as the customer-change UI above. */
+  const [editingBranch, setEditingBranch] = useState(false);
+  const [newBranchId, setNewBranchId] = useState('');
+  const [branchSaving, setBranchSaving] = useState(false);
+  const [branchError, setBranchError] = useState<string | null>(null);
   /** Owner (2026-08-20, "عايز اضيف دفعة اعمل ده ازاي") — recording a payment after creation had no UI anywhere, only at composer time. */
   const [showAddPayment, setShowAddPayment] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
@@ -161,6 +166,20 @@ export function OrderDocumentPage() {
       setPartnerError(err instanceof Error ? err.message : 'تعذر تغيير العميل');
     } finally {
       setPartnerSaving(false);
+    }
+  };
+
+  const applyBranchChange = async (branchId: string) => {
+    setBranchSaving(true);
+    setBranchError(null);
+    try {
+      const updated = await apiPut<Order>(`/api/orders/${order.id}/branch`, { branchId });
+      setOrder(updated);
+      setEditingBranch(false);
+    } catch (err) {
+      setBranchError(err instanceof Error ? err.message : 'تعذر تغيير الفرع');
+    } finally {
+      setBranchSaving(false);
     }
   };
 
@@ -322,6 +341,55 @@ export function OrderDocumentPage() {
                 </div>
               )}
               {partnerError && <p className="text-destructive text-xs">{partnerError}</p>}
+            </div>
+          )}
+          {/* Owner (2026-08-23, "لازم اقدر اغير الفرع") — a correction tool for a wrongly-assigned branch on an already-created invoice. */}
+          {can('orders.edit') && (
+            <div className="mt-1">
+              {!editingBranch ? (
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="text-muted-foreground">
+                    الفرع: <span className="text-foreground font-medium">{branch?.name ?? '—'}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingBranch(true);
+                      setBranchError(null);
+                      setNewBranchId(order.branchId);
+                    }}
+                    className="text-primary text-xs hover:underline"
+                  >
+                    تغيير الفرع
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <select
+                    value={newBranchId}
+                    onChange={(e) => setNewBranchId(e.target.value)}
+                    className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+                  >
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!newBranchId || newBranchId === order.branchId || branchSaving}
+                    onClick={() => void applyBranchChange(newBranchId)}
+                  >
+                    {branchSaving ? 'جارٍ الحفظ…' : 'حفظ'}
+                  </Button>
+                  <Button type="button" size="sm" variant="secondary" onClick={() => setEditingBranch(false)}>
+                    إلغاء
+                  </Button>
+                </div>
+              )}
+              {branchError && <p className="text-destructive text-xs">{branchError}</p>}
             </div>
           )}
         </div>

@@ -979,6 +979,27 @@ export async function setOrderPartner(orderId: string, partnerId: string | null)
   return updated;
 }
 
+/**
+ * Owner (2026-08-23, "لازم اقدر اغير الفرع... صلاحيات كاملة") — a
+ * correction tool, same shape as `setOrderPartner` above: only changes
+ * which branch this invoice is attributed to. Deliberately does NOT touch
+ * `OrderItem`/`WorkOrder`/`StockMovement`/`TreasuryEntry` rows already
+ * created against the old branch — those stay exactly as they are (this
+ * is a bookkeeping correction, not a physical transfer of stock/
+ * production between branches).
+ */
+export async function setOrderBranch(orderId: string, branchId: string): Promise<{ id: string; branchId: string; partnerId: string | null; invoiceNumber: string }> {
+  const existing = await prisma.order.findUnique({ where: { id: orderId }, select: { isDeleted: true } });
+  if (!existing || existing.isDeleted) throw new OrderNotFoundError();
+
+  const updated = await prisma.order.update({
+    where: { id: orderId },
+    data: { branchId },
+    select: { id: true, branchId: true, partnerId: true, invoiceNumber: true },
+  });
+  return updated;
+}
+
 export class OrderItemNotFoundError extends Error {
   constructor() {
     super('Order item not found');

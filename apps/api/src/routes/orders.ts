@@ -10,6 +10,7 @@ import {
   getSalesSummaryHandler,
   listOrders,
   recordPaymentHandler,
+  setOrderBranchHandler,
   setOrderPartnerHandler,
   updateOrderHandler,
   updatePaymentHandler,
@@ -45,6 +46,9 @@ ordersRouter.delete('/:id/payments/:paymentId', requirePermission('payments.edit
 // Owner (2026-08-20, "فاتورة كانت معمولة عند نادي المهندسين... محتاج اعدلها
 // واخليها بدون عميل") — assign/remove the customer on an existing invoice.
 ordersRouter.put('/:id/partner', requirePermission('orders.edit'), setOrderPartnerHandler);
+// Owner (2026-08-23, "لازم اقدر اغير الفرع") — same permission level as
+// setting the customer above (orders.edit).
+ordersRouter.put('/:id/branch', requirePermission('orders.edit'), setOrderBranchHandler);
 // Owner (2026-08-23, "مرتجعات") — deliberately `returns.create`, not
 // `orders.edit` — see permissions.ts's own comment on that module.
 ordersRouter.post('/:id/items/:itemId/return', requirePermission('returns.create'), createReturnHandler);

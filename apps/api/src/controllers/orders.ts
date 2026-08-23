@@ -4,6 +4,7 @@ import {
   createOrderSchema,
   createPaymentSchema,
   hasPermission,
+  setOrderBranchSchema,
   setOrderPartnerSchema,
   updateOrderSchema,
   updatePaymentSchema,
@@ -28,6 +29,7 @@ import {
   recordPayment,
   resolveItemCatalogNames,
   ReturnNotAllowedError,
+  setOrderBranch,
   setOrderPartner,
   updateOrder,
   updatePayment,
@@ -282,6 +284,54 @@ export async function setOrderPartnerHandler(req: Request<{ id: string }>, res: 
     branchId: updated.branchId,
     partnerId: updated.partnerId,
     newValue: { partnerId: updated.partnerId, invoiceNumber: updated.invoiceNumber },
+  });
+
+  const order = await prisma.order.findUniqueOrThrow({ where: { id: updated.id }, include: ORDER_INCLUDE });
+  res.json({ success: true, data: mapOrderToDto(order, true) });
+}
+
+/**
+ * Owner (2026-08-23, "لازم اقدر اغير الفرع... صلاحيات كاملة") — checks
+ * access on BOTH the order's current branch and the destination branch
+ * (a non-SUPER_ADMIN caller must be allowed into both, not just the one
+ * they're moving the invoice out of).
+ */
+export async function setOrderBranchHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const orderBranchId = await loadOrderBranchOr404(req.params.id, res);
+  if (!orderBranchId) return;
+  if (!canAccessBranch(auth, orderBranchId)) {
+    forbidBranch(res);
+    return;
+  }
+
+  const input = setOrderBranchSchema.parse(req.body);
+
+  if (!canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
+
+  let updated;
+  try {
+    updated = await setOrderBranch(req.params.id, input.branchId);
+  } catch (err) {
+    if (err instanceof OrderNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'Order',
+    entityId: updated.id,
+    action: 'UPDATE',
+    performedById: auth.staffId,
+    branchId: updated.branchId,
+    partnerId: updated.partnerId,
+    previousValue: { branchId: orderBranchId },
+    newValue: { branchId: updated.branchId, invoiceNumber: updated.invoiceNumber },
   });
 
   const order = await prisma.order.findUniqueOrThrow({ where: { id: updated.id }, include: ORDER_INCLUDE });
