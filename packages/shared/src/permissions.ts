@@ -183,6 +183,20 @@ const MODULES: ModuleDef[] = [
       { action: 'delete', label: 'Delete non-system permission keys' },
     ],
   },
+  {
+    // PRODUCT_ROADMAP.md §2 ("المرحلة الثانية") — a Lead is a separate,
+    // lighter-weight entity from BusinessPartner (`partners.*`), so it
+    // gets its own permission namespace rather than folding into it.
+    module: 'leads',
+    moduleLabel: 'Leads',
+    actions: [
+      { action: 'view', label: 'View leads' },
+      { action: 'create', label: 'Create leads' },
+      { action: 'edit', label: 'Edit leads' },
+      { action: 'delete', label: 'Delete leads' },
+      { action: 'convert', label: 'Convert a lead to a business partner' },
+    ],
+  },
 ];
 
 export type PermissionCatalogEntry = { key: string; module: string; label: string };

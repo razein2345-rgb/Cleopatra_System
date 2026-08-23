@@ -569,6 +569,21 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
       include: ORDER_INCLUDE,
     });
 
+    // Owner (2026-08-20, "طالما مطلبش قبل كده... لحد ما يقبل اول عرض
+    // السعر ويدخل في شغل ويتعمله فاتورة") — a Lead converts into a
+    // BusinessPartner with `status: 'PROSPECT'` the moment it's ready to
+    // be quoted (see leadService.ts's `convertLeadToPartner`), not yet a
+    // confirmed paying customer. Accepting their first quotation and
+    // turning it into a real invoice is exactly the signal that promotes
+    // them — a no-op `updateMany` filter for every other partner (already
+    // ACTIVE/INACTIVE/BLOCKED, or no partner at all for a walk-in quotation).
+    if (existing.partnerId) {
+      await tx.businessPartner.updateMany({
+        where: { id: existing.partnerId, status: 'PROSPECT' },
+        data: { status: 'ACTIVE' },
+      });
+    }
+
     return { order: orderWithOrigin, quotation: updatedQuotation };
   });
 

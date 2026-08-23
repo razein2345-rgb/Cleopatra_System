@@ -336,6 +336,19 @@ enum LeadSource {
   OTHER
 }
 
+/// PRODUCT_ROADMAP.md §2 ("المرحلة الثانية") — a simple pipeline, not a
+/// configurable/admin-managed catalog (matches the roadmap's own "بمراحل
+/// بسيطة" wording): a lead moves forward through NEW → CONTACTED →
+/// QUALIFIED, then ends at exactly one of CONVERTED or REJECTED — both
+/// terminal, never re-opened.
+enum LeadStage {
+  NEW
+  CONTACTED
+  QUALIFIED
+  CONVERTED
+  REJECTED
+}
+
 /// Owner, 2026-08-13 — only meaningful on an individual BusinessPartner
 /// (isIndividual: true); picks the printed-document salutation ("السيد"/
 /// "السيدة" instead of the company-style "السادة").
@@ -420,6 +433,7 @@ model Branch {
   auditLogs           AuditLog[]
   employeeAdvances    EmployeeAdvance[]
   salaryPayments      SalaryPayment[]
+  leads               Lead[]
   attendanceEntries   AttendanceEntry[]
   fieldAssignments    FieldAssignment[]
   treasuryDayClosures TreasuryDayClosure[]
@@ -790,6 +804,8 @@ model StaffProfile {
   advanceRepaymentsRecorded  EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
   salaryPaymentsReceived     SalaryPayment[]            @relation("SalaryPaymentStaff")
   salaryPaymentsRecorded     SalaryPayment[]            @relation("SalaryPaymentRecordedBy")
+  leadsAssigned              Lead[]                     @relation("LeadAssignedTo")
+  leadsRecorded              Lead[]                     @relation("LeadRecordedBy")
   attendanceEntries          AttendanceEntry[]          @relation("AttendanceStaff")
   attendanceEntriesRecorded  AttendanceEntry[]          @relation("AttendanceRecordedBy")
   fieldAssignments           FieldAssignment[]          @relation("FieldAssignmentStaff")
@@ -991,6 +1007,57 @@ model BusinessPartner {
   @@index([branchId])
   @@index([nameAr])
   @@index([categoryId])
+  /// Reverse of `Lead.convertedPartnerId` — set only when this partner originated from a converted Lead.
+  convertedFromLead Lead?
+}
+
+/// PRODUCT_ROADMAP.md §2 ("المرحلة الثانية") — a Lead is a separate,
+/// lighter-weight entity from BusinessPartner (owner's own framing:
+/// "Lead ككيان منفصل عن العميل"), not a BusinessPartner row with a
+/// PROSPECT status — a prospect that never converts shouldn't clutter the
+/// real customer list/reports. Converting (`POST /:id/convert`) creates a
+/// real BusinessPartner from this same data ("بدون إعادة إدخال" — no
+/// re-typing), sets `convertedPartnerId`, and stage → CONVERTED; both are
+/// permanent, a converted or rejected Lead is never reopened.
+model Lead {
+  id String @id @default(uuid()) @db.Uuid
+
+  name  String
+  phone String
+  email String?
+
+  source LeadSource?
+  stage  LeadStage   @default(NEW)
+  notes  String?
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  assignedToId String?       @db.Uuid
+  assignedTo   StaffProfile? @relation("LeadAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation("LeadRecordedBy", fields: [recordedById], references: [id])
+
+  /// Optional reminder date — same purely-informational field BusinessPartner.nextFollowUpAt already is (no notification engine yet, CLAUDE.md §10).
+  nextFollowUpAt DateTime?
+
+  /// Set only once, by `convertLead` — the real customer record this Lead became.
+  convertedPartnerId String?          @unique @db.Uuid
+  convertedPartner   BusinessPartner? @relation(fields: [convertedPartnerId], references: [id], onDelete: SetNull)
+  /// Set only when `stage: REJECTED` — why this lead didn't convert.
+  rejectedReason String?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([stage])
+  @@index([branchId])
 }
 
 // ---------------------------------------------------------------------------

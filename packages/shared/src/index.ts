@@ -46,6 +46,7 @@ export * from './pricing/productionQuantity.js';
 export * from './schemas/inventoryItem.js';
 export * from './schemas/employeeAdvance.js';
 export * from './schemas/salaryPayment.js';
+export * from './schemas/lead.js';
 export * from './schemas/employeePayroll.js';
 export * from './schemas/attendance.js';
 export * from './schemas/auditLog.js';

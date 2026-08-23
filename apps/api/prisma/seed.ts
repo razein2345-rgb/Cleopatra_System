@@ -55,10 +55,11 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     'reports.*',
     'settings.*',
     'employees.*',
+    'leads.*',
     'roles.view',
     'permissions.view',
   ],
-  SALES: ['partners.*', 'orders.*', 'quotations.*', 'reports.view', 'inventory.view'],
+  SALES: ['partners.*', 'orders.*', 'quotations.*', 'reports.view', 'inventory.view', 'leads.*'],
   // Owner (2026-08-20, "عايز انا بس اللي أقدر اعدل او احذف في المخزن مش كل
   // الموظفين... هو فقط يقدر يضيف") — deliberately `view`+`create` only, no
   // `edit`/`delete`/`inventory.*`: a cashier can see stock and record new
@@ -80,6 +81,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     'reports.view',
     'settings.view',
     'employees.view',
+    'leads.view',
   ],
 };
 

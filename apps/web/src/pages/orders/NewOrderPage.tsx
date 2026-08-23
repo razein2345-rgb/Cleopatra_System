@@ -1484,6 +1484,10 @@ export function NewOrderPage() {
   // link lands here with the customer pre-selected, same query-param
   // pattern as editOrder/editQuotation above.
   const presetPartnerId = searchParams.get('partnerId') ?? undefined;
+  // Owner (2026-08-20, "زرار 'اعمله عرض سعر' من شاشة الـLead") — a
+  // freshly-converted Lead lands here to build a Quotation specifically,
+  // not default to whatever `canInvoice` would otherwise pick.
+  const presetDocumentType = searchParams.get('documentType') === 'QUOTATION' ? 'QUOTATION' : undefined;
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [readyProducts, setReadyProducts] = useState<ReadyProduct[]>([]);
@@ -1610,6 +1614,7 @@ export function NewOrderPage() {
       editOrder={editOrder}
       editQuotation={editQuotation}
       presetPartnerId={presetPartnerId}
+      presetDocumentType={presetDocumentType}
     />
   );
 }
@@ -1856,6 +1861,7 @@ function NewOrderForm({
   editOrder,
   editQuotation,
   presetPartnerId,
+  presetDocumentType,
 }: {
   partners: BusinessPartner[];
   branches: BranchSummary[];
@@ -1872,13 +1878,15 @@ function NewOrderForm({
   editQuotation?: Quotation | null;
   /** FEATURE-016 — pre-selects the customer when reached from a Documents group's "+ إضافة" link (`/orders/new?partnerId=<id>`). Ignored once editOrder/editQuotation already fix the customer. */
   presetPartnerId?: string;
+  /** Owner (2026-08-20, "زرار 'اعمله عرض سعر' من شاشة الـLead") — forces the composer to open on the Quotation tab (`/orders/new?documentType=QUOTATION`), not whatever `canInvoice` would otherwise default to. Ignored once editOrder/editQuotation already fix the document type. */
+  presetDocumentType?: 'QUOTATION';
 }) {
   const { can } = useAuth();
   const canInvoice = can('orders.create');
   const canQuotation = can('quotations.create');
   const isEditing = Boolean(editOrder) || Boolean(editQuotation);
   const [documentType, setDocumentType] = useState<DocumentType>(
-    editOrder ? 'INVOICE' : editQuotation ? 'QUOTATION' : canInvoice ? 'INVOICE' : 'QUOTATION',
+    editOrder ? 'INVOICE' : editQuotation ? 'QUOTATION' : (presetDocumentType ?? (canInvoice ? 'INVOICE' : 'QUOTATION')),
   );
   // نسخة محلية قابلة للتحديث — عشان لما تتضاف عميل جديد من نفس الشاشة يظهر فورًا بدون إعادة تحميل الصفحة.
   const [localPartners, setLocalPartners] = useState<BusinessPartner[]>(partners);
