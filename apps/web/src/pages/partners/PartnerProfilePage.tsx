@@ -21,8 +21,9 @@ import { CategoryTagsSection } from './CategoryTagsSection';
 import { NotesTab } from './NotesTab';
 import { CommercialTab } from './CommercialTab';
 import { OrdersHistoryTab } from './OrdersHistoryTab';
+import { PaymentsHistoryTab } from './PaymentsHistoryTab';
 
-type Tab = 'overview' | 'orders' | 'contacts' | 'addresses' | 'notes' | 'commercial';
+type Tab = 'overview' | 'orders' | 'contacts' | 'addresses' | 'notes' | 'commercial' | 'payments';
 
 /**
  * Partner Profile. Overview (FEATURE-002 M1), Contacts (M2), Addresses
@@ -93,6 +94,7 @@ export function PartnerProfilePage() {
     ...(can('partners.credit.manage')
       ? [{ id: 'commercial' as const, label: 'الملف التجاري' }]
       : []),
+    ...(can('treasury.view') ? [{ id: 'payments' as const, label: 'المدفوعات' }] : []),
   ];
 
   return (
@@ -153,6 +155,8 @@ export function PartnerProfilePage() {
       {tab === 'commercial' && can('partners.credit.manage') && (
         <CommercialTab partnerId={partner.id} canManage={can('partners.credit.manage')} />
       )}
+
+      {tab === 'payments' && can('treasury.view') && <PaymentsHistoryTab partnerId={partner.id} />}
     </div>
   );
 }

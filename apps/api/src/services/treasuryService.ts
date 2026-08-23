@@ -65,11 +65,14 @@ export async function listTreasuryEntries(filters: {
   search?: string;
   /** FEATURE-007 M3 (2026-08-13, owner: "الوارد والمنصرف في شاشة الموظف على حسب الفرع بتاعه") — scopes to this branch's entries only (the reception-safe view, never the org-wide list). Branch-scoped, not staff-scoped: everyone assigned to a branch sees that branch's own ledger, not just their own personal entries within it. */
   branchId?: string;
+  /** Owner (2026-08-23, "لما يتضاف يتضاف في صفحة الموردين علشان اعرف انا بدفعله كام") — every entry (payment received from OR paid to) linked to one BusinessPartner, for that partner's own profile page. */
+  partnerId?: string;
 }): Promise<TreasuryEntry[]> {
   const entries = await prisma.treasuryEntry.findMany({
     where: {
       isDeleted: false,
       ...(filters.branchId ? { branchId: filters.branchId } : {}),
+      ...(filters.partnerId ? { partnerId: filters.partnerId } : {}),
       ...(filters.type ? { type: filters.type } : {}),
       ...(filters.dateFrom || filters.dateTo
         ? {

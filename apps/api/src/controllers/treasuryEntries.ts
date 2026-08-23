@@ -46,6 +46,7 @@ export async function listTreasuryEntriesHandler(req: Request, res: Response) {
   const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
   const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
   const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+  const partnerId = typeof req.query.partnerId === 'string' ? req.query.partnerId : undefined;
 
   const entries = await listTreasuryEntries({
     type: typeResult?.success ? typeResult.data : undefined,
@@ -53,6 +54,7 @@ export async function listTreasuryEntriesHandler(req: Request, res: Response) {
     dateTo,
     search,
     branchId: canSeeAll ? undefined : auth.branchId,
+    partnerId,
   });
   res.json({ success: true, data: entries });
 }
