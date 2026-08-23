@@ -596,11 +596,28 @@ export function WorkOrderDocumentPage() {
     // the same mixed-track Order used to print the same full item list
     // twice, this is exactly the bug that fixes.
     const items: DocumentRendererItem[] = workOrder.items.map((item) => {
-      const breakdown = item.breakdown as { quantity?: number; notes?: string | null } | null;
+      const breakdown = item.breakdown as {
+        quantity?: number;
+        notes?: string | null;
+        components?: { pieceWidthCm?: number; pieceHeightCm?: number }[];
+      } | null;
+      // Owner (2026-08-24, "مش كاتبلي مقاس التكسير... المفروض يكتبلي مقاس
+      // الطباعه الفعلي اللي هيتطبع عليه") — DIGITAL items never populate
+      // `realSizeLabel` (no single family/size concept for them — see
+      // pricingEngineService.ts's DIGITAL case), so this generic work-order
+      // table showed a blank size for every Digital job. The actual piece
+      // size lives per-component in the frozen breakdown; fall back to it
+      // (first component — a multi-component item's pieces are normally
+      // all the same physical size) whenever `realSizeLabel` is empty.
+      const firstComponent = breakdown?.components?.[0];
+      const digitalSize =
+        firstComponent?.pieceWidthCm && firstComponent?.pieceHeightCm
+          ? `${firstComponent.pieceWidthCm}×${firstComponent.pieceHeightCm} سم`
+          : null;
       return {
         itemType: item.kind ?? '—',
         quantity: breakdown?.quantity ?? 0,
-        size: item.realSizeLabel,
+        size: item.realSizeLabel ?? digitalSize,
         description: item.modelName,
         notes: breakdown?.notes ?? null,
       };
