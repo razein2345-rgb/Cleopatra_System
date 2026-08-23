@@ -47,6 +47,9 @@ export const quotationSchema = z.object({
   /** Owner (2026-08-17) — tracked for visibility only, never enforced as a limit. Incremented by `POST /:id/record-print`. */
   printCount: z.number().int(),
   items: z.array(quotationItemSchema),
+  // Owner (2026-08-23, "تخفيض على صنف محدد") — sum of every item's own
+  // discountAmount, computed at read time, same as Order.itemDiscountsTotal.
+  itemDiscountsTotal: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

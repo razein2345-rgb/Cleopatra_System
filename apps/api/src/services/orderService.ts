@@ -56,6 +56,33 @@ export class PartnerRequiredError extends Error {
 
 const WALK_IN_ALLOWED_KINDS = new Set(['INVENTORY_RETAIL', 'MANUAL']);
 
+/**
+ * Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") — a
+ * per-item discount can't exceed that item's own frozen pricing-engine
+ * total (an item can't go negative). Deliberately checked against the
+ * fresh `priced[i].total`, not a caller-supplied number, so this can
+ * never be gamed by inflating the discount alongside a lowballed price.
+ */
+export class ItemDiscountExceedsTotalError extends Error {
+  constructor(index: number) {
+    super(`Item ${index}'s discountAmount exceeds its own total`);
+    this.name = 'ItemDiscountExceedsTotalError';
+  }
+}
+
+export function assertItemDiscountsValid(items: { discountAmount?: number }[], priced: { total: number }[]): void {
+  items.forEach((item, index) => {
+    const discount = item.discountAmount ?? 0;
+    if (discount > priced[index]!.total) {
+      throw new ItemDiscountExceedsTotalError(index);
+    }
+  });
+}
+
+export function sumItemDiscounts(items: { discountAmount?: number }[]): number {
+  return items.reduce((sum, item) => sum + (item.discountAmount ?? 0), 0);
+}
+
 export function assertPartnerPresentUnlessWalkIn(partnerId: string | null | undefined, items: { pricing: { kind: string } }[]) {
   if (partnerId) return;
   if (items.every((item) => WALK_IN_ALLOWED_KINDS.has(item.pricing.kind))) return;
@@ -155,6 +182,8 @@ export function mapOrderItemToDto(item: OrderItemRecord): OrderItem {
     productionUpdatedAt: item.productionUpdatedAt?.toISOString() ?? null,
     productionUpdatedById: item.productionUpdatedById,
     returns: item.returns.map(mapOrderItemReturnToDto),
+    discountAmount: item.discountAmount.toNumber(),
+    preferredSupplierId: item.preferredSupplierId,
     createdAt: item.createdAt.toISOString(),
   };
 }
@@ -250,6 +279,11 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
     0,
   );
   const netTotal = finalTotal - returnedTotal;
+  // Owner (2026-08-23, "تخفيض على صنف محدد") — summed across every item's
+  // own frozen discountAmount, same "computed at read time" discipline as
+  // `returnedTotal` above (each item's own value is what's stored/frozen;
+  // this total is just their sum, never stored separately).
+  const itemDiscountsTotal = order.items.reduce((sum, item) => sum + item.discountAmount.toNumber(), 0);
   return {
     id: order.id,
     invoiceNumber: order.invoiceNumber,
@@ -270,6 +304,7 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
     quotationOriginId: order.quotationOrigin?.id ?? null,
     workOrders: order.workOrders.map((w) => ({ id: w.id, workOrderNumber: w.workOrderNumber, productionTrack: w.productionTrack })),
     items: order.items.map(mapOrderItemToDto),
+    itemDiscountsTotal,
     // FEATURE-006 M3 — computed from `payments` at read time, never
     // stored (same discipline as computeIsDelayed).
     payments,
@@ -360,6 +395,13 @@ export function buildOrderItemCreate(item: {
   // frozen the same way `sheetsConsumed` already is.
   groupId?: string | null;
   requiredQuantity?: number | null;
+  // Owner (2026-08-23, "تخفيض على صنف محدد") — frozen straight through,
+  // same discipline as every other column here.
+  discountAmount?: number;
+  // Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — frozen
+  // straight through; the Workflow Engine reads it once, not this column
+  // directly, when an EXTERNAL-type stage instance is first created.
+  preferredSupplierId?: string | null;
 }): {
   kind: string;
   modelName: string | null;
@@ -372,6 +414,8 @@ export function buildOrderItemCreate(item: {
   productionTrack: ProductionTrack | null;
   groupId: string | null;
   requiredQuantity: number | null;
+  discountAmount: number;
+  preferredSupplierId: string | null;
 } {
   return {
     kind: item.itemType,
@@ -384,6 +428,8 @@ export function buildOrderItemCreate(item: {
     productionTrack: item.productionTrack ?? null,
     groupId: item.groupId ?? null,
     requiredQuantity: item.requiredQuantity ?? null,
+    discountAmount: item.discountAmount ?? 0,
+    preferredSupplierId: item.preferredSupplierId ?? null,
     breakdown:
       item.breakdownOverride ??
       {
@@ -491,9 +537,14 @@ export async function createOrder(
       : [],
   );
 
+  assertItemDiscountsValid(input.items, priced);
   const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
+  const itemDiscountsTotal = sumItemDiscounts(input.items);
   const discountPercent = input.discountPercent ?? 0;
-  const afterDiscount = subtotal * (1 - discountPercent / 100);
+  // Owner (2026-08-23, "متلغيش التخفيض على الفاتورة كلها طبعاً") — item
+  // discounts and the whole-invoice percentage stack: items are
+  // discounted first, then the order-level percentage applies on top.
+  const afterDiscount = (subtotal - itemDiscountsTotal) * (1 - discountPercent / 100);
   const vatOn = input.vatOn ?? false;
   const vatAmount = vatOn ? afterDiscount * (ctx.vatRate / 100) : 0;
   // Owner, 2026-08-12: "عايزة يقرب رقم الفاتورة دايماً لأقرب رقم صحيح أعلى" —
@@ -554,6 +605,8 @@ export async function createOrder(
             itemTotal: result.total,
             groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
             requiredQuantity: resolveRequiredQuantity(item.pricing),
+            discountAmount: item.discountAmount,
+            preferredSupplierId: item.preferredSupplierId,
             // `computeItemPricing`'s breakdown is pricing-only — it has
             // no access to `notes` (not part of `PricingLineItem`). Merge
             // it in here, the one place both the frozen pricing result
@@ -777,9 +830,11 @@ export async function updateOrder(
       : [],
   );
 
+  assertItemDiscountsValid(input.items, priced);
   const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
+  const itemDiscountsTotal = sumItemDiscounts(input.items);
   const discountPercent = input.discountPercent ?? existing.discountPercent.toNumber();
-  const afterDiscount = subtotal * (1 - discountPercent / 100);
+  const afterDiscount = (subtotal - itemDiscountsTotal) * (1 - discountPercent / 100);
   const vatOn = input.vatOn ?? existing.vatOn;
   const vatAmount = vatOn ? afterDiscount * (ctx.vatRate / 100) : 0;
   // Owner, 2026-08-12: "عايزة يقرب رقم الفاتورة دايماً لأقرب رقم صحيح أعلى" —
@@ -852,6 +907,8 @@ export async function updateOrder(
             itemTotal: result.total,
             groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
             requiredQuantity: resolveRequiredQuantity(item.pricing),
+            discountAmount: item.discountAmount,
+            preferredSupplierId: item.preferredSupplierId,
             breakdownOverride: {
               ...(result.breakdown as Record<string, unknown>),
               notes: item.notes ?? null,

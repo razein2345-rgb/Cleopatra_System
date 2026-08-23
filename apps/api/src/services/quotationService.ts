@@ -4,9 +4,9 @@ import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
-import { assertPartnerPresentUnlessWalkIn, PartnerRequiredError } from './orderService.js';
+import { assertItemDiscountsValid, assertPartnerPresentUnlessWalkIn, ItemDiscountExceedsTotalError, PartnerRequiredError, sumItemDiscounts } from './orderService.js';
 
-export { PartnerRequiredError };
+export { ItemDiscountExceedsTotalError, PartnerRequiredError };
 
 /**
  * Centralized here (not duplicated per controller) — mirrors
@@ -38,6 +38,7 @@ export function mapQuotationItemToDto(item: QuotationItemRecord): QuotationItem 
     productionTrack: item.productionTrack,
     groupId: item.groupId,
     requiredQuantity: item.requiredQuantity,
+    discountAmount: item.discountAmount.toNumber(),
     createdAt: item.createdAt.toISOString(),
   };
 }
@@ -98,6 +99,7 @@ export function mapQuotationToDto(quotation: QuotationRecord, canSeeInternal: bo
     convertedOrderId: quotation.convertedOrderId,
     printCount: quotation.printCount,
     items: quotation.items.map(mapQuotationItemToDto),
+    itemDiscountsTotal: quotation.items.reduce((sum, item) => sum + item.discountAmount.toNumber(), 0),
     createdAt: quotation.createdAt.toISOString(),
     updatedAt: quotation.updatedAt.toISOString(),
   };
@@ -252,9 +254,11 @@ export async function createQuotation(
       : [],
   );
 
+  assertItemDiscountsValid(input.items, priced);
   const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
+  const itemDiscountsTotal = sumItemDiscounts(input.items);
   const discountPercent = input.discountPercent ?? 0;
-  const afterDiscount = subtotal * (1 - discountPercent / 100);
+  const afterDiscount = (subtotal - itemDiscountsTotal) * (1 - discountPercent / 100);
   const vatOn = input.vatOn ?? false;
   const vatAmount = vatOn ? afterDiscount * (ctx.vatRate / 100) : 0;
   // Owner, 2026-08-12: round the final charged amount up — see orderService.ts's matching comment.
@@ -312,6 +316,7 @@ export async function createQuotation(
               productionTrack: item.productionTrack ?? null,
               groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
               requiredQuantity: resolveRequiredQuantity(item.pricing),
+              discountAmount: item.discountAmount ?? 0,
             };
           }),
         },

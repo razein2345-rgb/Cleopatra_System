@@ -53,6 +53,8 @@ export interface DocumentRendererItem {
   notes?: string | null;
   /** The item's own frozen total (`OrderItem.itemTotal`/`QuotationItem.itemTotal`) — real, never invented. Omitted entirely for Work Orders (an internal production document, not a price quote). */
   lineTotal?: number | null;
+  /** Owner (2026-08-23, "تخفيض على صنف محدد") — subtracted from `lineTotal` for display; the printed "الإجمالي" column always shows the net (post-discount) figure. */
+  discountAmount?: number | null;
 }
 
 export interface DocumentRendererTotals {
@@ -61,6 +63,8 @@ export interface DocumentRendererTotals {
   vatOn: boolean;
   vatAmount: number;
   finalTotal: number;
+  /** Owner (2026-08-23, "تخفيض على صنف محدد") — sum of every item's own discountAmount, shown as its own totals line before the whole-invoice percentage. */
+  itemDiscountsTotal?: number;
 }
 
 export interface DocumentRendererPaymentSummary {
@@ -247,6 +251,8 @@ export function DocumentRenderer({
             {items.map((item, idx) => {
               const unitPrice =
                 typeof item.lineTotal === 'number' && item.quantity > 0 ? item.lineTotal / item.quantity : null;
+              const netTotal =
+                typeof item.lineTotal === 'number' ? item.lineTotal - (item.discountAmount ?? 0) : null;
               return (
                 <tr key={idx} className="even:bg-muted/30">
                   <td className="border-foreground/70 border p-2 text-center">{idx + 1}</td>
@@ -254,6 +260,9 @@ export function DocumentRenderer({
                     {item.itemType}
                     {item.description && item.description !== item.itemType ? ` — ${item.description}` : ''}
                     {item.notes ? ` (${item.notes})` : ''}
+                    {!!item.discountAmount && (
+                      <span className="text-muted-foreground"> — خصم {money(item.discountAmount)}</span>
+                    )}
                   </td>
                   {items.some((i) => i.size) && <td className="border-foreground/70 border p-2 text-center">{item.size || '—'}</td>}
                   <td className="border-foreground/70 border p-2 text-center">
@@ -266,7 +275,7 @@ export function DocumentRenderer({
                   )}
                   {hasPricing && (
                     <td className="border-foreground/70 border p-2 text-center font-medium">
-                      <span dir="ltr">{typeof item.lineTotal === 'number' ? money(item.lineTotal) : '—'}</span>
+                      <span dir="ltr">{netTotal !== null ? money(netTotal) : '—'}</span>
                     </td>
                   )}
                 </tr>
@@ -282,6 +291,12 @@ export function DocumentRenderer({
                 <span className="text-muted-foreground">الإجمالي قبل الخصم</span>
                 <span dir="ltr">{money(totals.subtotal)}</span>
               </div>
+              {!!totals.itemDiscountsTotal && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">خصومات الأصناف</span>
+                  <span dir="ltr">-{money(totals.itemDiscountsTotal)}</span>
+                </div>
+              )}
               {totals.discountPercent > 0 && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">نسبة الخصم</span>

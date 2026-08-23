@@ -109,6 +109,7 @@ export function QuotationDocumentPage() {
       description: item.modelName ?? item.description,
       notes: breakdown?.notes ?? item.notes,
       lineTotal: item.itemTotal,
+      discountAmount: item.discountAmount,
     };
   });
 
@@ -181,6 +182,7 @@ export function QuotationDocumentPage() {
           vatOn: quotation.vatOn,
           vatAmount: quotation.vatAmount,
           finalTotal: quotation.finalTotal,
+          itemDiscountsTotal: quotation.itemDiscountsTotal,
         }}
         customerNotes={quotation.customerNotes}
       />

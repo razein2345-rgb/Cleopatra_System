@@ -258,6 +258,7 @@ export function OrderDocumentPage() {
       description: item.modelName,
       notes: breakdown?.notes ?? null,
       lineTotal: item.itemTotal,
+      discountAmount: item.discountAmount,
     };
   });
 
@@ -453,6 +454,7 @@ export function OrderDocumentPage() {
           vatOn: order.vatOn,
           vatAmount: order.vatAmount,
           finalTotal: order.finalTotal,
+          itemDiscountsTotal: order.itemDiscountsTotal,
         }}
         paymentSummary={{ paidTotal: order.paidTotal, remainingBalance: order.remainingBalance }}
         customerNotes={order.customerNotes}

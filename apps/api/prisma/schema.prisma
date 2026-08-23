@@ -550,6 +550,13 @@ model Setting {
   showInvoiceLandline         Boolean @default(false)
   showInvoiceFacebook         Boolean @default(false)
 
+  /// Owner (2026-08-23, "ان احدد وقت لما يجي الحساب بيتقفل دايركت") — a
+  /// single global "HH:MM" (24h) time; `autoCloseDayJob.ts` force-closes
+  /// every branch's treasury day the moment this time passes, same as a
+  /// manual close (see `TreasuryDayClosure.isAutoClosed`). Null = the
+  /// feature is off (no automatic closing at all — the default).
+  autoCloseDayTime String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -1017,6 +1024,8 @@ model BusinessPartner {
   @@index([categoryId])
   /// Reverse of `Lead.convertedPartnerId` — set only when this partner originated from a converted Lead.
   convertedFromLead Lead?
+  /// Reverse of `OrderItem.preferredSupplierId` — every item whose staff picked this partner as the intended external supplier at composition time.
+  preferredSupplierForItems OrderItem[] @relation("OrderItemPreferredSupplier")
 }
 
 /// PRODUCT_ROADMAP.md §2 ("المرحلة الثانية") — a Lead is a separate,
@@ -1641,6 +1650,26 @@ model OrderItem {
   /// populated for `breakdown.kind === 'INVENTORY_RETAIL'` items.
   returns OrderItemReturn[]
 
+  /// Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") —
+  /// an absolute discount amount applied to this item's own frozen
+  /// `itemTotal`, staff-entered at composition time and frozen the same
+  /// way (never recomputed). Stacks with `Order.discountPercent` (the
+  /// whole-invoice percentage discount, unaffected/still applies on top —
+  /// owner: "متلغيش التخفيض على الفاتورة كلها طبعاً"). Never exceeds
+  /// `itemTotal` (enforced in orderService.ts, not here).
+  discountAmount Decimal @default(0) @db.Decimal(12, 2)
+
+  /// Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — staff-picked
+  /// at composition time (READY_PRODUCTS items only in practice), before
+  /// any WorkOrder/WorkflowInstance/StageInstance exists yet. Auto-copied
+  /// into `StageInstance.assignedSupplierId` the moment the job's
+  /// Workflow reaches an `EXTERNAL`-type stage (see
+  /// `workflowInstanceService.ts`'s `resolvePreferredSupplierId`) — purely
+  /// a helpful default, never enforced; staff can still change the
+  /// assigned supplier later on the Production Board.
+  preferredSupplierId String?          @db.Uuid
+  preferredSupplier   BusinessPartner? @relation("OrderItemPreferredSupplier", fields: [preferredSupplierId], references: [id])
+
   createdAt DateTime @default(now())
 
   @@index([inventoryItemId])
@@ -1917,6 +1946,12 @@ model QuotationItem {
   groupId          String?              @db.Uuid
   group            QuotationItemGroup?  @relation(fields: [groupId], references: [id])
   requiredQuantity Int?
+
+  /// Owner (2026-08-23, "تخفيض على صنف محدد") — mirrors
+  /// `OrderItem.discountAmount` exactly (same freeze/carry-through
+  /// discipline `productionTrack` above established); `convertQuotation`
+  /// carries it straight into the new `OrderItem`.
+  discountAmount Decimal @default(0) @db.Decimal(12, 2)
 
   createdAt DateTime @default(now())
 
@@ -2529,6 +2564,13 @@ model TreasuryDayClosure {
   reopenedBy   StaffProfile? @relation("TreasuryDayClosureReopenedBy", fields: [reopenedById], references: [id])
   reopenedAt   DateTime?
   reopenReason String?
+
+  /// Owner (2026-08-23, "احدد وقت لما يجي الحساب بيتقفل دايركت") — true
+  /// when `autoCloseDayJob.ts` closed this day (vs a human closing it
+  /// manually with a real counted-cash figure). `actualCountedCash` on an
+  /// auto-close is always set equal to `expectedClosingBalance`
+  /// (difference 0) since nobody physically counted the drawer.
+  isAutoClosed Boolean @default(false)
 
   @@unique([branchId, date])
   @@index([branchId])

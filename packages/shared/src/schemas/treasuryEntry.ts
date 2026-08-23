@@ -138,6 +138,10 @@ export const treasuryDayClosureSchema = z.object({
   reopenedById: z.string().uuid().nullable(),
   reopenedAt: z.string().nullable(),
   reopenReason: z.string().nullable(),
+  // Owner (2026-08-23, "احدد وقت لما يجي الحساب بيتقفل دايركت") — true
+  // when the auto-close job closed this day (vs. a human counting the
+  // real drawer).
+  isAutoClosed: z.boolean(),
 });
 
 /** The live numbers for "today" (or a not-yet-closed day) before the employee commits a close — same math `closeTreasuryDay` will persist, minus `actualCountedCash`/`difference` which only exist once counted. */

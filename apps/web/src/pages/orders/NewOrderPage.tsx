@@ -299,6 +299,13 @@ interface DraftItem {
   // no formula — this is the whole price, quantity reuses the shared
   // `quantity` field above.
   unitPrice: string;
+  // Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") —
+  // universal, every kind, stacks with the order-level discountPercent.
+  discountAmount: string;
+  // Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — READY_PRODUCTS
+  // only (shown for the "منتجات جاهزة" tab specifically); pre-fills the
+  // "الإحضار من المورد" stage's assigned supplier once production reaches it.
+  preferredSupplierId: string;
 }
 
 let draftKeySeq = 0;
@@ -367,6 +374,8 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     attachmentUploading: false,
     attachmentError: null,
     unitPrice: '',
+    discountAmount: '0',
+    preferredSupplierId: '',
   };
 }
 
@@ -586,6 +595,8 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
   d.attachmentId = line.attachmentId ?? '';
   d.attachmentUrl = line.attachmentUrl ?? '';
   d.attachmentFileName = line.attachmentUrl ? d.attachmentFileName : '';
+  d.discountAmount = line.discountAmount ? String(line.discountAmount) : '0';
+  d.preferredSupplierId = line.preferredSupplierId ?? '';
 
   // extraServiceFields's inverse — matches stored entries back to the
   // current catalog by label. A stored entry whose label no longer exists
@@ -1831,6 +1842,10 @@ interface CartLine {
    * row. Undefined = this line isn't part of any group, exactly like today.
    */
   groupKey?: string;
+  /** Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") — an absolute discount on this line alone, stacking with the order-level discountPercent. */
+  discountAmount?: number;
+  /** Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — READY_PRODUCTS only. */
+  preferredSupplierId?: string;
 }
 
 interface PaymentRow {
@@ -2066,8 +2081,9 @@ function NewOrderForm({
   // تصميم؟" toggle per track instead of the old single global one.
   const tracksInCart = [...new Set(cart.map((l) => l.productionTrack).filter((t): t is ProductionTrack => Boolean(t)))];
   const subtotal = cart.reduce((sum, line) => sum + line.total, 0);
+  const itemDiscountsTotal = cart.reduce((sum, line) => sum + (line.discountAmount ?? 0), 0);
   const discountNum = toNum(discountPercent);
-  const afterDiscount = subtotal * (1 - discountNum / 100);
+  const afterDiscount = (subtotal - itemDiscountsTotal) * (1 - discountNum / 100);
   const vatAmount = vatOn ? afterDiscount * (pricingReference.vatRate / 100) : 0;
   // تقريب المبلغ النهائي لأقرب رقم صحيح أعلى (نفس منطق السيرفر بالظبط).
   const finalTotal = Math.ceil(afterDiscount + vatAmount);
@@ -2135,6 +2151,11 @@ function NewOrderForm({
       setItemError(preview.error);
       return;
     }
+    const discountAmount = toNum(draft.discountAmount) || 0;
+    if (discountAmount < 0 || discountAmount > preview.total) {
+      setItemError(`الخصم لازم يكون بين 0 و${money(preview.total)} ج.م`);
+      return;
+    }
     setItemError(null);
     const label = draft.itemType || KIND_LABELS[draft.kind];
     const line: CartLine = {
@@ -2158,6 +2179,8 @@ function NewOrderForm({
       // from "كرر بمقاس مختلف" carries `pendingGroupKey`; a normal edit of
       // an already-grouped line keeps whatever group it already had.
       groupKey: pendingGroupKey ?? (editingKey ? cart.find((l) => l.key === editingKey)?.groupKey : undefined),
+      discountAmount: discountAmount || undefined,
+      preferredSupplierId: draft.kind === 'PRODUCT' ? draft.preferredSupplierId || undefined : undefined,
     };
     if (editingKey) {
       setCart((prev) => prev.map((l) => (l.key === editingKey ? line : l)));
@@ -2323,6 +2346,8 @@ function NewOrderForm({
       pricing: line.pricing,
       productionTrack: line.productionTrack,
       groupKey: line.groupKey,
+      discountAmount: line.discountAmount,
+      preferredSupplierId: line.preferredSupplierId,
     }));
 
     setSubmitting(intent);
@@ -2466,7 +2491,14 @@ function NewOrderForm({
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="font-medium">{money(line.total)} ج.م {beingEdited && <span className="text-primary text-xs font-normal">(بيتعدل الآن)</span>}</p>
+                        <p className="font-medium">
+                          {money(line.total)} ج.م {beingEdited && <span className="text-primary text-xs font-normal">(بيتعدل الآن)</span>}
+                        </p>
+                        {!!line.discountAmount && (
+                          <p className="text-muted-foreground text-xs">
+                            خصم {money(line.discountAmount)} ج.م — الصافي {money(line.total - line.discountAmount)} ج.م
+                          </p>
+                        )}
                         {/* Owner (2026-08-17, "عايزه يطلعلي سعر الدفتر الواحد والإجمالي مش بس سعر الإجمالي") — notebook-only, since that's the unit the owner prices tenders/quotes against. */}
                         {line.pricing.kind === 'NOTEBOOK' && line.pricing.notebookQuantity > 0 && (
                           <p className="text-muted-foreground text-xs">سعر الدفتر الواحد: {money(line.total / line.pricing.notebookQuantity)} ج.م</p>
@@ -2698,9 +2730,15 @@ function NewOrderForm({
             <span className="text-muted-foreground">الإجمالي قبل الخصم</span>
             <span>{money(subtotal)} ج.م</span>
           </div>
+          {itemDiscountsTotal > 0 && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">خصومات الأصناف</span>
+              <span>-{money(itemDiscountsTotal)} ج.م</span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-muted-foreground">الخصم ({discountNum}%)</span>
-            <span>-{money(subtotal - afterDiscount)} ج.م</span>
+            <span>-{money(subtotal - itemDiscountsTotal - afterDiscount)} ج.م</span>
           </div>
           {vatOn && (
             <div className="flex justify-between">
@@ -3825,6 +3863,16 @@ function NewOrderForm({
                   className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 />
               </label>
+              {/* Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — pre-fills the "الإحضار من المورد" workflow stage once production reaches it. */}
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">المورد (اختياري — لو هيتحضر من مورد خارجي)</span>
+                <PartnerCombobox
+                  partners={partners}
+                  value={draft.preferredSupplierId}
+                  onChange={(id) => updateDraft({ preferredSupplierId: id })}
+                  placeholder="— بدون —"
+                />
+              </label>
             </div>
           )}
 
@@ -4120,6 +4168,23 @@ function NewOrderForm({
             {draft.attachmentError && <p className="text-destructive text-xs">{draft.attachmentError}</p>}
           </div>
 
+          {/* Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") — an absolute discount on this line alone, independent of the order-level نسبة الخصم %. */}
+          {!draftPreview.error && (
+            <label className="flex items-center gap-2 border-t pt-2 text-sm">
+              <span className="text-muted-foreground">خصم على البند ده</span>
+              <input
+                type="number"
+                min={0}
+                max={draftPreview.total}
+                step={0.01}
+                value={draft.discountAmount}
+                onChange={(e) => updateDraft({ discountAmount: e.target.value })}
+                className="border-input bg-background w-28 rounded-md border px-2 py-1 text-sm"
+              />
+              <span className="text-muted-foreground text-xs">ج.م</span>
+            </label>
+          )}
+
           <div className="flex items-center justify-between border-t pt-2">
             <div>
               <p className="text-sm font-medium">
@@ -4128,6 +4193,11 @@ function NewOrderForm({
                   {draftPreview.error ?? `${money(draftPreview.total)} ج.م`}
                 </span>
               </p>
+              {!draftPreview.error && toNum(draft.discountAmount) > 0 && (
+                <p className="text-muted-foreground text-xs">
+                  بعد الخصم: {money(Math.max(0, draftPreview.total - toNum(draft.discountAmount)))} ج.م
+                </p>
+              )}
               {draft.kind === 'NOTEBOOK' && !draftPreview.error && toNum(draft.notebookQuantity) > 0 && (
                 <p className="text-muted-foreground text-xs">
                   سعر الدفتر الواحد: {money(draftPreview.total / toNum(draft.notebookQuantity))} ج.م

@@ -79,6 +79,13 @@ export const settingSchema = z.object({
   showInvoiceEmail: z.boolean(),
   showInvoiceLandline: z.boolean(),
   showInvoiceFacebook: z.boolean(),
+  // Owner (2026-08-23, "ان احدد وقت لما يجي الحساب بيتقفل دايركت") — a
+  // single global "HH:MM" (24h) time; null = the auto-close feature is
+  // off (the default). See autoCloseDayJob.ts.
+  autoCloseDayTime: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'الوقت لازم يكون بصيغة HH:MM')
+    .nullable(),
 });
 
 export const updateSettingSchema = settingSchema.omit({ id: true }).partial();

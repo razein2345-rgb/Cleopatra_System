@@ -204,6 +204,60 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 /**
+ * Owner (2026-08-23, "عايزه يعمل اوامر شغل منفصله لكل صنف يعني الصنف
+ * الاول فيه اللوجو والتاريخ والشخص اللي عمل الاوردر وكذلك التاني
+ * والتالت") — each printed item page is now a fully self-contained job
+ * card (own logo/title/number/dates/responsible staff), not just items
+ * separated by a page break under one shared header. Rendered once per
+ * item, inside the same `break-before-page` block as that item's own
+ * fields, so it always travels together with them on the same page.
+ */
+function WorkOrderItemHeader({
+  effectiveName,
+  effectiveLogoUrl,
+  trackLabel,
+  workOrderNumber,
+  createdAt,
+  deliveryDate,
+  responsibleStaff,
+}: {
+  effectiveName: string | null;
+  effectiveLogoUrl: string | null | undefined;
+  trackLabel: string;
+  workOrderNumber: string;
+  createdAt: string;
+  deliveryDate: string | null;
+  responsibleStaff: string;
+}) {
+  return (
+    <div className="mb-4">
+      <header className="border-border relative mb-3 flex items-start justify-between border-b pb-3">
+        <div className="text-end">
+          <div className="text-lg font-bold">{effectiveName || '—'}</div>
+          <div className="text-lg font-bold">أمر شغل — {trackLabel}</div>
+          <div className="text-xs">
+            رقم: <span dir="ltr">{workOrderNumber}</span>
+          </div>
+          <div className="text-xs">
+            تاريخ الإنشاء: <span dir="ltr">{new Date(createdAt).toLocaleDateString('ar-EG')}</span>
+          </div>
+          {deliveryDate && (
+            <div className="text-xs">
+              موعد التسليم: <span dir="ltr">{new Date(deliveryDate).toLocaleDateString('ar-EG')}</span>
+            </div>
+          )}
+        </div>
+        <div>{effectiveLogoUrl && <img src={effectiveLogoUrl} alt="" className="h-14 object-contain" />}</div>
+      </header>
+      <div className="text-xs">
+        <span className="text-muted-foreground">الموظف المسؤول: </span>
+        <span>{responsibleStaff}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
  * FEATURE-009 (2026-08-13, owner: "عايز أمر الشغل بتاع الأوفست يكون
  * العناوين تحت بعض مش جمب بعض") — replaces the previous wide table (one
  * row per item, columns side by side) with a stacked label/value card per
@@ -218,12 +272,14 @@ function OffsetItemCard({
   partnerName,
   sizeFamilyLabel,
   pageBreakBefore,
+  headerProps,
 }: {
   item: OrderItem;
   partnerName: string;
   sizeFamilyLabel: string;
   /** Owner (2026-08-23, "عايز أمر الشغل لكل صنف صفحة منفصله عن التانية علشان لما اطبع يطلعلي 3 أوامر شغل") — each item after the first starts a fresh printed page. */
   pageBreakBefore: boolean;
+  headerProps: React.ComponentProps<typeof WorkOrderItemHeader>;
 }) {
   const b = offsetBreakdown(item);
   const quantityValue = (
@@ -239,9 +295,9 @@ function OffsetItemCard({
   );
 
   return (
-    <div
-      className={`border-border mb-6 space-y-0 rounded-lg border p-3 text-base break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}
-    >
+    <div className={`mb-6 break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}>
+      <WorkOrderItemHeader {...headerProps} />
+      <div className="border-border space-y-0 rounded-lg border p-3 text-base">
       <Field label="العميل" value={partnerName} />
       <Field label="إسم الصنف" value={item.modelName ?? item.kind ?? '—'} />
       <Field label={offsetQuantityLabel(b)} value={quantityValue} />
@@ -287,6 +343,7 @@ function OffsetItemCard({
           <img src={b.referenceImageUrl} alt="" className="max-h-40 rounded-md border object-contain" />
         </div>
       )}
+      </div>
     </div>
   );
 }
@@ -332,18 +389,20 @@ function ReadyProductItemCard({
   supplierName,
   deliveryDate,
   pageBreakBefore,
+  headerProps,
 }: {
   item: OrderItem;
   partnerName: string;
   supplierName: string;
   deliveryDate: string | null;
   pageBreakBefore: boolean;
+  headerProps: React.ComponentProps<typeof WorkOrderItemHeader>;
 }) {
   const b = (item.breakdown as { referenceImageUrl?: string | null; notes?: string | null } | null) ?? {};
   return (
-    <div
-      className={`border-border mb-6 space-y-0 rounded-lg border p-3 text-base break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}
-    >
+    <div className={`mb-6 break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}>
+      <WorkOrderItemHeader {...headerProps} />
+      <div className="border-border space-y-0 rounded-lg border p-3 text-base">
       <Field label="إسم العميل" value={partnerName} />
       {b.referenceImageUrl ? (
         <div className="border-border border-b py-1.5">
@@ -356,6 +415,7 @@ function ReadyProductItemCard({
       <Field label="اللي هيتكتب في التصميم" value={b.notes ?? '—'} />
       <Field label="إسم المورد" value={supplierName || '—'} />
       <Field label="تاريخ الاستلام" value={deliveryDate ? new Date(deliveryDate).toLocaleDateString('ar-EG') : '—'} />
+      </div>
     </div>
   );
 }
@@ -365,11 +425,13 @@ function ReadyProductItemCards({
   partnerName,
   supplierName,
   deliveryDate,
+  headerBase,
 }: {
   items: OrderItem[];
   partnerName: string;
   supplierName: string;
   deliveryDate: string | null;
+  headerBase: Omit<React.ComponentProps<typeof WorkOrderItemHeader>, 'trackLabel'>;
 }) {
   return (
     <div>
@@ -381,6 +443,7 @@ function ReadyProductItemCards({
           supplierName={supplierName}
           deliveryDate={deliveryDate}
           pageBreakBefore={index > 0}
+          headerProps={{ ...headerBase, trackLabel: 'منتجات جاهزة' }}
         />
       ))}
     </div>
@@ -391,10 +454,12 @@ function OffsetItemCards({
   items,
   partnerName,
   sizeFamilyLabelByKey,
+  headerBase,
 }: {
   items: OrderItem[];
   partnerName: string;
   sizeFamilyLabelByKey: Map<string, string>;
+  headerBase: Omit<React.ComponentProps<typeof WorkOrderItemHeader>, 'trackLabel'>;
 }) {
   return (
     <div>
@@ -405,6 +470,7 @@ function OffsetItemCards({
           partnerName={partnerName}
           sizeFamilyLabel={(item.sizeFamilyKey && sizeFamilyLabelByKey.get(item.sizeFamilyKey)) || '—'}
           pageBreakBefore={index > 0}
+          headerProps={{ ...headerBase, trackLabel: 'أوفست' }}
         />
       ))}
     </div>
@@ -643,45 +709,34 @@ export function WorkOrderDocumentPage() {
             className="pointer-events-none absolute left-1/2 top-1/2 max-h-[65%] max-w-[65%] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.06] print:opacity-[0.08]"
           />
         )}
-        <header className="border-border relative mb-6 flex items-start justify-between border-b pb-4">
-          <div className="text-end">
-            <div className="text-lg font-bold">{effectiveName || '—'}</div>
-            <div className="text-lg font-bold">أمر شغل — {trackRenderer === 'READY_PRODUCTS_DETAILED' ? 'منتجات جاهزة' : 'أوفست'}</div>
-            <div className="text-xs">
-              رقم: <span dir="ltr">{workOrder.workOrderNumber}</span>
-            </div>
-            <div className="text-xs">
-              تاريخ الإنشاء: <span dir="ltr">{new Date(workOrder.createdAt).toLocaleDateString('ar-EG')}</span>
-            </div>
-            {order.deliveryDate && (
-              <div className="text-xs">
-                موعد التسليم: <span dir="ltr">{new Date(order.deliveryDate).toLocaleDateString('ar-EG')}</span>
-              </div>
-            )}
-          </div>
-          <div>{effectiveLogoUrl && <img src={effectiveLogoUrl} alt="" className="h-14 object-contain" />}</div>
-        </header>
-
-        {/* owner (2026-08-14): "العميل مكتوب مرتين... رقم تليفونه... الحالة الحالية دي مش فاهم ايه لازمة وجودها" — العميل now shows once, inside each item's own card below (it's a per-worker-slip field there, not a header field); phone and status dropped entirely as irrelevant to the worker producing the job. الموظف المسؤول stays (owner: "دي حاجه موافق عليها"). */}
-        <section className="relative mb-6 space-y-1">
-          <div>
-            <span className="text-muted-foreground text-xs">الموظف المسؤول: </span>
-            <span>{responsibleStaff}</span>
-          </div>
-        </section>
-
         {trackRenderer === 'READY_PRODUCTS_DETAILED' ? (
           <ReadyProductItemCards
             items={workOrder.items}
             partnerName={partner ? partner.nameAr : 'عميل'}
             supplierName={supplierName}
             deliveryDate={order.deliveryDate}
+            headerBase={{
+              effectiveName,
+              effectiveLogoUrl,
+              workOrderNumber: workOrder.workOrderNumber,
+              createdAt: workOrder.createdAt,
+              deliveryDate: order.deliveryDate,
+              responsibleStaff,
+            }}
           />
         ) : (
           <OffsetItemCards
             items={workOrder.items}
             partnerName={partner ? partner.nameAr : 'عميل'}
             sizeFamilyLabelByKey={new Map((pricingReference?.sizeFamilies ?? []).map((f) => [f.key, f.label]))}
+            headerBase={{
+              effectiveName,
+              effectiveLogoUrl,
+              workOrderNumber: workOrder.workOrderNumber,
+              createdAt: workOrder.createdAt,
+              deliveryDate: order.deliveryDate,
+              responsibleStaff,
+            }}
           />
         )}
 

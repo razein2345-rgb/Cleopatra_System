@@ -53,6 +53,7 @@ const baseSetting: Setting = {
   showInvoiceEmail: false,
   showInvoiceLandline: false,
   showInvoiceFacebook: false,
+  autoCloseDayTime: null,
 };
 
 const baseTemplate: DocumentTemplate = {

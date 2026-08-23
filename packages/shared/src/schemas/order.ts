@@ -141,6 +141,14 @@ export const orderItemSchema = z.object({
   // Owner (2026-08-23, "مرتجعات") — INVENTORY_RETAIL items only; empty for
   // every other kind. Several rows = partial-quantity returns over time.
   returns: z.array(orderItemReturnSchema),
+  // Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") —
+  // an absolute discount on this item's own frozen itemTotal, staff-
+  // entered at composition time, stacking with Order.discountPercent.
+  discountAmount: z.number(),
+  // Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — READY_PRODUCTS
+  // items only in practice; auto-copied into the "الإحضار من المورد"
+  // stage instance once the Workflow reaches it.
+  preferredSupplierId: z.string().uuid().nullable(),
   createdAt: z.string(),
 });
 
@@ -185,6 +193,10 @@ export const orderSchema = z.object({
     }),
   ),
   items: z.array(orderItemSchema),
+  // Owner (2026-08-23, "تخفيض على صنف محدد") — sum of every item's own
+  // discountAmount, computed at read time (never stored separately —
+  // each item's own value is the frozen source of truth).
+  itemDiscountsTotal: z.number(),
   // FEATURE-006 M3 — deposits/remaining balance (Approved Addition,
   // "Deposit / Payment Flow"). `paidTotal`/`remainingBalance` are
   // computed from `payments` at read time, never stored — the same
@@ -251,6 +263,16 @@ export const createOrderItemSchema = z.object({
    * simply gets no group, exactly like today.
    */
   groupKey: z.string().trim().min(1).max(50).optional(),
+  // Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") —
+  // an absolute discount amount on this item alone, stacking with the
+  // whole-invoice discountPercent below (owner: "متلغيش التخفيض على
+  // الفاتورة كلها طبعاً"). Validated server-side against the item's own
+  // freshly-computed total (orderService.ts's assertItemDiscountsValid),
+  // never against a caller-supplied number.
+  discountAmount: z.number().min(0).optional(),
+  // Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — see
+  // orderItemSchema's own doc comment on this same field.
+  preferredSupplierId: z.string().uuid().optional(),
 });
 
 /**

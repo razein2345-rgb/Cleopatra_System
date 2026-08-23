@@ -17,6 +17,7 @@ import {
   DeliveryDateBeforeOrderDateError,
   deleteOrder,
   getSalesSummary,
+  ItemDiscountExceedsTotalError,
   mapOrderToDto,
   OrderHasPaymentsError,
   OrderHasWorkOrderError,
@@ -157,6 +158,10 @@ export async function createOrderHandler(req: Request, res: Response) {
       res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
       return;
     }
+    if (err instanceof ItemDiscountExceedsTotalError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'ITEM_DISCOUNT_EXCEEDS_TOTAL' } });
+      return;
+    }
     throw err;
   }
 
@@ -219,6 +224,10 @@ export async function updateOrderHandler(req: Request<{ id: string }>, res: Resp
     }
     if (err instanceof DeliveryDateBeforeOrderDateError) {
       res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_DELIVERY_DATE' } });
+      return;
+    }
+    if (err instanceof ItemDiscountExceedsTotalError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'ITEM_DISCOUNT_EXCEEDS_TOTAL' } });
       return;
     }
     throw err;

@@ -28,6 +28,30 @@ type StageInstanceRecord = Prisma.StageInstanceGetPayload<{ include: typeof STAG
 type WorkflowInstanceRecord = Prisma.WorkflowInstanceGetPayload<{ include: typeof WORKFLOW_INSTANCE_INCLUDE }>;
 
 /**
+ * Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟... خلي المورد ثابت")
+ * — when a stage newly reached is `stageType: 'EXTERNAL'` (today: only
+ * READY_PRODUCTS's "الإحضار من المورد"), pre-fill `assignedSupplierId`
+ * from whichever of the Work Order's items carries a `preferredSupplierId`
+ * (staff picked it at composition time, before this Work Order/Workflow
+ * even existed) — a helpful default only, staff can still change it
+ * afterward on the Production Board. `null` when no item set one, or the
+ * stage isn't external — every call site passes this straight into
+ * `stageInstance.create`'s `assignedSupplierId`.
+ */
+async function resolvePreferredSupplierId(
+  tx: Prisma.TransactionClient,
+  workOrderId: string | null,
+  stageType: string,
+): Promise<string | null> {
+  if (stageType !== 'EXTERNAL' || !workOrderId) return null;
+  const item = await tx.orderItem.findFirst({
+    where: { workOrderId, preferredSupplierId: { not: null } },
+    select: { preferredSupplierId: true },
+  });
+  return item?.preferredSupplierId ?? null;
+}
+
+/**
  * Delay is deliberately never a stored column — computed here from
  * `dueDate` at read time (FEATURE-004 01_ANALYSIS.md's Queue Metadata
  * reasoning: a stored flag needs active maintenance a scheduler this
@@ -224,6 +248,10 @@ async function applyStageTransition(
   }
 
   const nextStage = await tx.workflowStage.findUniqueOrThrow({ where: { id: destinationStageId } });
+  const { workOrderId: nextWorkOrderId } = await tx.workflowInstance.findUniqueOrThrow({
+    where: { id: params.instanceId },
+    select: { workOrderId: true },
+  });
   const newStageInstance = await tx.stageInstance.create({
     data: {
       workflowInstanceId: params.instanceId,
@@ -233,6 +261,7 @@ async function applyStageTransition(
       assignedEmployeeId: nextStage.defaultAssignedEmployeeId,
       estimatedDurationMinutes: nextStage.estimatedDurationMinutes,
       startedAt: now,
+      assignedSupplierId: await resolvePreferredSupplierId(tx, nextWorkOrderId, nextStage.stageType),
     },
   });
   await tx.workflowInstance.update({
@@ -296,6 +325,7 @@ export async function createWorkflowInstance(
       assignedEmployeeId: startingStage.defaultAssignedEmployeeId,
       estimatedDurationMinutes: startingStage.estimatedDurationMinutes,
       startedAt: now,
+      assignedSupplierId: await resolvePreferredSupplierId(tx, params.workOrderId, startingStage.stageType),
     },
   });
 
@@ -417,6 +447,7 @@ export async function advanceWorkflowInstance(
         assignedEmployeeId: nextStage.defaultAssignedEmployeeId,
         estimatedDurationMinutes: nextStage.estimatedDurationMinutes,
         startedAt: now,
+        assignedSupplierId: await resolvePreferredSupplierId(tx, instance.workOrderId, nextStage.stageType),
       },
     });
     await tx.workflowInstance.update({

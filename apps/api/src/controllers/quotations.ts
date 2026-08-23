@@ -13,6 +13,7 @@ import {
   assertLegalStatusTransition,
   createQuotation as createQuotationRecord,
   IllegalStatusTransitionError,
+  ItemDiscountExceedsTotalError,
   mapQuotationToDto,
   nextQuotationNumber,
   PartnerRequiredError,
@@ -23,12 +24,14 @@ import {
   validateQuotationItemRefs,
 } from '../services/quotationService.js';
 import {
+  assertItemDiscountsValid,
   assertPartnerPresentUnlessWalkIn,
   buildOrderItemCreate,
   mapOrderToDto,
   nextInvoiceNumber,
   ORDER_INCLUDE,
   resolveItemCatalogNames,
+  sumItemDiscounts,
 } from '../services/orderService.js';
 import { buildPricingContext, computeItemPricing, PricingInputError } from '../services/pricingEngineService.js';
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
@@ -60,6 +63,10 @@ function handleQuotationItemError(err: unknown, res: Response): boolean {
   }
   if (err instanceof PartnerRequiredError) {
     res.status(400).json({ success: false, error: { message: err.message, code: 'PARTNER_REQUIRED' } });
+    return true;
+  }
+  if (err instanceof ItemDiscountExceedsTotalError) {
+    res.status(400).json({ success: false, error: { message: err.message, code: 'ITEM_DISCOUNT_EXCEEDS_TOTAL' } });
     return true;
   }
   return false;
@@ -202,9 +209,11 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
       itemNames = await resolveItemCatalogNames(input.items);
       const ctx = await buildPricingContext(input.items);
       priced = input.items.map((item) => computeItemPricing(item, ctx));
+      assertItemDiscountsValid(input.items, priced);
       const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
+      const itemDiscountsTotal = sumItemDiscounts(input.items);
       const discountPercent = input.discountPercent ?? existing.discountPercent.toNumber();
-      const afterDiscount = subtotal * (1 - discountPercent / 100);
+      const afterDiscount = (subtotal - itemDiscountsTotal) * (1 - discountPercent / 100);
       const vatOn = input.vatOn ?? existing.vatOn;
       const vatAmount = vatOn ? afterDiscount * (ctx.vatRate / 100) : 0;
       recomputedTotals = { subtotal, vatAmount, finalTotal: Math.ceil(afterDiscount + vatAmount) };
@@ -243,6 +252,7 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
             productionTrack: item.productionTrack ?? null,
             groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
             requiredQuantity: resolveRequiredQuantity(item.pricing),
+            discountAmount: item.discountAmount ?? 0,
           };
         }),
       });
@@ -537,6 +547,7 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
               productionTrack: item.productionTrack,
               groupId: item.groupId ? (quotationGroupIdToOrderGroupId.get(item.groupId) ?? null) : null,
               requiredQuantity: item.requiredQuantity,
+              discountAmount: item.discountAmount.toNumber(),
             }),
           ),
         },

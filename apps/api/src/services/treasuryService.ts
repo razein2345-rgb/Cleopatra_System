@@ -232,6 +232,7 @@ function mapDayClosureToDto(record: Prisma.TreasuryDayClosureGetPayload<object>)
     reopenedById: record.reopenedById,
     reopenedAt: record.reopenedAt?.toISOString() ?? null,
     reopenReason: record.reopenReason,
+    isAutoClosed: record.isAutoClosed,
   };
 }
 
@@ -377,6 +378,10 @@ export async function closeTreasuryDay(
   staffId: string,
   actualCountedCash: number,
   notes?: string,
+  // Owner (2026-08-23, "ان احدد وقت لما يجي الحساب بيتقفل دايركت") — set
+  // only by `autoCloseDayJob.ts`; a human closing the day always counts
+  // the real drawer, so this stays `false` for every other caller.
+  isAutoClosed = false,
 ): Promise<TreasuryDayClosure> {
   const date = dateOnly();
   const existing = await prisma.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
@@ -404,6 +409,7 @@ export async function closeTreasuryDay(
     reopenedById: null,
     reopenedAt: null,
     reopenReason: null,
+    isAutoClosed,
   };
 
   const result = existing
