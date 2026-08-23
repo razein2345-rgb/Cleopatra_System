@@ -4,12 +4,14 @@ import { requirePermission } from '../middlewares/requirePermission.js';
 import {
   createOrderHandler,
   deleteOrderHandler,
+  deletePaymentHandler,
   getOrder,
   getSalesSummaryHandler,
   listOrders,
   recordPaymentHandler,
   setOrderPartnerHandler,
   updateOrderHandler,
+  updatePaymentHandler,
 } from '../controllers/orders.js';
 
 export const ordersRouter = Router();
@@ -34,6 +36,11 @@ ordersRouter.delete('/:id', requirePermission('orders.delete'), deleteOrderHandl
 // (recording a payment changes the order's collected state, the same
 // authority level as editing it).
 ordersRouter.post('/:id/payments', requirePermission('orders.edit'), recordPaymentHandler);
+// Owner (2026-08-20, "تعديل/حذف مقيد بصلاحية خاصة") — deliberately
+// `payments.edit`, not `orders.edit` — see permissions.ts's own comment on
+// that module for why this must stay a separate, explicit grant.
+ordersRouter.put('/:id/payments/:paymentId', requirePermission('payments.edit'), updatePaymentHandler);
+ordersRouter.delete('/:id/payments/:paymentId', requirePermission('payments.edit'), deletePaymentHandler);
 // Owner (2026-08-20, "فاتورة كانت معمولة عند نادي المهندسين... محتاج اعدلها
 // واخليها بدون عميل") — assign/remove the customer on an existing invoice.
 ordersRouter.put('/:id/partner', requirePermission('orders.edit'), setOrderPartnerHandler);

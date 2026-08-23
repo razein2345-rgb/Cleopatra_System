@@ -1697,6 +1697,20 @@ model Payment {
 
   treasuryEntry TreasuryEntry?
 
+  /// Owner (2026-08-20, "تعديل/حذف مقيد بصلاحية خاصة") — a recorded
+  /// payment was purely additive until now; edit/delete both go through
+  /// the dedicated `payments.edit` permission (deliberately its own
+  /// top-level module, not nested under `orders.*`, so the broad
+  /// order-management grant most roles already hold does NOT
+  /// automatically cover this). Soft-delete, same convention as every
+  /// other sensitive delete (rule 19) — the linked TreasuryEntry is
+  /// updated/soft-deleted in the same transaction, never one without the
+  /// other, and a closed TreasuryDayClosure for the affected date reopens
+  /// automatically so the correction is visible (rule 7).
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
   createdAt DateTime @default(now())
 }
 

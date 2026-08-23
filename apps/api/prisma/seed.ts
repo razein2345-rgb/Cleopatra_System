@@ -56,6 +56,11 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     'settings.*',
     'employees.*',
     'leads.*',
+    // Owner (2026-08-20, "تعديل/حذف مقيد بصلاحية خاصة") — a deliberately
+    // separate grant from `orders.*` above; still included for ADMIN by
+    // default (SUPER_ADMIN already covered via the global bypass), but
+    // never bundled into any other role's grant automatically.
+    'payments.edit',
     'roles.view',
     'permissions.view',
   ],

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, PaymentMethod, User } from '@cleopatra/shared';
+import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, Payment, PaymentMethod, User } from '@cleopatra/shared';
 import { PRODUCTION_TRACK_LABELS } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -62,6 +62,10 @@ export function OrderDocumentPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
+  /** Owner (2026-08-20, "تعديل المدفوع... تعديل أي دفعة سابقة") — gated on the dedicated `payments.edit` permission, not `orders.edit`. */
+  const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
+  const [paymentActionError, setPaymentActionError] = useState<string | null>(null);
+  const [paymentActionBusy, setPaymentActionBusy] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -167,6 +171,27 @@ export function OrderDocumentPage() {
       setPaymentError(err instanceof Error ? err.message : 'تعذر تسجيل الدفعة');
     } finally {
       setPaymentSaving(false);
+    }
+  };
+
+  const deletePaymentRow = async (payment: Payment) => {
+    if (
+      !(await confirm({
+        title: `حذف دفعة بمبلغ ${payment.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م؟`,
+        description: 'هيترجع المبلغ ده تلقائيًا من قيد الخزينة المرتبط بيها.',
+        destructive: true,
+      }))
+    )
+      return;
+    setPaymentActionError(null);
+    setPaymentActionBusy(payment.id);
+    try {
+      const updated = await apiDelete<Order>(`/api/orders/${order.id}/payments/${payment.id}`);
+      setOrder(updated);
+    } catch (err) {
+      setPaymentActionError(err instanceof Error ? err.message : 'تعذر حذف الدفعة');
+    } finally {
+      setPaymentActionBusy(null);
     }
   };
 
@@ -338,6 +363,69 @@ export function OrderDocumentPage() {
         paymentTerms={order.paymentTerms}
         deliveryDate={order.deliveryDate}
       />
+
+      {order.payments.length > 0 && (
+        <div className="border-border bg-card space-y-2 rounded-2xl border p-4 print:hidden">
+          <p className="text-sm font-bold">سجل الدفعات</p>
+          {paymentActionError && <p className="text-destructive text-sm">{paymentActionError}</p>}
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+                <th className="p-2">التاريخ</th>
+                <th className="p-2">طريقة التحصيل</th>
+                <th className="p-2">المبلغ</th>
+                {can('payments.edit') && <th className="p-2" />}
+              </tr>
+            </thead>
+            <tbody>
+              {order.payments.map((payment) => (
+                <tr key={payment.id} className="border-border border-b last:border-0">
+                  <td className="text-muted-foreground p-2">{new Date(payment.createdAt).toLocaleString('ar-EG')}</td>
+                  <td className="p-2">{PAYMENT_METHOD_LABELS[payment.method]}</td>
+                  <td className="p-2" dir="ltr">
+                    {payment.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </td>
+                  {can('payments.edit') && (
+                    <td className="p-2">
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={paymentActionBusy === payment.id}
+                          onClick={() => setEditingPayment(payment)}
+                          className="text-primary text-xs hover:underline disabled:opacity-50"
+                        >
+                          تعديل
+                        </button>
+                        <button
+                          type="button"
+                          disabled={paymentActionBusy === payment.id}
+                          onClick={() => void deletePaymentRow(payment)}
+                          className="text-destructive text-xs hover:underline disabled:opacity-50"
+                        >
+                          حذف
+                        </button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {editingPayment && (
+        <EditPaymentDialog
+          orderId={order.id}
+          payment={editingPayment}
+          onClose={() => setEditingPayment(null)}
+          onSaved={(updated) => {
+            setOrder(updated);
+            setEditingPayment(null);
+          }}
+        />
+      )}
+
       {showAddPayment && (
         <Dialog open onOpenChange={(open) => !open && setShowAddPayment(false)}>
           <DialogContent>
@@ -389,5 +477,91 @@ export function OrderDocumentPage() {
         </Dialog>
       )}
     </div>
+  );
+}
+
+/** Owner (2026-08-20, "تعديل المدفوع") — edits an already-recorded payment's amount/method; the linked TreasuryEntry (and a closed treasury day, if the payment landed on one) update in the same transaction server-side. */
+function EditPaymentDialog({
+  orderId,
+  payment,
+  onClose,
+  onSaved,
+}: {
+  orderId: string;
+  payment: Payment;
+  onClose: () => void;
+  onSaved: (order: Order) => void;
+}) {
+  const [amount, setAmount] = useState(String(payment.amount));
+  const [method, setMethod] = useState<PaymentMethod>(payment.method);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    const parsed = Number(amount);
+    if (!amount || Number.isNaN(parsed) || parsed <= 0) {
+      setError('اكتب مبلغ أكبر من صفر');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      const updated = await apiPut<Order>(`/api/orders/${orderId}/payments/${payment.id}`, { amount: parsed, method });
+      onSaved(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تعديل الدفعة');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>تعديل دفعة</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">المبلغ</span>
+            <input
+              autoFocus
+              type="number"
+              min={0}
+              step="0.01"
+              required
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">طريقة التحصيل</span>
+            <select
+              value={method}
+              onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            >
+              {PAYMENT_METHOD_OPTIONS.map((m) => (
+                <option key={m} value={m}>
+                  {PAYMENT_METHOD_LABELS[m]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'جارٍ الحفظ…' : 'حفظ التعديل'}
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

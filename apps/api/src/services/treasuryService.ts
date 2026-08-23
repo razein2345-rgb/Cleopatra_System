@@ -278,6 +278,36 @@ export async function assertBranchDayNotClosed(
   if (closure && !closure.isOpen) throw new DayClosedError();
 }
 
+/**
+ * Owner (2026-08-20, two separate confirmations that landed on the same
+ * answer — payment corrections and returns both "تعديل رقم بعد ما تقفيل
+ * الحساب... من غير أثر واضح" / "يفتح اليوم المقفول تلقائيًا لتسجيل
+ * المرتجع") — unlike `assertBranchDayNotClosed` (which *blocks* a brand-new
+ * entry on a closed day), a correction to money that already happened on
+ * that day must still be recorded — so instead of blocking, this silently
+ * reopens the day (a no-op if it was never closed, or already open) so the
+ * correction lands visibly rather than being rejected. `reason` always
+ * says which action caused the auto-reopen (`reopenedById`/`reopenReason`
+ * on `TreasuryDayClosure` — same fields a manual reopen already fills in,
+ * so a manual and an automatic reopen are indistinguishable in the audit
+ * trail except by their reason text).
+ */
+export async function reopenDayIfClosed(
+  branchId: string,
+  entryDate: Date | string,
+  staffId: string,
+  reason: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<void> {
+  const date = dateOnly(entryDate);
+  const closure = await client.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
+  if (!closure || closure.isOpen) return;
+  await client.treasuryDayClosure.update({
+    where: { id: closure.id },
+    data: { isOpen: true, reopenedById: staffId, reopenedAt: new Date(), reopenReason: reason },
+  });
+}
+
 /** Cash-only inflow/outflow totals for one branch+day — the physical-drawer reconciliation the owner asked for excludes Vodafone Cash/InstaPay/bank entries, which never touch the counted cash. */
 async function computeCashFlows(
   branchId: string,

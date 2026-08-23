@@ -7,6 +7,7 @@ import type {
   Payment,
   ProductionTrack,
   SalesSummary,
+  UpdatePaymentInput,
 } from '@cleopatra/shared';
 import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
@@ -14,7 +15,7 @@ import { deductStockForOrderItem, restockForOrderItem } from './inventoryService
 import { buildPricingContext, computeItemPricing, type ItemPricingResult } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
 import { createWorkOrderForTrack, softDeleteWorkOrderTx, tryAutoCreateWorkOrders } from './workOrderService.js';
-import { assertBranchDayNotClosed } from './treasuryService.js';
+import { assertBranchDayNotClosed, reopenDayIfClosed } from './treasuryService.js';
 
 export { PricingInputError } from './pricingEngineService.js';
 
@@ -94,7 +95,7 @@ export const ORDER_INCLUDE = {
   // Work Orders, one per resolved track actually present among the
   // order's items.
   workOrders: { where: { isDeleted: false }, select: { id: true, workOrderNumber: true, productionTrack: true } },
-  payments: true,
+  payments: { where: { isDeleted: false } },
 } satisfies Prisma.OrderInclude;
 
 type OrderRecord = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
@@ -1024,7 +1025,7 @@ export async function deleteOrder(
     where: { id: orderId },
     // Multi-material pricing (2026-08-17) — `materials` needed for the
     // restock loop below (`materialsToRestock`).
-    include: { items: { include: { materials: true } }, payments: true, workOrders: true },
+    include: { items: { include: { materials: true } }, payments: { where: { isDeleted: false } }, workOrders: true },
   });
   if (!existing || existing.isDeleted) {
     throw new OrderNotFoundError();
@@ -1103,6 +1104,91 @@ export async function recordPayment(
   });
 }
 
+export class PaymentNotFoundError extends Error {
+  constructor() {
+    super('Payment not found');
+    this.name = 'PaymentNotFoundError';
+  }
+}
+
+/**
+ * Owner (2026-08-20, "تعديل المدفوع... تعديل أي دفعة سابقة") — a Payment
+ * was purely additive until now. Updates the Payment row and its linked
+ * TreasuryEntry to the same new amount/method atomically (never one
+ * without the other — same discipline `recordPayment` above already
+ * follows for creation), auto-reopening the day if the original payment
+ * landed on one already closed (`reopenDayIfClosed` — never blocks the
+ * correction, just makes it visible).
+ */
+export async function updatePayment(
+  orderId: string,
+  paymentId: string,
+  input: UpdatePaymentInput,
+  staffId: string,
+): Promise<{ order: OrderRecord; previous: Payment }> {
+  return prisma.$transaction(async (tx) => {
+    const payment = await tx.payment.findUnique({ where: { id: paymentId } });
+    if (!payment || payment.isDeleted || payment.orderId !== orderId) {
+      throw new PaymentNotFoundError();
+    }
+    const order = await tx.order.findUnique({ where: { id: orderId } });
+    if (!order || order.isDeleted) {
+      throw new OrderNotFoundError();
+    }
+    const previous = mapPaymentToDto(payment);
+
+    const newAmount = input.amount ?? payment.amount.toNumber();
+    const newMethod = input.method ?? payment.method;
+
+    await tx.payment.update({ where: { id: paymentId }, data: { amount: newAmount, method: newMethod } });
+    await tx.treasuryEntry.updateMany({
+      where: { paymentId },
+      data: { amount: newAmount, method: newMethod },
+    });
+
+    await reopenDayIfClosed(order.branchId, payment.createdAt, staffId, `تعديل دفعة على الفاتورة ${order.invoiceNumber}`, tx);
+
+    const fullOrder = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: ORDER_INCLUDE });
+    return { order: fullOrder, previous };
+  });
+}
+
+/**
+ * Soft-delete (rule 19) — reverses the payment the same way voiding it
+ * should: the Payment row and its linked TreasuryEntry are both
+ * soft-deleted together, never one without the other, so `paidTotal`/
+ * `remainingBalance` (computed from `ORDER_INCLUDE`'s now-filtered
+ * `payments`) and the treasury ledger agree immediately.
+ */
+export async function deletePayment(
+  orderId: string,
+  paymentId: string,
+  staffId: string,
+): Promise<{ order: OrderRecord; previous: Payment }> {
+  return prisma.$transaction(async (tx) => {
+    const payment = await tx.payment.findUnique({ where: { id: paymentId } });
+    if (!payment || payment.isDeleted || payment.orderId !== orderId) {
+      throw new PaymentNotFoundError();
+    }
+    const order = await tx.order.findUnique({ where: { id: orderId } });
+    if (!order || order.isDeleted) {
+      throw new OrderNotFoundError();
+    }
+    const previous = mapPaymentToDto(payment);
+
+    await tx.payment.update({ where: { id: paymentId }, data: { isDeleted: true, deletedAt: new Date(), deletedBy: staffId } });
+    await tx.treasuryEntry.updateMany({
+      where: { paymentId },
+      data: { isDeleted: true, deletedAt: new Date(), deletedBy: staffId },
+    });
+
+    await reopenDayIfClosed(order.branchId, payment.createdAt, staffId, `حذف دفعة على الفاتورة ${order.invoiceNumber}`, tx);
+
+    const fullOrder = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: ORDER_INCLUDE });
+    return { order: fullOrder, previous };
+  });
+}
+
 /**
  * UX_PRODUCT_AUDIT.md § مشكلة 2.1 ("مفيش أي Widget مالي/تجاري لصاحب
  * المشروع") — no aggregate sales-total query existed anywhere in the
@@ -1141,7 +1227,7 @@ export async function getSalesSummary(): Promise<SalesSummary> {
     // `mapOrderToDto` already uses.
     prisma.order.findMany({
       where: baseWhere,
-      select: { finalTotal: true, payments: { select: { amount: true } } },
+      select: { finalTotal: true, payments: { where: { isDeleted: false }, select: { amount: true } } },
     }),
   ]);
 

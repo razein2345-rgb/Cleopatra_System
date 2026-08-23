@@ -184,6 +184,16 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
+    // Owner (2026-08-20, "تعديل/حذف مقيد بصلاحية خاصة") — deliberately its
+    // own top-level module, NOT nested under `orders.*` — most roles that
+    // can edit an order at all (`orders.*`) should NOT automatically be
+    // able to correct a payment already reconciled in the treasury; this
+    // has to be a separate, explicit grant.
+    module: 'payments',
+    moduleLabel: 'Payment corrections',
+    actions: [{ action: 'edit', label: 'Edit or void an already-recorded payment' }],
+  },
+  {
     // PRODUCT_ROADMAP.md §2 ("المرحلة الثانية") — a Lead is a separate,
     // lighter-weight entity from BusinessPartner (`partners.*`), so it
     // gets its own permission namespace rather than folding into it.

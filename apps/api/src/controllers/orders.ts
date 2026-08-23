@@ -1,8 +1,16 @@
 import type { Request, Response } from 'express';
-import { createOrderSchema, createPaymentSchema, hasPermission, setOrderPartnerSchema, updateOrderSchema } from '@cleopatra/shared';
+import {
+  createOrderSchema,
+  createPaymentSchema,
+  hasPermission,
+  setOrderPartnerSchema,
+  updateOrderSchema,
+  updatePaymentSchema,
+} from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
   createOrder,
+  deletePayment,
   DeliveryDateBeforeOrderDateError,
   deleteOrder,
   getSalesSummary,
@@ -12,11 +20,13 @@ import {
   OrderNotFoundError,
   ORDER_INCLUDE,
   PartnerRequiredError,
+  PaymentNotFoundError,
   PricingInputError,
   recordPayment,
   resolveItemCatalogNames,
   setOrderPartner,
   updateOrder,
+  updatePayment,
 } from '../services/orderService.js';
 import { QuotationItemValidationError, validateQuotationItemRefs } from '../services/quotationService.js';
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
@@ -361,4 +371,80 @@ export async function recordPaymentHandler(req: Request<{ id: string }>, res: Re
   });
 
   res.status(201).json({ success: true, data: mapOrderToDto(order, true) });
+}
+
+/**
+ * Owner (2026-08-20, "تعديل المدفوع... تعديل أي دفعة سابقة") — gated on
+ * the router's `payments.edit` (deliberately not `orders.edit`, see
+ * `packages/shared/src/permissions.ts`'s own comment on that module).
+ */
+export async function updatePaymentHandler(req: Request<{ id: string; paymentId: string }>, res: Response) {
+  const auth = req.auth!;
+  const orderBranchId = await loadOrderBranchOr404(req.params.id, res);
+  if (!orderBranchId) return;
+  if (!canAccessBranch(auth, orderBranchId)) {
+    forbidBranch(res);
+    return;
+  }
+
+  const input = updatePaymentSchema.parse(req.body);
+
+  let result;
+  try {
+    result = await updatePayment(req.params.id, req.params.paymentId, input, auth.staffId);
+  } catch (err) {
+    if (err instanceof PaymentNotFoundError || err instanceof OrderNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+  const { order, previous } = result;
+
+  await recordAudit({
+    entityType: 'Payment',
+    entityId: req.params.paymentId,
+    action: 'UPDATE',
+    performedById: auth.staffId,
+    branchId: order.branchId,
+    partnerId: order.partnerId,
+    previousValue: { method: previous.method, amount: previous.amount },
+    newValue: input,
+  });
+
+  res.json({ success: true, data: mapOrderToDto(order, true) });
+}
+
+export async function deletePaymentHandler(req: Request<{ id: string; paymentId: string }>, res: Response) {
+  const auth = req.auth!;
+  const orderBranchId = await loadOrderBranchOr404(req.params.id, res);
+  if (!orderBranchId) return;
+  if (!canAccessBranch(auth, orderBranchId)) {
+    forbidBranch(res);
+    return;
+  }
+
+  let result;
+  try {
+    result = await deletePayment(req.params.id, req.params.paymentId, auth.staffId);
+  } catch (err) {
+    if (err instanceof PaymentNotFoundError || err instanceof OrderNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+  const { order, previous } = result;
+
+  await recordAudit({
+    entityType: 'Payment',
+    entityId: req.params.paymentId,
+    action: 'DELETE',
+    performedById: auth.staffId,
+    branchId: order.branchId,
+    partnerId: order.partnerId,
+    previousValue: { method: previous.method, amount: previous.amount },
+  });
+
+  res.json({ success: true, data: mapOrderToDto(order, true) });
 }
