@@ -64,12 +64,20 @@ export const createStockMovementSchema = z.object({
   reference: z.string().trim().min(1).max(200).optional(),
 });
 
-/** Owner (2026-08-20, "لا عايز اقدر اعدل الحركة واحذفها") — correcting an already-recorded movement (wrong quantity/type/date/reference), not just adding a new one. */
+/**
+ * Owner (2026-08-20, "لا عايز اقدر اعدل الحركة واحذفها") — correcting an
+ * already-recorded movement (wrong quantity/type/date/reference), not just
+ * adding a new one. `branchId` (2026-08-24, "عايز اغير الفرع في عملية بيع
+ * سريع") extends the same edit path to the branch a movement is attributed
+ * to — same treasury-entry branch-edit capability already built for MANUAL
+ * entries, now covering QUICK_SALE-sourced ones too.
+ */
 export const updateStockMovementSchema = z.object({
   type: stockMovementTypeSchema.optional(),
   quantity: z.number().positive().optional(),
   reference: z.string().trim().min(1).max(200).nullable().optional(),
   date: z.string().optional(),
+  branchId: z.string().uuid().optional(),
 });
 
 export const stockMovementSchema = z.object({

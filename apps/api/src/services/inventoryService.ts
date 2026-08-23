@@ -373,6 +373,7 @@ export async function updateStockMovement(
 
   const newType = input.type ?? existing.type;
   const newQuantity = input.quantity ?? existing.quantity.toNumber();
+  const newBranchId = input.branchId ?? existing.branchId;
   const oldDelta = movementDelta(existing.type, existing.quantity.toNumber());
   const newDelta = movementDelta(newType, newQuantity);
 
@@ -382,20 +383,46 @@ export async function updateStockMovement(
       data: {
         type: newType,
         quantity: newQuantity,
+        branchId: newBranchId,
         reference: input.reference,
         date: input.date !== undefined ? new Date(input.date) : undefined,
       },
     });
-    await tx.stockLevel.upsert({
-      where: { inventoryItemId_branchId: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId } },
-      create: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId, quantityOnHand: newDelta - oldDelta },
-      update: { quantityOnHand: { increment: newDelta - oldDelta } },
-    });
+    if (newBranchId === existing.branchId) {
+      await tx.stockLevel.upsert({
+        where: { inventoryItemId_branchId: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId } },
+        create: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId, quantityOnHand: newDelta - oldDelta },
+        update: { quantityOnHand: { increment: newDelta - oldDelta } },
+      });
+    } else {
+      // Branch changed (2026-08-24, "عايز اغير الفرع في عملية بيع سريع") —
+      // pull the movement's whole effect off the old branch's StockLevel row
+      // and apply it to the new one, same delta-increment style, not a
+      // re-derive-from-scratch. `quantityOnHand` itself is already summed
+      // company-wide (see `mapInventoryItemToDto`'s own comment) so this
+      // doesn't change the total — only which branch's row records it,
+      // which `listStockMovements`'/audit history still cares about.
+      await tx.stockLevel.upsert({
+        where: { inventoryItemId_branchId: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId } },
+        create: { inventoryItemId: existing.inventoryItemId, branchId: existing.branchId, quantityOnHand: -oldDelta },
+        update: { quantityOnHand: { increment: -oldDelta } },
+      });
+      await tx.stockLevel.upsert({
+        where: { inventoryItemId_branchId: { inventoryItemId: existing.inventoryItemId, branchId: newBranchId } },
+        create: { inventoryItemId: existing.inventoryItemId, branchId: newBranchId, quantityOnHand: newDelta },
+        update: { quantityOnHand: { increment: newDelta } },
+      });
+    }
 
     // Owner (2026-08-20, "تعديل/حذف حركة المخزون بيرجّع قيد الخزينة
     // تلقائيًا") — a quick-sale movement's quantity edit rescales its paired
     // TreasuryEntry proportionally (same unit price, new quantity), keeping
     // the cash figure and the stock figure from ever drifting apart.
+    // `branchId` (2026-08-24, "عايز اغير الفرع في عملية بيع سريع") — the
+    // Treasury page's "الفرع" column reads `TreasuryEntry.branchId`, a
+    // separate column from `StockMovement.branchId`; carry the same new
+    // branch onto the linked entry so the two never drift apart, same
+    // discipline as the amount rescale right above.
     const linkedEntry = await tx.treasuryEntry.findFirst({
       where: { stockMovementId: movementId, isDeleted: false },
     });
@@ -404,7 +431,7 @@ export async function updateStockMovement(
       const unitPrice = linkedEntry.amount.toNumber() / previous.quantity;
       entry = await tx.treasuryEntry.update({
         where: { id: linkedEntry.id },
-        data: { amount: unitPrice * newQuantity },
+        data: { amount: unitPrice * newQuantity, branchId: newBranchId },
       });
     }
 

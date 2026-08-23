@@ -124,6 +124,17 @@ function FullTreasuryView() {
     }
   };
 
+  /** Owner (2026-08-24, "عايز اغير الفرع في عملية بيع سريع") — same edit path as `removeQuickSaleEntry` above, reusing the StockMovement edit endpoint (moves the movement's StockLevel effect from the old branch to the new one server-side). */
+  const updateQuickSaleEntryField = async (entry: TreasuryEntry, patch: { branchId: string }) => {
+    setError(null);
+    try {
+      await apiPut(`/api/treasury-entries/${entry.id}/quick-sale-movement`, patch);
+      refreshAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر تغيير فرع حركة البيع السريع');
+    }
+  };
+
   if (error) return <div className="text-destructive">{error}</div>;
 
   return (
@@ -377,6 +388,14 @@ function FullTreasuryView() {
                           value={entry.branchId}
                           options={branches.map((b) => [b.id, b.name] as const)}
                           onSave={(next) => updateEntryField(entry, { branchId: next })}
+                          renderValue={branchName}
+                        />
+                      ) : entry.sourceType === 'QUICK_SALE' && can('inventory.edit') ? (
+                        <EditableSelectCell
+                          value={entry.branchId}
+                          options={branches.map((b) => [b.id, b.name] as const)}
+                          onSave={(next) => updateQuickSaleEntryField(entry, { branchId: next })}
+                          renderValue={branchName}
                         />
                       ) : (
                         branchName(entry.branchId)
