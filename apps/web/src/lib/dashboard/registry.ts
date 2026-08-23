@@ -12,6 +12,7 @@ import { dailyProductionWidget } from './widgets/DailyProductionWidget';
 import { jobsByDepartmentWidget } from './widgets/JobsByDepartmentWidget';
 import { jobsByOperatorWidget } from './widgets/JobsByOperatorWidget';
 import { supplierDelaysWidget } from './widgets/SupplierDelaysWidget';
+import { supplierPickupWidget } from './widgets/SupplierPickupWidget';
 import { readyForDeliveryWidget } from './widgets/ReadyForDeliveryWidget';
 import { attendanceWidget } from './widgets/AttendanceWidget';
 import { lowStockWidget } from './widgets/LowStockWidget';
@@ -39,6 +40,7 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   jobsByDepartmentWidget,
   jobsByOperatorWidget,
   supplierDelaysWidget,
+  supplierPickupWidget,
   readyForDeliveryWidget,
   lowStockWidget,
 ];
