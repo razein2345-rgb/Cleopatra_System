@@ -153,6 +153,7 @@ export function InventoryPage() {
           immediately, regardless of how long that warning list is. */}
       {showForm && (
         <NewInventoryItemForm
+          existingItems={items ?? []}
           onCreated={() => {
             setShowForm(false);
             load();
@@ -638,7 +639,33 @@ function EditMovementDialog({
   );
 }
 
-function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
+/**
+ * Owner (2026-08-24, "لما اكتب في إسم الصنف يكون بيسرش علشان لو حاجه
+ * موجوده مسجلهاش مرتين فا تظهرلي إنها متسجلة") — live substring match
+ * against the already-loaded inventory list as the name is typed, purely
+ * informational (never blocks submission — the owner still decides).
+ */
+function DuplicateNameWarning({ name, existingItems }: { name: string; existingItems: InventoryItem[] }) {
+  const trimmed = name.trim();
+  if (trimmed.length < 2) return null;
+  const matches = existingItems.filter((i) => i.name.toLowerCase().includes(trimmed.toLowerCase()));
+  if (matches.length === 0) return null;
+
+  return (
+    <div className="border-warning bg-warning/10 mt-1 space-y-1 rounded-md border p-2 text-xs">
+      <p className="text-warning-foreground font-medium">⚠ في أصناف مسجّلة بأسماء مشابهة بالفعل:</p>
+      <ul className="space-y-0.5">
+        {matches.slice(0, 5).map((i) => (
+          <li key={i.id} className="text-muted-foreground">
+            {i.name} — {CATEGORY_LABELS[i.category]} — الرصيد: {i.quantityOnHand}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function NewInventoryItemForm({ onCreated, existingItems }: { onCreated: () => void; existingItems: InventoryItem[] }) {
   const [category, setCategory] = useState<MaterialCategory>('PAPER');
   const [name, setName] = useState('');
   // READY_MADE items (stationery, ...) are almost always counted by the
@@ -695,6 +722,7 @@ function NewInventoryItemForm({ onCreated }: { onCreated: () => void }) {
             placeholder={category === 'READY_MADE' ? 'مثال: دباسة مكتبية' : 'مثال: دوبلكس 200 جرام'}
             className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
           />
+          <DuplicateNameWarning name={name} existingItems={existingItems} />
         </label>
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground">الفئة</span>
