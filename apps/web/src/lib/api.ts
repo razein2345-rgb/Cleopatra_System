@@ -3,10 +3,32 @@ import { supabase } from './supabase';
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 
+/**
+ * Device Access Control (2026-08-24, owner: "عايز اقدر احدد الأجهزة
+ * المسموح لها بفتح النظام") — a random, non-sensitive identifier kept in
+ * `localStorage`, sent as `X-Device-Id` on every request so the backend
+ * (`requireAuth.ts`) can recognize this browser across sessions. Not a
+ * fingerprint — no device characteristics are collected here, just an
+ * opaque token this browser generates once and keeps.
+ */
+const DEVICE_ID_KEY = 'cp_device_id';
+
+function getDeviceId(): string {
+  let id = localStorage.getItem(DEVICE_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(DEVICE_ID_KEY, id);
+  }
+  return id;
+}
+
 async function authHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    'X-Device-Id': getDeviceId(),
+  };
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

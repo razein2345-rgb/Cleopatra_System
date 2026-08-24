@@ -27,6 +27,22 @@ function translateAuthError(message: string): string {
   if (normalized.includes('deactivated')) {
     return 'تم تعطيل هذا الحساب، يرجى مراجعة الإدارة';
   }
+  // Device Access Control (2026-08-24) — matches the exact messages
+  // `deviceService.ts`'s `DeviceAccessDeniedError` throws, same pattern as
+  // every other case here (the API doesn't propagate a structured error
+  // code to the frontend today, only the message text).
+  if (normalized.includes('awaiting administrator approval')) {
+    return 'هذا الجهاز غير مصرح له بالدخول حاليًا، ويحتاج إلى اعتماد من مسؤول النظام.';
+  }
+  if (normalized.includes('this device has been blocked')) {
+    return 'هذا الجهاز محظور من الدخول للنظام.';
+  }
+  if (normalized.includes('not authorized for this account')) {
+    return 'هذا الجهاز غير مصرح له بالدخول بحساب المستخدم ده.';
+  }
+  if (normalized.includes('device identification missing')) {
+    return 'تعذر التعرف على الجهاز، حاول تحديث الصفحة والمحاولة تاني.';
+  }
   if (normalized.includes('email not confirmed')) {
     return 'لم يتم تأكيد البريد الإلكتروني بعد';
   }

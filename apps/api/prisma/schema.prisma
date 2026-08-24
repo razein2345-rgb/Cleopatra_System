@@ -314,6 +314,24 @@ enum AuditAction {
   /// security reporting can filter for "rejected, dangerous attempts"
   /// as its own category, independent of what succeeded.
   SECURITY_REJECTION
+  /// Device Access Control (2026-08-24) — a new device was seen for the
+  /// first time (status depends on `Setting.deviceAccessMode` at that
+  /// moment: PENDING or auto-ACTIVE).
+  DEVICE_REGISTERED
+  /// A PENDING device was approved by SUPER_ADMIN → ACTIVE.
+  DEVICE_APPROVED
+  /// A device was blocked (from ACTIVE or PENDING) → BLOCKED.
+  DEVICE_BLOCKED
+  /// A BLOCKED device was unblocked → ACTIVE.
+  DEVICE_UNBLOCKED
+  /// A device's label was renamed, or its bound staff (Policy B) changed.
+  DEVICE_RENAMED
+  /// Soft-deleted/unregistered a device row.
+  DEVICE_REMOVED
+  /// A request arrived from a device that is currently PENDING or
+  /// BLOCKED — rejected before `req.auth` even finishes populating.
+  /// `newValue` carries `{ reason: 'PENDING' | 'BLOCKED' | 'WRONG_STAFF', deviceToken }`.
+  UNAUTHORIZED_DEVICE_ATTEMPT
 }
 
 /// FEATURE-002. Lifecycle stage — distinct from PartnerRole (what capacity
@@ -556,6 +574,15 @@ model Setting {
   /// manual close (see `TreasuryDayClosure.isAutoClosed`). Null = the
   /// feature is off (no automatic closing at all — the default).
   autoCloseDayTime String?
+
+  /// Device Access Control (2026-08-24) — "ALLOW_ALL_REGISTERED" (default,
+  /// a new device auto-activates the moment it's first seen) or
+  /// "ONLY_APPROVED" (a new device starts PENDING, blocked until
+  /// SUPER_ADMIN explicitly approves it). Not a Prisma enum — same
+  /// free-string convention as `OrderItem.kind`/`QuotationItem.itemType`,
+  /// since this is read/written only by `requireAuth.ts`/the Devices
+  /// settings screen, never joined against.
+  deviceAccessMode String @default("ALLOW_ALL_REGISTERED")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -829,6 +856,13 @@ model StaffProfile {
   orderTemplatesCreated      OrderTemplate[]
   orderItemProductionUpdates OrderItem[]                @relation("OrderItemProductionUpdatedBy")
   orderItemReturnsRecorded   OrderItemReturn[]
+  /// Device Access Control (2026-08-24, owner: "عايز اقدر احدد الأجهزة
+  /// المسموح لها بفتح النظام"). `trustedDevices` is Policy B only (a
+  /// device bound to exactly this one staff member) — a Policy A device
+  /// (`staffId: null`, usable by any staff) has no owner relation at all.
+  trustedDevices             TrustedDevice[]            @relation("TrustedDeviceOwner")
+  devicesApproved            TrustedDevice[]            @relation("TrustedDeviceApprovedBy")
+  devicesBlocked             TrustedDevice[]            @relation("TrustedDeviceBlockedBy")
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -917,6 +951,64 @@ model UserBranchAccess {
   grantedAt DateTime     @default(now())
 
   @@unique([staffId, branchId])
+}
+
+enum DeviceStatus {
+  PENDING
+  ACTIVE
+  BLOCKED
+}
+
+/// Device Access Control / Trusted Devices (2026-08-24, owner: "عايز اقدر
+/// احدد الأجهزة المسموح لها بفتح النظام"). `deviceToken` is a random,
+/// non-sensitive identifier the browser generates and keeps in
+/// `localStorage` (not a fingerprint — no device characteristics are
+/// collected) — sent as the `X-Device-Id` header on every API request;
+/// `requireAuth.ts` is the single enforcement point (checked on every
+/// request, not just login, since the Supabase session itself is already
+/// issued before this system's own backend is ever consulted). The Kiosk
+/// attendance account (`attendance.kiosk` permission) is exempt entirely
+/// — a different, already-adequate security model (shared PIN-pad
+/// terminal), per owner's explicit choice.
+///
+/// `staffId` null = Policy A (device authorized system-wide, any staff
+/// may use it); set = Policy B (bound to exactly this one staff member).
+model TrustedDevice {
+  id          String       @id @default(uuid()) @db.Uuid
+  deviceToken String       @unique
+  /// Owner-editable display name ("جهاز المكتب"); defaults to a
+  /// deviceType/browser-derived guess at first registration.
+  label       String?
+  staffId     String?      @db.Uuid
+  staff       StaffProfile? @relation("TrustedDeviceOwner", fields: [staffId], references: [id], onDelete: Cascade)
+  status      DeviceStatus @default(PENDING)
+  /// Parsed server-side from the `User-Agent` header at registration —
+  /// never client-reported, never a fingerprinting payload.
+  deviceType  String?
+  os          String?
+  browser     String?
+
+  firstSeenAt  DateTime  @default(now())
+  lastLoginAt  DateTime?
+  lastActiveAt DateTime?
+
+  approvedById String?       @db.Uuid
+  approvedBy   StaffProfile? @relation("TrustedDeviceApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+  blockedById  String?       @db.Uuid
+  blockedBy    StaffProfile? @relation("TrustedDeviceBlockedBy", fields: [blockedById], references: [id])
+  blockedAt    DateTime?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([staffId])
+  @@index([status])
+  @@index([isDeleted])
 }
 
 // ---------------------------------------------------------------------------

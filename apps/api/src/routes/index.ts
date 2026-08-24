@@ -33,6 +33,7 @@ import { employeeAdvancesRouter } from './employeeAdvances.js';
 import { attendanceRouter } from './attendance.js';
 import { machinesRouter } from './machines.js';
 import { auditLogsRouter } from './auditLogs.js';
+import { devicesRouter } from './devices.js';
 
 export const apiRouter = Router();
 
@@ -73,4 +74,5 @@ api.use('/employee-advances', employeeAdvancesRouter);
 api.use('/attendance', attendanceRouter);
 api.use('/machines', machinesRouter);
 api.use('/audit-logs', auditLogsRouter);
+api.use('/devices', devicesRouter);
 apiRouter.use('/api', api);

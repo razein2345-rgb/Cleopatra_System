@@ -20,6 +20,7 @@ import { RoleHome } from '@/pages/dashboard/RoleHome';
  */
 const SettingsPage = lazy(() => import('@/pages/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 const AuditLogPage = lazy(() => import('@/pages/settings/AuditLogPage').then((m) => ({ default: m.AuditLogPage })));
+const DevicesPage = lazy(() => import('@/pages/settings/DevicesPage').then((m) => ({ default: m.DevicesPage })));
 const UsersPage = lazy(() => import('@/pages/users/UsersPage').then((m) => ({ default: m.UsersPage })));
 const EmployeeProfilePage = lazy(() =>
   import('@/pages/users/EmployeeProfilePage').then((m) => ({ default: m.EmployeeProfilePage })),
@@ -91,6 +92,13 @@ function App() {
                   EmployeeProfilePage's attendance/payroll gate), not via a
                   `permission` prop since this isn't in the permission catalog. */}
               <Route path="/audit-log" element={<AuditLogPage />} />
+
+              {/* Owner (2026-08-24, "عايز اقدر احدد الأجهزة المسموح لها بفتح
+                  النظام") — SUPER_ADMIN-only, enforced inside the component
+                  itself (same pattern as AuditLogPage/EmployeeProfilePage's
+                  attendance gate), not via a `permission` prop since this
+                  isn't in the permission catalog. */}
+              <Route path="/devices" element={<DevicesPage />} />
 
               <Route element={<ProtectedRoute permission="employees.view" />}>
                 <Route path="/users" element={<UsersPage />} />

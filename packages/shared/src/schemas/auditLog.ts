@@ -24,6 +24,13 @@ export const auditActionSchema = z.enum([
   'UNPIN',
   'APPROVAL_CHANGED',
   'SECURITY_REJECTION',
+  'DEVICE_REGISTERED',
+  'DEVICE_APPROVED',
+  'DEVICE_BLOCKED',
+  'DEVICE_UNBLOCKED',
+  'DEVICE_RENAMED',
+  'DEVICE_REMOVED',
+  'UNAUTHORIZED_DEVICE_ATTEMPT',
 ]);
 
 export const auditLogSchema = z.object({

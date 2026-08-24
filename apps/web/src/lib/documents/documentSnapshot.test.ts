@@ -54,6 +54,7 @@ const baseSetting: Setting = {
   showInvoiceLandline: false,
   showInvoiceFacebook: false,
   autoCloseDayTime: null,
+  deviceAccessMode: 'ALLOW_ALL_REGISTERED',
 };
 
 const baseTemplate: DocumentTemplate = {

@@ -1,7 +1,9 @@
 import type { NextFunction, Request, Response } from 'express';
+import { hasPermission } from '@cleopatra/shared';
 import { supabaseAdmin } from '../lib/supabase.js';
 import { prisma } from '../lib/prisma.js';
 import { loadAuthContext, type AuthenticatedUser } from '../services/authContext.js';
+import { DeviceAccessDeniedError, resolveDeviceAccess } from '../services/deviceService.js';
 
 /** Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") — throttle window for the presence-update write below; no need for exact real-time precision, just "recently." */
 const PRESENCE_UPDATE_INTERVAL_MS = 60_000;
@@ -53,6 +55,33 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       .status(403)
       .json({ success: false, error: { message: 'This account has been deactivated' } });
     return;
+  }
+
+  // Device Access Control (2026-08-24, owner: "عايز اقدر احدد الأجهزة
+  // المسموح لها بفتح النظام") — checked on every request, not just login,
+  // since Supabase already issued this token before this backend was ever
+  // consulted; a device blocked mid-session must fail on its very next
+  // request, not just at a future re-login. The Kiosk account (shared
+  // PIN-pad terminal, `attendance.kiosk` permission) is exempt entirely —
+  // a different, already-adequate security model, per owner's explicit
+  // choice — never gets a TrustedDevice row at all.
+  if (!hasPermission(authContext.permissions, 'attendance.kiosk')) {
+    try {
+      await resolveDeviceAccess({
+        deviceToken: req.headers['x-device-id'] as string | undefined,
+        userAgent: req.headers['user-agent'],
+        staffId: authContext.staffId,
+      });
+    } catch (err) {
+      if (err instanceof DeviceAccessDeniedError) {
+        res.status(403).json({
+          success: false,
+          error: { message: err.message, code: `DEVICE_${err.reason}` },
+        });
+        return;
+      }
+      throw err;
+    }
   }
 
   req.auth = authContext;

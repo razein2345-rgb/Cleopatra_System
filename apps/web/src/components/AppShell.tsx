@@ -14,6 +14,7 @@ import {
   Briefcase,
   Wrench,
   MonitorSmartphone,
+  Laptop,
   History,
   GitBranch,
   UserPlus,
@@ -96,6 +97,10 @@ const NAV_ITEMS: NavEntry[] = [
       // as the attendance admin screen: reveals every sensitive change
       // across every module, not gated by the regular permission catalog.
       { kind: 'link', to: '/audit-log', label: 'سجل التدقيق', icon: History, superAdminOnly: true },
+      // Owner (2026-08-24, "عايز اقدر احدد الأجهزة المسموح لها بفتح
+      // النظام") — same sensitivity class as the audit log/attendance admin
+      // screens, not gated by the regular permission catalog.
+      { kind: 'link', to: '/devices', label: 'الأجهزة', icon: Laptop, superAdminOnly: true },
     ],
   },
 ];

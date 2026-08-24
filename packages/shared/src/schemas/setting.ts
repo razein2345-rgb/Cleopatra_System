@@ -86,6 +86,11 @@ export const settingSchema = z.object({
     .string()
     .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'الوقت لازم يكون بصيغة HH:MM')
     .nullable(),
+  // Device Access Control (2026-08-24) — "ALLOW_ALL_REGISTERED" (a new
+  // device auto-activates on first sight) or "ONLY_APPROVED" (a new
+  // device starts PENDING until SUPER_ADMIN approves it). See
+  // `requireAuth.ts`/`deviceService.ts` and the Devices settings screen.
+  deviceAccessMode: z.enum(['ALLOW_ALL_REGISTERED', 'ONLY_APPROVED']),
 });
 
 export const updateSettingSchema = settingSchema.omit({ id: true }).partial();

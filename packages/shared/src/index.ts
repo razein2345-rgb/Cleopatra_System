@@ -51,4 +51,5 @@ export * from './schemas/lead.js';
 export * from './schemas/employeePayroll.js';
 export * from './schemas/attendance.js';
 export * from './schemas/auditLog.js';
+export * from './schemas/device.js';
 export * from './orders/itemCategories.js';
