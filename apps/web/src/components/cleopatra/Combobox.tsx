@@ -75,25 +75,36 @@ export function Combobox<T>({
 
   return (
     <div ref={containerRef} className="relative">
-      <Command
-        className="border-primary overflow-visible rounded-md border bg-transparent"
-        shouldFilter
-        // Owner (2026-08-24, "لازم ادوس بره القائمة المنسدلة علشان يبانلي
-        // الاختيار") — cmdk re-focuses the search input on every pointer
-        // move over the list (to keep hover-highlight in sync while
-        // typing). A real mouse/trackpad click almost always includes a
-        // tiny pointer move between mousedown and mouseup, which lands
-        // exactly inside that window — the mid-click refocus can eat the
-        // click before it ever reaches the item, so nothing visibly
-        // happens until a later, unrelated click (e.g. "outside") finally
-        // registers. `disablePointerSelection` turns off pointer-move-
-        // driven highlighting only — the actual `onClick` on each item
-        // (how selection has always worked) and keyboard arrow-key
-        // navigation are both untouched.
-        disablePointerSelection
-      >
+      <Command className="border-primary overflow-visible rounded-md border bg-transparent" shouldFilter>
         <CommandInput autoFocus placeholder={searchPlaceholder} className="h-auto px-3 py-2 text-sm" />
-        <CommandList className="border-border bg-popover absolute top-full z-50 mt-1 max-h-64 w-full rounded-md border shadow-md">
+        <CommandList
+          className="border-border bg-popover absolute top-full z-50 mt-1 max-h-64 w-full rounded-md border shadow-md"
+          // Owner (2026-08-24, "مبقتش بتدوس بالماوس اصلا خالص لازم استخدم
+          // الاسهم وده غلط") — `disablePointerSelection` (a prior attempt at
+          // this same "have to click twice" complaint) turned out to break
+          // plain mouse clicks entirely for real users, even though cmdk's
+          // own `onSelect` should fire on click regardless of that flag —
+          // reverted. Instead of depending on cmdk's internal click/select
+          // wiring at all, handle the click directly here: match the
+          // clicked `[cmdk-item]` back to its `item` via the same `value`
+          // string cmdk already stamps onto it as `data-value`, then call
+          // `onChange`/`setOpen` ourselves. `onSelect` below still covers
+          // keyboard Enter — this is purely an additional, independent path
+          // for the mouse, not a replacement.
+          onClick={(e) => {
+            const itemEl = (e.target as HTMLElement).closest('[cmdk-item]') as HTMLElement | null;
+            if (!itemEl) return;
+            const clickedValue = itemEl.getAttribute('data-value');
+            const match = items.find((item) => {
+              const sub = getSubLabel?.(item);
+              return `${getLabel(item)} ${sub ?? ''}`.trim() === clickedValue;
+            });
+            if (match) {
+              onChange(match);
+              setOpen(false);
+            }
+          }}
+        >
           <CommandEmpty className="text-muted-foreground p-3 text-sm">{emptyText}</CommandEmpty>
           {items.map((item) => {
             const sub = getSubLabel?.(item);
