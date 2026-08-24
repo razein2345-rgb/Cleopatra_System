@@ -74,37 +74,42 @@ export function Combobox<T>({
   }
 
   return (
-    <div ref={containerRef} className="relative">
+    <div
+      ref={containerRef}
+      className="relative"
+      // Owner (2026-08-24, "مبقتش بتدوس بالماوس اصلا خالص لازم استخدم
+      // الاسهم وده غلط") — two earlier attempts at the "have to click
+      // twice" complaint both left cmdk's own click/select machinery in
+      // charge (either as-is, or with `disablePointerSelection`, which
+      // broke mouse clicks entirely for real users). cmdk re-focuses the
+      // search input and can scroll the list on pointer movement/value
+      // changes — real mouse gestures always include a little movement
+      // between mousedown and click, so by the time `click` actually
+      // fires, the item the user was looking at may have already shifted
+      // under the cursor. Handling this on `mousedownCapture` — the
+      // earliest possible point, before cmdk's own handlers ever run —
+      // and calling `preventDefault`/`stopPropagation` removes that whole
+      // race: selection happens atomically off the very first physical
+      // event, nothing cmdk does afterward can interfere.
+      onMouseDownCapture={(e) => {
+        const itemEl = (e.target as HTMLElement).closest('[cmdk-item]') as HTMLElement | null;
+        if (!itemEl) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const clickedValue = itemEl.getAttribute('data-value');
+        const match = items.find((item) => {
+          const sub = getSubLabel?.(item);
+          return `${getLabel(item)} ${sub ?? ''}`.trim() === clickedValue;
+        });
+        if (match) {
+          onChange(match);
+          setOpen(false);
+        }
+      }}
+    >
       <Command className="border-primary overflow-visible rounded-md border bg-transparent" shouldFilter>
         <CommandInput autoFocus placeholder={searchPlaceholder} className="h-auto px-3 py-2 text-sm" />
-        <CommandList
-          className="border-border bg-popover absolute top-full z-50 mt-1 max-h-64 w-full rounded-md border shadow-md"
-          // Owner (2026-08-24, "مبقتش بتدوس بالماوس اصلا خالص لازم استخدم
-          // الاسهم وده غلط") — `disablePointerSelection` (a prior attempt at
-          // this same "have to click twice" complaint) turned out to break
-          // plain mouse clicks entirely for real users, even though cmdk's
-          // own `onSelect` should fire on click regardless of that flag —
-          // reverted. Instead of depending on cmdk's internal click/select
-          // wiring at all, handle the click directly here: match the
-          // clicked `[cmdk-item]` back to its `item` via the same `value`
-          // string cmdk already stamps onto it as `data-value`, then call
-          // `onChange`/`setOpen` ourselves. `onSelect` below still covers
-          // keyboard Enter — this is purely an additional, independent path
-          // for the mouse, not a replacement.
-          onClick={(e) => {
-            const itemEl = (e.target as HTMLElement).closest('[cmdk-item]') as HTMLElement | null;
-            if (!itemEl) return;
-            const clickedValue = itemEl.getAttribute('data-value');
-            const match = items.find((item) => {
-              const sub = getSubLabel?.(item);
-              return `${getLabel(item)} ${sub ?? ''}`.trim() === clickedValue;
-            });
-            if (match) {
-              onChange(match);
-              setOpen(false);
-            }
-          }}
-        >
+        <CommandList className="border-border bg-popover absolute top-full z-50 mt-1 max-h-64 w-full rounded-md border shadow-md">
           <CommandEmpty className="text-muted-foreground p-3 text-sm">{emptyText}</CommandEmpty>
           {items.map((item) => {
             const sub = getSubLabel?.(item);
