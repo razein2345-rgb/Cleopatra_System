@@ -54,8 +54,7 @@ function LocationSearchBar({ onFound }: { onFound: (lat: number, lng: number) =>
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const search = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const search = async () => {
     const trimmed = query.trim();
     if (!trimmed || searching) return;
     setSearching(true);
@@ -79,18 +78,32 @@ function LocationSearchBar({ onFound }: { onFound: (lat: number, lng: number) =>
   };
 
   return (
-    <form onSubmit={(e) => void search(e)} className="flex gap-2 p-2">
+    <div className="flex gap-2 p-2">
       <Input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          // Owner (2026-08-24, "لما بعمل سيرش عن مكان بيعمل ريفرش للصفحة
+          // مش سيرش") — this bar sits inside the page's own <form> (the
+          // Field Assignment creation form), so it was never allowed to be
+          // a <form> of its own (nested <form>s are invalid HTML; the
+          // browser routes the submit to the OUTER form instead of running
+          // this bar's own search, which looks exactly like an unwanted
+          // page refresh/save). A plain input + explicit Enter handling
+          // avoids the whole class of bug rather than working around it.
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void search();
+          }
+        }}
         placeholder="ابحث عن اسم مكان… مثال: ميدان التحرير، القاهرة"
         className="flex-1"
       />
-      <Button type="submit" variant="secondary" size="icon" disabled={searching} aria-label="بحث">
+      <Button type="button" variant="secondary" size="icon" disabled={searching} aria-label="بحث" onClick={() => void search()}>
         <Search className="size-4" />
       </Button>
       {error && <p className="text-destructive absolute mt-10 text-xs">{error}</p>}
-    </form>
+    </div>
   );
 }
 
