@@ -388,27 +388,41 @@ const WORK_ORDER_TRACK_RENDERERS: Record<ProductionTrack, TrackRenderer> = {
 /**
  * Owner (2026-08-23) — "منتجات جاهزة" job-card: a slip a worker/whoever
  * deals with the external supplier can take, one item per printed page
- * (`pageBreakBefore`, same as `OffsetItemCard`). `supplierName` reads the
- * Work Order's own `assignedSupplierId` (set once the job actually reaches
- * the "الإحضار من المورد" stage — see `workflowInstance.ts`'s own doc
- * comment) — blank until then, not invented.
+ * (`pageBreakBefore`, same as `OffsetItemCard`).
+ *
+ * Owner (2026-08-24, "إسم المورد مش بيظهر في أمر الشغل بعد ما ضيفته كا
+ * تعديل") — the supplier name used to be one value shared across every
+ * item on the Work Order, sourced only from the workflow's
+ * `assignedSupplierId` (set once the job actually reaches the "الإحضار من
+ * المورد" stage) — so an item's own `preferredSupplierId`, picked at
+ * composition/edit time, never showed until the workflow happened to
+ * catch up, and two items with different preferred suppliers on the same
+ * Work Order would wrongly show the same name. Now resolved per item:
+ * `item.preferredSupplierId` (the staff's own direct choice, always
+ * current) wins when set, falling back to the work-order-level
+ * `assignedSupplierId` name for items with none.
  */
 function ReadyProductItemCard({
   item,
   partnerName,
-  supplierName,
+  supplierNameById,
+  fallbackSupplierName,
   deliveryDate,
   pageBreakBefore,
   headerProps,
 }: {
   item: OrderItem;
   partnerName: string;
-  supplierName: string;
+  supplierNameById: Map<string, string>;
+  fallbackSupplierName: string;
   deliveryDate: string | null;
   pageBreakBefore: boolean;
   headerProps: React.ComponentProps<typeof WorkOrderItemHeader>;
 }) {
   const b = (item.breakdown as { referenceImageUrl?: string | null; notes?: string | null } | null) ?? {};
+  const supplierName = item.preferredSupplierId
+    ? (supplierNameById.get(item.preferredSupplierId) ?? '')
+    : fallbackSupplierName;
   return (
     <div className={`mb-6 break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}>
       <WorkOrderItemHeader {...headerProps} />
@@ -433,13 +447,15 @@ function ReadyProductItemCard({
 function ReadyProductItemCards({
   items,
   partnerName,
-  supplierName,
+  supplierNameById,
+  fallbackSupplierName,
   deliveryDate,
   headerBase,
 }: {
   items: OrderItem[];
   partnerName: string;
-  supplierName: string;
+  supplierNameById: Map<string, string>;
+  fallbackSupplierName: string;
   deliveryDate: string | null;
   headerBase: Omit<React.ComponentProps<typeof WorkOrderItemHeader>, 'trackLabel'>;
 }) {
@@ -450,7 +466,8 @@ function ReadyProductItemCards({
           key={item.id}
           item={item}
           partnerName={partnerName}
-          supplierName={supplierName}
+          supplierNameById={supplierNameById}
+          fallbackSupplierName={fallbackSupplierName}
           deliveryDate={deliveryDate}
           pageBreakBefore={index > 0}
           headerProps={{ ...headerBase, trackLabel: 'منتجات جاهزة' }}
@@ -595,10 +612,13 @@ export function WorkOrderDocumentPage() {
   const trackRenderer = WORK_ORDER_TRACK_RENDERERS[workOrder.productionTrack];
   // Owner (2026-08-23) — the "الإحضار من المورد" stage's own assigned
   // supplier, resolved to a display name (blank until a supplier is
-  // actually picked during production).
-  const supplierName =
+  // actually picked during production) — the fallback for items with no
+  // `preferredSupplierId` of their own (see `ReadyProductItemCard`'s doc
+  // comment, 2026-08-24, for why this is no longer the only source).
+  const fallbackSupplierName =
     partners.find((p) => p.id === workOrder.workflowInstance?.stageInstances.find((s) => s.assignedSupplierId)?.assignedSupplierId)
       ?.nameAr ?? '';
+  const supplierNameById = new Map(partners.map((p) => [p.id, p.nameAr]));
   if (trackRenderer === 'GENERIC') {
     // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was `order.items`
     // (every item on the whole Order); now `workOrder.items`, the items
@@ -740,7 +760,8 @@ export function WorkOrderDocumentPage() {
           <ReadyProductItemCards
             items={workOrder.items}
             partnerName={partner ? partner.nameAr : 'عميل'}
-            supplierName={supplierName}
+            supplierNameById={supplierNameById}
+            fallbackSupplierName={fallbackSupplierName}
             deliveryDate={order.deliveryDate}
             headerBase={{
               effectiveName,
