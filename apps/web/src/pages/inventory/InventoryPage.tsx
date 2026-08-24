@@ -726,7 +726,11 @@ function NeedsSupplierCard({ items, inventoryCategories }: { items: InventoryIte
   const filtered = categoryId ? items.filter((i) => i.categoryId === categoryId) : items;
 
   return (
-    <Card className="border-danger/40 bg-danger/5 space-y-3 p-4">
+    // `document-print-root` (index.css's shared print stylesheet) — every
+    // OTHER screen deliberately prints blank ("no other screen is meant to
+    // be printed directly"); this card opts in explicitly so `window.print()`
+    // actually shows the list instead of an empty page.
+    <Card className="document-print-root border-danger/40 bg-danger/5 space-y-3 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
         <p className="text-danger font-semibold">بضاعة ناقصة — محتاجين نجيبها من المورد</p>
         <div className="flex items-center gap-2">
