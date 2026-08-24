@@ -37,7 +37,18 @@ import { buildPricingContext, computeItemPricing, PricingInputError } from '../s
 import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
 import { tryAutoCreateWorkOrders } from '../services/workOrderService.js';
-import { canAccessBranch, forbidBranch } from '../services/authContext.js';
+
+/**
+ * Owner (2026-08-24, "عايز عرض السعر ينفع موظف كليوباترا أو موظف برينتنج
+ * يطلع عرض سعر على حسب اختياره") — deliberately, this controller never
+ * calls `canAccessBranch`/`forbidBranch` (`authContext.ts`), unlike every
+ * other branch-scoped controller (orders, work orders, partners, ...).
+ * Any staff holding `quotations.*` may create/view/edit/convert a
+ * Quotation under EITHER branch, regardless of their own home branch —
+ * a scoped exception, not a removal of branch scoping in general. Orders
+ * created via `convertQuotation` are unaffected: they're governed by
+ * `orders.ts`'s own (untouched) `canAccessBranch` checks from that point on.
+ */
 
 /**
  * All current callers are internal staff (this route is gated on
@@ -111,10 +122,6 @@ export async function recordQuotationPrintHandler(req: Request<{ id: string }>, 
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
-  if (!canAccessBranch(req.auth!, existing.branchId)) {
-    forbidBranch(res);
-    return;
-  }
   const updated = await recordQuotationPrint(req.params.id);
   res.json({ success: true, data: mapQuotationToDto(updated, canSeeInternal(req)) });
 }
@@ -132,11 +139,6 @@ export async function createQuotation(req: Request, res: Response) {
   if (input.partnerId) {
     const partner = await loadPartnerOr404(input.partnerId, res);
     if (!partner) return;
-  }
-
-  if (!canAccessBranch(auth, input.branchId)) {
-    forbidBranch(res);
-    return;
   }
 
   try {
@@ -185,11 +187,6 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
-  if (!canAccessBranch(auth, existing.branchId)) {
-    forbidBranch(res);
-    return;
-  }
-
   const input = updateQuotationSchema.parse(req.body);
 
   if (input.items) {
@@ -310,11 +307,6 @@ export async function setQuotationStatus(req: Request<{ id: string }>, res: Resp
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
-  if (!canAccessBranch(auth, existing.branchId)) {
-    forbidBranch(res);
-    return;
-  }
-
   const input = setQuotationStatusSchema.parse(req.body);
 
   try {
@@ -358,11 +350,6 @@ export async function setQuotationApprovalState(req: Request<{ id: string }>, re
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
-  if (!canAccessBranch(auth, existing.branchId)) {
-    forbidBranch(res);
-    return;
-  }
-
   const input = setQuotationApprovalStateSchema.parse(req.body);
 
   const updated = await prisma.quotation.update({
@@ -399,11 +386,6 @@ export async function setQuotationPartner(req: Request<{ id: string }>, res: Res
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
-  if (!canAccessBranch(auth, existing.branchId)) {
-    forbidBranch(res);
-    return;
-  }
-
   const input = setQuotationPartnerSchema.parse(req.body);
 
   if (input.partnerId) {
@@ -467,11 +449,6 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
-  if (!canAccessBranch(auth, existing.branchId)) {
-    forbidBranch(res);
-    return;
-  }
-
   try {
     assertLegalStatusTransition(existing.status, 'CONVERTED');
   } catch (err) {
@@ -639,11 +616,6 @@ export async function createQuotationVersion(req: Request<{ id: string }>, res: 
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
-  if (!canAccessBranch(auth, existing.branchId)) {
-    forbidBranch(res);
-    return;
-  }
-
   const created = await prisma.$transaction(async (tx) => {
     const quotationNumber = await nextQuotationNumber(tx);
     return tx.quotation.create({
@@ -711,11 +683,6 @@ export async function deleteQuotation(req: Request<{ id: string }>, res: Respons
     res.status(404).json({ success: false, error: { message: 'Quotation not found' } });
     return;
   }
-  if (!canAccessBranch(auth, existing.branchId)) {
-    forbidBranch(res);
-    return;
-  }
-
   const deleted = await prisma.quotation.update({
     where: { id: req.params.id },
     data: { isDeleted: true, deletedAt: new Date(), deletedBy: auth.staffId },
