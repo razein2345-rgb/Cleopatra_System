@@ -13,6 +13,11 @@ export const stockMovementTypeSchema = z.enum(['IN', 'OUT', 'ADJUSTMENT']);
 export const inventoryItemSchema = z.object({
   id: z.string().uuid(),
   category: materialCategorySchema,
+  // Owner (2026-08-25, "عايز البضاعه في المخزون تكون تصنيفات واقدر اعمل
+  // فلتر اشوف بيه كل صنف") — a separate, free-form browsing category
+  // (InventoryCategory), independent of `category` above.
+  categoryId: z.string().uuid().nullable(),
+  categoryName: z.string().nullable(),
   name: z.string(),
   unit: inventoryUnitSchema,
   sheetTypeId: z.string().uuid().nullable(),
@@ -42,6 +47,7 @@ export const inventoryItemSchema = z.object({
  */
 export const createInventoryItemSchema = z.object({
   category: materialCategorySchema,
+  categoryId: z.string().uuid().optional(),
   name: z.string().trim().min(1).max(150),
   unit: inventoryUnitSchema,
   sheetTypeId: z.string().uuid().optional(),
@@ -53,6 +59,7 @@ export const createInventoryItemSchema = z.object({
 
 export const updateInventoryItemSchema = z.object({
   name: z.string().trim().min(1).max(150).optional(),
+  categoryId: z.string().uuid().nullable().optional(),
   reorderLevel: z.number().nonnegative().nullable().optional(),
   barcode: z.string().trim().min(1).max(100).nullable().optional(),
   salePrice: z.number().nonnegative().nullable().optional(),

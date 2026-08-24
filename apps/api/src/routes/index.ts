@@ -34,6 +34,7 @@ import { attendanceRouter } from './attendance.js';
 import { machinesRouter } from './machines.js';
 import { auditLogsRouter } from './auditLogs.js';
 import { devicesRouter } from './devices.js';
+import { inventoryCategoriesRouter } from './inventoryCategories.js';
 
 export const apiRouter = Router();
 
@@ -75,4 +76,5 @@ api.use('/attendance', attendanceRouter);
 api.use('/machines', machinesRouter);
 api.use('/audit-logs', auditLogsRouter);
 api.use('/devices', devicesRouter);
+api.use('/inventory-categories', inventoryCategoriesRouter);
 apiRouter.use('/api', api);

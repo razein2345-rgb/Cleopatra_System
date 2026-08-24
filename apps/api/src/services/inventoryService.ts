@@ -13,10 +13,10 @@ import { prisma } from '../lib/prisma.js';
 import { assertBranchDayNotClosed, mapTreasuryEntryToDto } from './treasuryService.js';
 
 type InventoryItemRecord = Prisma.InventoryItemGetPayload<{
-  include: { stockLevels: true; sheetType: true };
+  include: { stockLevels: true; sheetType: true; browsingCategory: true };
 }>;
 
-const INCLUDE = { stockLevels: true, sheetType: true } satisfies Prisma.InventoryItemInclude;
+const INCLUDE = { stockLevels: true, sheetType: true, browsingCategory: true } satisfies Prisma.InventoryItemInclude;
 
 /**
  * Owner (2026-08-20, "سجلنا في المخزون من جهاز محمد إن في أقلام روتو احمر
@@ -38,6 +38,8 @@ function mapInventoryItemToDto(record: InventoryItemRecord): InventoryItem {
   return {
     id: record.id,
     category: record.category,
+    categoryId: record.categoryId,
+    categoryName: record.browsingCategory?.name ?? null,
     name: record.name,
     unit: record.unit,
     sheetTypeId: record.sheetTypeId,
@@ -148,6 +150,7 @@ export async function createInventoryItem(
       item = await tx.inventoryItem.create({
         data: {
           category: input.category,
+          categoryId: input.categoryId ?? null,
           name: input.name,
           unit: input.unit,
           sheetTypeId: input.sheetTypeId ?? null,
@@ -192,7 +195,13 @@ export async function updateInventoryItem(id: string, input: UpdateInventoryItem
     try {
       item = await tx.inventoryItem.update({
         where: { id },
-        data: { name: input.name, reorderLevel: input.reorderLevel, barcode: input.barcode, salePrice: input.salePrice },
+        data: {
+          name: input.name,
+          categoryId: input.categoryId,
+          reorderLevel: input.reorderLevel,
+          barcode: input.barcode,
+          salePrice: input.salePrice,
+        },
         include: INCLUDE,
       });
     } catch (err) {

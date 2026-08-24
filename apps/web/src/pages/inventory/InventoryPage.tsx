@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type {
   CreateInventoryItemInput,
   CreateStockMovementInput,
+  InventoryCategory,
   InventoryItem,
   InventoryUnit,
   MaterialCategory,
@@ -13,8 +14,9 @@ import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { StatusBadge, EditableTextCell, paginate, Pagination, useConfirm } from '@/components/cleopatra';
+import { Combobox, StatusBadge, EditableTextCell, paginate, Pagination, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
+import { InventoryCategoriesManagement } from './InventoryCategoriesManagement';
 
 const PAGE_SIZE = 30;
 
@@ -60,13 +62,23 @@ export function InventoryPage() {
   const [needsSupplier, setNeedsSupplier] = useState<InventoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [showCategoriesManager, setShowCategoriesManager] = useState(false);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<MaterialCategory | 'ALL'>('ALL');
+  const [categoryIdFilter, setCategoryIdFilter] = useState('');
+  const [inventoryCategories, setInventoryCategories] = useState<InventoryCategory[]>([]);
   const [historyItem, setHistoryItem] = useState<InventoryItem | null>(null);
   const [movementItem, setMovementItem] = useState<InventoryItem | null>(null);
   const [page, setPage] = useState(1);
   const confirm = useConfirm();
-  useEffect(() => setPage(1), [search, categoryFilter]);
+  useEffect(() => setPage(1), [search, categoryFilter, categoryIdFilter]);
+
+  const loadCategories = () => {
+    apiGet<InventoryCategory[]>('/api/inventory-categories')
+      .then(setInventoryCategories)
+      .catch(() => undefined);
+  };
+  useEffect(loadCategories, []);
 
   /** Owner (2026-08-20, "دلوقتي انا بكتب عدد الأفرخ منين اللي عندي في المخزن؟") — `POST /:id/movements` has existed since this page's own creation, just with no button ever calling it for an already-created item (only `initialQuantity` at creation time). */
   const removeItem = async (item: InventoryItem) => {
@@ -122,11 +134,18 @@ export function InventoryPage() {
     load();
   };
 
+  /** Owner (2026-08-25, "عايز البضاعه في المخزون تكون تصنيفات") — reassign an already-registered item's browsing category. */
+  const saveCategoryId = async (item: InventoryItem, categoryId: string) => {
+    await apiPut(`/api/inventory-items/${item.id}`, { categoryId: categoryId || null });
+    load();
+  };
+
   if (error) return <div className="text-destructive">{error}</div>;
 
   const q = search.trim().toLowerCase();
   const filteredItems = (items ?? []).filter((item) => {
     if (categoryFilter !== 'ALL' && item.category !== categoryFilter) return false;
+    if (categoryIdFilter && item.categoryId !== categoryIdFilter) return false;
     if (q && !item.name.toLowerCase().includes(q) && !item.barcode?.toLowerCase().includes(q)) return false;
     return true;
   });
@@ -137,12 +156,25 @@ export function InventoryPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">المخزن</h1>
-        {can('inventory.create') && (
-          <Button type="button" onClick={() => setShowForm((v) => !v)}>
-            {showForm ? 'إلغاء' : '+ تسجيل بضاعة'}
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {can('settings.edit') && (
+            <Button type="button" variant="secondary" onClick={() => setShowCategoriesManager((v) => !v)}>
+              {showCategoriesManager ? 'إخفاء التصنيفات' : 'إدارة التصنيفات'}
+            </Button>
+          )}
+          {can('inventory.create') && (
+            <Button type="button" onClick={() => setShowForm((v) => !v)}>
+              {showForm ? 'إلغاء' : '+ تسجيل بضاعة'}
+            </Button>
+          )}
+        </div>
       </div>
+
+      {showCategoriesManager && (
+        <Card className="p-4">
+          <InventoryCategoriesManagement onChanged={loadCategories} />
+        </Card>
+      )}
 
       {/* Owner (2026-08-20, "عايز اول ما ادوس تسجيل بضاعه ينزلني على طول
           للمكان اللي هكتب فيه مش لسه انا هسكرول علشان الاقيها") — this form
@@ -154,6 +186,7 @@ export function InventoryPage() {
       {showForm && (
         <NewInventoryItemForm
           existingItems={items ?? []}
+          inventoryCategories={inventoryCategories}
           onCreated={() => {
             setShowForm(false);
             load();
@@ -198,6 +231,18 @@ export function InventoryPage() {
             </option>
           ))}
         </select>
+        <select
+          value={categoryIdFilter}
+          onChange={(e) => setCategoryIdFilter(e.target.value)}
+          className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+        >
+          <option value="">كل التصنيفات</option>
+          {inventoryCategories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       {!items ? (
@@ -209,6 +254,7 @@ export function InventoryPage() {
               <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
                 <th className="p-3">الصنف</th>
                 <th className="p-3">الفئة</th>
+                <th className="p-3">التصنيف</th>
                 <th className="p-3">الباركود</th>
                 <th className="p-3">الرصيد الحالي</th>
                 <th className="p-3">حد التنبيه</th>
@@ -222,7 +268,7 @@ export function InventoryPage() {
                 if (filteredItems.length === 0) {
                   return (
                     <tr>
-                      <td className="text-muted-foreground p-3 text-center" colSpan={8}>
+                      <td className="text-muted-foreground p-3 text-center" colSpan={9}>
                         {items.length === 0 ? 'لا توجد بضاعة مسجلة بعد.' : 'لا توجد أصناف مطابقة.'}
                       </td>
                     </tr>
@@ -238,6 +284,21 @@ export function InventoryPage() {
                       )}
                     </td>
                     <td className="p-3">{CATEGORY_LABELS[item.category]}</td>
+                    <td className="p-3">
+                      {can('inventory.edit') ? (
+                        <Combobox
+                          items={inventoryCategories}
+                          value={item.categoryId ?? ''}
+                          getKey={(c) => c.id}
+                          getLabel={(c) => c.name}
+                          onChange={(c) => void saveCategoryId(item, c.id)}
+                          placeholder="— بدون —"
+                          className="min-w-[120px]"
+                        />
+                      ) : (
+                        (item.categoryName ?? '—')
+                      )}
+                    </td>
                     <td className="text-muted-foreground p-3" dir="ltr">
                       {can('inventory.edit') ? (
                         <EditableTextCell
@@ -665,8 +726,17 @@ function DuplicateNameWarning({ name, existingItems }: { name: string; existingI
   );
 }
 
-function NewInventoryItemForm({ onCreated, existingItems }: { onCreated: () => void; existingItems: InventoryItem[] }) {
+function NewInventoryItemForm({
+  onCreated,
+  existingItems,
+  inventoryCategories,
+}: {
+  onCreated: () => void;
+  existingItems: InventoryItem[];
+  inventoryCategories: InventoryCategory[];
+}) {
   const [category, setCategory] = useState<MaterialCategory>('PAPER');
+  const [categoryId, setCategoryId] = useState('');
   const [name, setName] = useState('');
   // READY_MADE items (stationery, ...) are almost always counted by the
   // piece, not the sheet — defaulting the unit alongside the category
@@ -692,6 +762,7 @@ function NewInventoryItemForm({ onCreated, existingItems }: { onCreated: () => v
     try {
       const input: CreateInventoryItemInput = {
         category,
+        categoryId: categoryId || undefined,
         name,
         unit,
         reorderLevel: reorderLevel ? Number(reorderLevel) : undefined,
@@ -734,6 +805,21 @@ function NewInventoryItemForm({ onCreated, existingItems }: { onCreated: () => v
             {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">التصنيف (اختياري)</span>
+          <select
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="">— بدون —</option>
+            {inventoryCategories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
               </option>
             ))}
           </select>
