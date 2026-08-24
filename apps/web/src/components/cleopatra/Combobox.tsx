@@ -75,7 +75,23 @@ export function Combobox<T>({
 
   return (
     <div ref={containerRef} className="relative">
-      <Command className="border-primary overflow-visible rounded-md border bg-transparent" shouldFilter>
+      <Command
+        className="border-primary overflow-visible rounded-md border bg-transparent"
+        shouldFilter
+        // Owner (2026-08-24, "لازم ادوس بره القائمة المنسدلة علشان يبانلي
+        // الاختيار") — cmdk re-focuses the search input on every pointer
+        // move over the list (to keep hover-highlight in sync while
+        // typing). A real mouse/trackpad click almost always includes a
+        // tiny pointer move between mousedown and mouseup, which lands
+        // exactly inside that window — the mid-click refocus can eat the
+        // click before it ever reaches the item, so nothing visibly
+        // happens until a later, unrelated click (e.g. "outside") finally
+        // registers. `disablePointerSelection` turns off pointer-move-
+        // driven highlighting only — the actual `onClick` on each item
+        // (how selection has always worked) and keyboard arrow-key
+        // navigation are both untouched.
+        disablePointerSelection
+      >
         <CommandInput autoFocus placeholder={searchPlaceholder} className="h-auto px-3 py-2 text-sm" />
         <CommandList className="border-border bg-popover absolute top-full z-50 mt-1 max-h-64 w-full rounded-md border shadow-md">
           <CommandEmpty className="text-muted-foreground p-3 text-sm">{emptyText}</CommandEmpty>
