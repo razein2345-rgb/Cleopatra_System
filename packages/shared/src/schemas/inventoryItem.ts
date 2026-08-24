@@ -59,6 +59,11 @@ export const createInventoryItemSchema = z.object({
 
 export const updateInventoryItemSchema = z.object({
   name: z.string().trim().min(1).max(150).optional(),
+  // Owner (2026-08-25, "عايز اقدر اعدل في الفئه واغيرها") — corrects a
+  // miscategorized item after creation (same freedom already available
+  // at creation time); no calculation changes, only which of the 6
+  // buckets an item belongs to.
+  category: materialCategorySchema.optional(),
   categoryId: z.string().uuid().nullable().optional(),
   reorderLevel: z.number().nonnegative().nullable().optional(),
   barcode: z.string().trim().min(1).max(100).nullable().optional(),

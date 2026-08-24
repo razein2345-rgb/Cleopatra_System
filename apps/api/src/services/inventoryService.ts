@@ -197,6 +197,7 @@ export async function updateInventoryItem(id: string, input: UpdateInventoryItem
         where: { id },
         data: {
           name: input.name,
+          category: input.category,
           categoryId: input.categoryId,
           reorderLevel: input.reorderLevel,
           barcode: input.barcode,

@@ -140,6 +140,12 @@ export function InventoryPage() {
     load();
   };
 
+  /** Owner (2026-08-25, "عايز اقدر اعدل في الفئه واغيرها") — corrects the technical MaterialCategory (ورق/حبر/زنكات/تشطيب/استهلاكي/منتج جاهز) after creation, same freedom already available when registering a new item. */
+  const saveCategory = async (item: InventoryItem, next: MaterialCategory) => {
+    await apiPut(`/api/inventory-items/${item.id}`, { category: next });
+    load();
+  };
+
   if (error) return <div className="text-destructive">{error}</div>;
 
   const q = search.trim().toLowerCase();
@@ -195,20 +201,10 @@ export function InventoryPage() {
       )}
 
       {needsSupplier.length > 0 && (
-        <Card className="border-danger/40 bg-danger/5 p-4">
-          <p className="text-danger mb-2 font-semibold">بضاعة ناقصة — محتاجين نجيبها من المورد</p>
-          <ul className="space-y-1 text-sm">
-            {needsSupplier.map((item) => (
-              <li key={item.id} className="flex items-center justify-between gap-3">
-                <span>{item.name}</span>
-                <span className="text-muted-foreground">
-                  الرصيد الحالي: <span className="font-medium">{item.quantityOnHand.toLocaleString('en-US')}</span>
-                  {item.reorderLevel !== null && ` (حد التنبيه: ${item.reorderLevel.toLocaleString('en-US')})`}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Card>
+        <NeedsSupplierCard
+          items={needsSupplier}
+          inventoryCategories={inventoryCategories}
+        />
       )}
 
       <div className="flex flex-wrap items-center gap-2">
@@ -283,7 +279,23 @@ export function InventoryPage() {
                         item.name
                       )}
                     </td>
-                    <td className="p-3">{CATEGORY_LABELS[item.category]}</td>
+                    <td className="p-3">
+                      {can('inventory.edit') ? (
+                        <select
+                          value={item.category}
+                          onChange={(e) => void saveCategory(item, e.target.value as MaterialCategory)}
+                          className="border-input bg-background rounded-md border px-2 py-1 text-sm"
+                        >
+                          {Object.entries(CATEGORY_LABELS).map(([value, label]) => (
+                            <option key={value} value={value}>
+                              {label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        CATEGORY_LABELS[item.category]
+                      )}
+                    </td>
                     <td className="p-3">
                       {can('inventory.edit') ? (
                         <Combobox
@@ -697,6 +709,63 @@ function EditMovementDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Owner (2026-08-25, "لازم في البضاعه الناقصه أقدر اصنف بردو علشان لو
+ * محتاج اجيب من صنف معين فقط اعمل بيه تقرير او ابعته للمسئول عن
+ * المشتريات") — the low-stock warning card gets its own category filter
+ * (independent of the main table's), plus a plain browser print so the
+ * owner can turn a filtered view into a PDF/paper report to hand off or
+ * send themselves — no new "send" integration invented, print already
+ * covers "give this to someone" without us guessing which channel.
+ */
+function NeedsSupplierCard({ items, inventoryCategories }: { items: InventoryItem[]; inventoryCategories: InventoryCategory[] }) {
+  const [categoryId, setCategoryId] = useState('');
+  const filtered = categoryId ? items.filter((i) => i.categoryId === categoryId) : items;
+
+  return (
+    <Card className="border-danger/40 bg-danger/5 space-y-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 print:hidden">
+        <p className="text-danger font-semibold">بضاعة ناقصة — محتاجين نجيبها من المورد</p>
+        <div className="flex items-center gap-2">
+          <select
+            value={categoryId}
+            onChange={(e) => setCategoryId(e.target.value)}
+            className="border-input bg-background rounded-md border px-2 py-1 text-sm"
+          >
+            <option value="">كل التصنيفات</option>
+            {inventoryCategories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <Button type="button" variant="secondary" size="sm" onClick={() => window.print()}>
+            🖶 طباعة
+          </Button>
+        </div>
+      </div>
+      <p className="text-danger hidden font-semibold print:block">
+        بضاعة ناقصة — محتاجين نجيبها من المورد{categoryId ? ` — ${inventoryCategories.find((c) => c.id === categoryId)?.name}` : ''}
+      </p>
+      {filtered.length === 0 ? (
+        <p className="text-muted-foreground text-sm">لا توجد أصناف ناقصة في التصنيف ده.</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {filtered.map((item) => (
+            <li key={item.id} className="flex items-center justify-between gap-3">
+              <span>{item.name}</span>
+              <span className="text-muted-foreground">
+                الرصيد الحالي: <span className="font-medium">{item.quantityOnHand.toLocaleString('en-US')}</span>
+                {item.reorderLevel !== null && ` (حد التنبيه: ${item.reorderLevel.toLocaleString('en-US')})`}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 
