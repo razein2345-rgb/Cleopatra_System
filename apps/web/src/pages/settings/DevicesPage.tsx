@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { DeviceStatus, TrustedDevice, User } from '@cleopatra/shared';
+import type { DeviceAccessMode, DeviceStatus, Setting, TrustedDevice, User } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Combobox, EditableTextCell, StatusBadge, useConfirm } from '@/components/cleopatra';
@@ -17,7 +17,69 @@ const STATUS_TONE: Record<DeviceStatus, 'success' | 'danger' | 'warning'> = {
   BLOCKED: 'danger',
 };
 
+const ACCESS_MODE_LABELS: Record<DeviceAccessMode, string> = {
+  ALLOW_ALL_REGISTERED: 'السماح لكل جهاز مسجّل تلقائيًا',
+  ONLY_APPROVED: 'يحتاج اعتماد قبل الدخول',
+};
+
 const GENERAL_DEVICE_OPTION = { id: '', nameAr: '— جهاز عام (أي موظف) —' };
+
+/**
+ * Owner (2026-08-24, "أيوة ضيفهم") — the `Setting.deviceAccessMode`
+ * toggle, surfaced here rather than a new Settings category (this page
+ * is already the one place devices are managed, same reasoning as
+ * `AutoCloseTimeForm.tsx` living next to the treasury screen it controls).
+ */
+function AccessModeControl() {
+  const [setting, setSetting] = useState<Setting | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    apiGet<Setting>('/api/settings')
+      .then(setSetting)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل إعداد سياسة الأجهزة'));
+  };
+
+  useEffect(load, []);
+
+  const change = async (next: DeviceAccessMode) => {
+    setError(null);
+    setSaving(true);
+    try {
+      const updated = await apiPut<Setting>('/api/settings', { deviceAccessMode: next });
+      setSetting(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر حفظ سياسة الأجهزة');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!setting) return null;
+
+  return (
+    <div className="border-border bg-card space-y-2 rounded-2xl border p-4">
+      <p className="text-sm font-bold">سياسة الأجهزة الجديدة</p>
+      {error && <p className="text-destructive text-sm">{error}</p>}
+      <select
+        value={setting.deviceAccessMode}
+        disabled={saving}
+        onChange={(e) => void change(e.target.value as DeviceAccessMode)}
+        className="border-input bg-background w-full max-w-sm rounded-md border px-3 py-2 text-sm disabled:opacity-60"
+      >
+        {(Object.keys(ACCESS_MODE_LABELS) as DeviceAccessMode[]).map((m) => (
+          <option key={m} value={m}>
+            {ACCESS_MODE_LABELS[m]}
+          </option>
+        ))}
+      </select>
+      <p className="text-muted-foreground text-xs">
+        بتحدد إيه اللي بيحصل لجهاز بيدخل النظام لأول مرة — "السماح لكل جهاز مسجّل" بيفعّله فورًا، "يحتاج اعتماد" بيحطه "في انتظار الاعتماد" لحد ما توافق عليه من الجدول تحت.
+      </p>
+    </div>
+  );
+}
 
 /**
  * Owner (2026-08-24, "عايز اقدر احدد الأجهزة المسموح لها بفتح النظام") —
@@ -154,6 +216,8 @@ export function DevicesPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">الأجهزة</h1>
       </div>
+
+      <AccessModeControl />
 
       {error && <p className="text-destructive text-sm">{error}</p>}
 
