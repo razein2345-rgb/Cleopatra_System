@@ -44,9 +44,16 @@ const zincPrintOverrideFields = {
   designCostOverride: z.number().nonnegative().optional(),
 };
 
-/** Owner (2026-08-17) — only LOOSE_PAPER/NOTEBOOK have a numbering concept at all. */
+/**
+ * Owner (2026-08-17) — only LOOSE_PAPER/NOTEBOOK have a numbering concept
+ * at all. `numberingRunPriceOverride` (renamed 2026-08-25, owner: "عايز
+ * لما احب احط سعر الترقيم غير سعر الديفولت يكون سعر الترقيم للتراج
+ * الواحد مش سعر الترقيم الكلي") replaces the PER-RUN price, same shape as
+ * `zincPriceOverride`/`printRunPriceOverride` above — was a total-
+ * replacing `numberingCostOverride` before this.
+ */
 const numberingOverrideFields = {
-  numberingCostOverride: z.number().nonnegative().optional(),
+  numberingRunPriceOverride: z.number().nonnegative().optional(),
 };
 
 /** Owner (2026-08-17, "أقدر أغير الهالك... الديفولت اللي هو فرخين") — replaces `settings.wasteSheetsDefault` for this item only; only the sheet-tiered kinds (LOOSE_PAPER/NOTEBOOK/FOLDER) have a waste-sheets concept. */

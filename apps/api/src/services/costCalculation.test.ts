@@ -118,6 +118,28 @@ describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPE
     expect(result.subtotal).toBe(expectedSubtotal);
     expect(result.total).toBeCloseTo(expectedSubtotal * 1.25, 5);
   });
+
+  it('numberingRunPriceOverride replaces the PER-RUN price, not the total (owner, 2026-08-25)', () => {
+    const result = calculateNotebookCost({
+      familyKey: 'extra2',
+      realLabel: '10×15',
+      notebookQuantity: 100,
+      contentType: 'ORIGINAL_PLUS_COPIES',
+      copies: 3,
+      colorCount: 1,
+      isNewDesign: true,
+      numbering: { startNumber: 1 },
+      bindingPricePerNotebook: 2.5,
+      sheetPrice: 3,
+      families: FAMILIES,
+      settings: SETTINGS,
+      numberingRunPriceOverride: 10,
+    });
+
+    expect(result.numberingRuns).toBe(5);
+    // 5 runs * 10 (overridden per-run price) — NOT 10 flat.
+    expect(result.numberingCost).toBe(50);
+  });
 });
 
 describe('calculateLoosePaperCost — gayer sheets never tier (§3.4)', () => {

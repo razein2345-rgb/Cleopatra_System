@@ -246,8 +246,8 @@ interface DraftItem {
   zincPriceOverrideValue: string;
   printRunPriceOverrideEnabled: boolean;
   printRunPriceOverrideValue: string;
-  numberingCostOverrideEnabled: boolean;
-  numberingCostOverrideValue: string;
+  numberingRunPriceOverrideEnabled: boolean;
+  numberingRunPriceOverrideValue: string;
   designCostOverrideEnabled: boolean;
   designCostOverrideValue: string;
   wasteSheetsOverrideEnabled: boolean;
@@ -353,8 +353,8 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     zincPriceOverrideValue: '0',
     printRunPriceOverrideEnabled: false,
     printRunPriceOverrideValue: '0',
-    numberingCostOverrideEnabled: false,
-    numberingCostOverrideValue: '0',
+    numberingRunPriceOverrideEnabled: false,
+    numberingRunPriceOverrideValue: '0',
     designCostOverrideEnabled: false,
     designCostOverrideValue: '0',
     wasteSheetsOverrideEnabled: false,
@@ -406,7 +406,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
     ...(d.designCostOverrideEnabled ? { designCostOverride: toNum(d.designCostOverrideValue) } : {}),
   };
   const numberingWaste = {
-    ...(d.numberingCostOverrideEnabled ? { numberingCostOverride: toNum(d.numberingCostOverrideValue) } : {}),
+    ...(d.numberingRunPriceOverrideEnabled ? { numberingRunPriceOverride: toNum(d.numberingRunPriceOverrideValue) } : {}),
     ...(d.wasteSheetsOverrideEnabled ? { wasteSheetsOverride: toNum(d.wasteSheetsOverrideValue) } : {}),
   };
   // Owner (2026-08-17) — manual print/numbering size overrides. مقاس
@@ -626,7 +626,7 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
     zincPriceOverride: number;
     printRunPriceOverride: number;
     designCostOverride: number;
-    numberingCostOverride: number;
+    numberingRunPriceOverride: number;
     wasteSheetsOverride: number;
   }>;
   d.profitPercentEnabled = overrides.profitPercentOverride !== undefined;
@@ -637,8 +637,8 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
   d.printRunPriceOverrideValue = String(overrides.printRunPriceOverride ?? 0);
   d.designCostOverrideEnabled = overrides.designCostOverride !== undefined;
   d.designCostOverrideValue = String(overrides.designCostOverride ?? 0);
-  d.numberingCostOverrideEnabled = overrides.numberingCostOverride !== undefined;
-  d.numberingCostOverrideValue = String(overrides.numberingCostOverride ?? 0);
+  d.numberingRunPriceOverrideEnabled = overrides.numberingRunPriceOverride !== undefined;
+  d.numberingRunPriceOverrideValue = String(overrides.numberingRunPriceOverride ?? 0);
   d.wasteSheetsOverrideEnabled = overrides.wasteSheetsOverride !== undefined;
   d.wasteSheetsOverrideValue = String(overrides.wasteSheetsOverride ?? 0);
 
@@ -770,6 +770,11 @@ interface PricingPreviewResult {
   numberingCost?: number;
   designCost?: number;
   selloCost?: number;
+  // NOTEBOOK only — owner (2026-08-25, "عايز لما يظهرلي سعر كل حسبة في
+  // الصنف يظهرلي معاهم سعر التجليد الكلي بردو") — already computed by
+  // calculateNotebookMultiMaterialCost, just wasn't surfaced in the
+  // breakdown rows under the cart.
+  bindingCost?: number;
   extraCosts?: number;
   subtotal?: number;
   total?: number;
@@ -846,7 +851,7 @@ function pricingPreviewFromInput(
           profitPercentOverride: pricing.profitPercentOverride,
           zincPriceOverride: pricing.zincPriceOverride,
           printRunPriceOverride: pricing.printRunPriceOverride,
-          numberingCostOverride: pricing.numberingCostOverride,
+          numberingRunPriceOverride: pricing.numberingRunPriceOverride,
           designCostOverride: pricing.designCostOverride,
           wasteSheetsOverride: pricing.wasteSheetsOverride,
           calcSizeOverride: pricing.calcSizeOverride,
@@ -882,7 +887,7 @@ function pricingPreviewFromInput(
             profitPercentOverride: pricing.profitPercentOverride,
             zincPriceOverride: pricing.zincPriceOverride,
             printRunPriceOverride: pricing.printRunPriceOverride,
-            numberingCostOverride: pricing.numberingCostOverride,
+            numberingRunPriceOverride: pricing.numberingRunPriceOverride,
             designCostOverride: pricing.designCostOverride,
             wasteSheetsOverride: pricing.wasteSheetsOverride,
             calcSizeOverride: pricing.calcSizeOverride,
@@ -1096,6 +1101,7 @@ function cartLineBreakdownRows(line: CartLine): { costRows: { label: string; val
   if (b.printCost) costRows.push({ label: 'الطباعة', value: b.printCost });
   if (b.numberingCost) costRows.push({ label: 'الترقيم', value: b.numberingCost });
   if (b.paperCost) costRows.push({ label: 'الورق', value: b.paperCost });
+  if (b.bindingCost) costRows.push({ label: 'التجليد', value: b.bindingCost });
   if (b.selloCost) costRows.push({ label: 'السلوفان', value: b.selloCost });
   if (b.extraCosts) costRows.push({ label: 'خدمات إضافية', value: b.extraCosts });
 
@@ -2664,21 +2670,23 @@ function NewOrderForm({
             {(draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK') && (
               <div className="flex flex-wrap items-center gap-2">
                 <Checkbox
-                  checked={draft.numberingCostOverrideEnabled}
-                  onCheckedChange={(v) => updateDraft({ numberingCostOverrideEnabled: v === true })}
+                  checked={draft.numberingRunPriceOverrideEnabled}
+                  onCheckedChange={(v) => updateDraft({ numberingRunPriceOverrideEnabled: v === true })}
                 />
-                <span className="text-sm">تكلفة الترقيم</span>
-                {draft.numberingCostOverrideEnabled ? (
+                <span className="text-sm">سعر ترقيم التراج الواحد</span>
+                {draft.numberingRunPriceOverrideEnabled ? (
                   <input
                     type="number"
                     min={0}
                     step="0.01"
-                    value={draft.numberingCostOverrideValue}
-                    onChange={(e) => updateDraft({ numberingCostOverrideValue: e.target.value })}
+                    value={draft.numberingRunPriceOverrideValue}
+                    onChange={(e) => updateDraft({ numberingRunPriceOverrideValue: e.target.value })}
                     className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
                   />
                 ) : (
-                  <span className="text-muted-foreground text-xs">المحسوب تلقائيًا: {money(result?.numberingCost ?? 0)} ج.م</span>
+                  <span className="text-muted-foreground text-xs">
+                    الافتراضي من الإعدادات: {pricingReference.pricingConstants.numberingRunPrice} ج.م
+                  </span>
                 )}
               </div>
             )}

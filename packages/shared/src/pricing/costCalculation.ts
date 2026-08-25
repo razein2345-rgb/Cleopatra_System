@@ -159,15 +159,23 @@ export interface LoosePaperCostInput {
    * PRICING_ENGINE_SPEC.md §4's amendment; extended 2026-08-17 to
    * design/numbering — owner: "عايز أقدر أعدل سعر الزنك وتراج الطبع
    * وترقيم والتصميم من واجهة الطلبات... ساعات بحتاج أغير لما احب أحسب
-   * مناقصة" — same narrow "replace this one computed cost only" rule as
-   * zinc/print, not a formula change). `numberingCostOverride`/
-   * `designCostOverride` replace that one computed TOTAL cost only.
+   * مناقصة"). `designCostOverride` replaces that one computed TOTAL cost
+   * only. `numberingRunPriceOverride` (owner, 2026-08-25: "عايز لما احب
+   * احط سعر الترقيم غير سعر الديفولت يكون سعر الترقيم للتراج الواحد مش
+   * سعر الترقيم الكلي") replaces the PER-RUN price
+   * (`settings.numberingRunPrice`) that feeds the existing
+   * `numberingRuns ×` multiplication, not the final total — same shape as
+   * `zincPriceOverride`/`printRunPriceOverride` below, for the same reason
+   * (less error-prone than typing a pre-multiplied total by hand). Was
+   * originally a total-replacing `numberingCostOverride` — renamed, not
+   * kept alongside, to avoid two different ways of overriding the same
+   * number.
    * `profitPercentOverride` replaces `settings.profitPercent` for this
    * item only. `extraCosts` is the pre-summed manual "خدمات إضافية" amount
    * (bagging/adhesive/sample — see orderItemPricing.ts), added to subtotal
    * before margin, same treatment as §3.7's riza/jarab/forma/taksir.
    */
-  numberingCostOverride?: number;
+  numberingRunPriceOverride?: number;
   designCostOverride?: number;
   /**
    * Owner (2026-08-17, "عايز زرار التعديل... يكون بيحط سعر الزنكاية
@@ -276,7 +284,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
     });
     const numberingUnits = input.quantity / numRepeat;
     numberingRuns = Math.ceil(numberingUnits / 1000);
-    numberingCost = input.numberingCostOverride ?? numberingRuns * input.settings.numberingRunPrice;
+    numberingCost = numberingRuns * (input.numberingRunPriceOverride ?? input.settings.numberingRunPrice);
     // §3.3 — loose paper: each sheet is its own number.
     numberingEnd = input.numbering.startNumber + input.quantity - 1;
   }
@@ -322,7 +330,7 @@ export interface NotebookCostInput {
   /** See `LoosePaperCostInput`'s doc comment — same owner-approved override rules. */
   zincPriceOverride?: number;
   printRunPriceOverride?: number;
-  numberingCostOverride?: number;
+  numberingRunPriceOverride?: number;
   designCostOverride?: number;
   wasteSheetsOverride?: number;
   calcSizeOverride?: string;
@@ -408,7 +416,7 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
     });
     const numberingUnits = totalSheetsFlat / numRepeat;
     numberingRuns = Math.ceil(numberingUnits / 1000);
-    numberingCost = input.numberingCostOverride ?? numberingRuns * input.settings.numberingRunPrice;
+    numberingCost = numberingRuns * (input.numberingRunPriceOverride ?? input.settings.numberingRunPrice);
     // §3.3 — original-only: `originalPages` individually-numbered pages
     // per notebook. original+copies: `originalPages` shared "sets" per
     // notebook (carbon copy shares the original's number regardless of
