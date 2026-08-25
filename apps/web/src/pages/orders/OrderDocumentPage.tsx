@@ -241,7 +241,8 @@ export function OrderDocumentPage() {
     setError(null);
     setExportingPdf(true);
     try {
-      await downloadDocumentAsPdf(`فاتورة ${order.invoiceNumber}`);
+      // Owner (2026-08-26, "عايز عرض السعر او الفاتورة لما تتسيف تنزل بإسم العميل") — the downloaded filename, not just the number.
+      await downloadDocumentAsPdf(`فاتورة ${order.invoiceNumber} - ${partner ? partner.nameAr : 'عميل نقدي'}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر تصدير الفاتورة كملف PDF');
     } finally {

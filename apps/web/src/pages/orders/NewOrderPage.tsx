@@ -2700,6 +2700,13 @@ function NewOrderForm({
                       ))}
                     </div>
                   )}
+                  {/* Owner (2026-08-26, "عايز الإجمالي قبل نسبة الربح يكون واضح كده وباين علشان اعرف الفرق كام") */}
+                  {typeof line.breakdown?.subtotal === 'number' && line.breakdown.subtotal !== line.total && (
+                    <div className="text-muted-foreground mt-1.5 flex justify-between border-t pt-1.5 text-xs">
+                      <span>قبل نسبة الربح</span>
+                      <span dir="ltr">{money(line.breakdown.subtotal)} ج.م — الفرق {money(line.total - line.breakdown.subtotal)} ج.م</span>
+                    </div>
+                  )}
                   {totalSheets !== null && (
                     <div className="mt-1 flex justify-between border-t pt-1 text-xs font-medium">
                       <span>إجمالي الورق</span>
@@ -4432,6 +4439,15 @@ function NewOrderForm({
                   {draftPreview.error ?? `${money(draftPreview.total)} ج.م`}
                 </span>
               </p>
+              {/* Owner (2026-08-26, "عايز الإجمالي قبل نسبة الربح يكون واضح كده وباين علشان اعرف الفرق كام") — (hasPrintSection || DIGITAL) کانوا الوحيدين اللي عندهم مفهوم subtotal/هامش ربح مختلفين عن total أصلًا. */}
+              {!draftPreview.error &&
+                (hasPrintSection || draft.kind === 'DIGITAL') &&
+                typeof result?.subtotal === 'number' &&
+                result.subtotal !== draftPreview.total && (
+                  <p className="text-muted-foreground text-xs">
+                    قبل نسبة الربح: {money(result.subtotal)} ج.م — الفرق: {money(draftPreview.total - result.subtotal)} ج.م
+                  </p>
+                )}
               {!draftPreview.error && toNum(draft.discountAmount) > 0 && (
                 <p className="text-muted-foreground text-xs">
                   بعد الخصم: {money(Math.max(0, draftPreview.total - toNum(draft.discountAmount)))} ج.م
