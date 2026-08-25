@@ -123,3 +123,43 @@ describe('calculateBoardsCost — pricePerMeterOverride', () => {
     expect(result.total).toBe(60); // 2m² * 30 (overridden), not the catalog 45
   });
 });
+
+// Owner (same day, "في نقطة لازم النسبة تكون موجودة بردو... ده وده وانا اختار")
+// — an alternative to a flat override: a markup/markdown % on the resolved rate.
+describe('calculateBoardsCost — pricePerMeterMarkupPercent', () => {
+  it('applies the percentage on top of the resolved rate, not the total', () => {
+    const markup = calculateBoardsCost({
+      material: 'FLEX',
+      widthCm: 100,
+      heightCm: 100,
+      quantity: 2,
+      settings: SETTINGS,
+      pricePerMeterMarkupPercent: 10,
+    });
+    expect(markup.pricePerMeter).toBeCloseTo(49.5, 5); // 45 * 1.10
+    expect(markup.total).toBeCloseTo(99, 5); // 2m² * 49.5
+
+    const discount = calculateBoardsCost({
+      material: 'FLEX',
+      widthCm: 100,
+      heightCm: 100,
+      quantity: 2,
+      settings: SETTINGS,
+      pricePerMeterMarkupPercent: -20,
+    });
+    expect(discount.pricePerMeter).toBe(36); // 45 * 0.80
+  });
+
+  it('a flat pricePerMeterOverride wins if both are somehow present', () => {
+    const result = calculateBoardsCost({
+      material: 'FLEX',
+      widthCm: 100,
+      heightCm: 100,
+      quantity: 1,
+      settings: SETTINGS,
+      pricePerMeterOverride: 30,
+      pricePerMeterMarkupPercent: 10,
+    });
+    expect(result.pricePerMeter).toBe(30);
+  });
+});

@@ -253,19 +253,23 @@ interface DraftItem {
   wasteSheetsOverrideEnabled: boolean;
   wasteSheetsOverrideValue: string;
   /**
-   * Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده") — a manual
-   * per-unit price replacing the computed/catalog price for this line only
-   * (the catalog itself never changes), same "toggle + override, defaults
-   * to automatic" pattern as every other override above. BOARDS prices by
-   * the square meter (`pricePerMeterOverrideValue`, replacing
-   * `settings.boardsX`); PRODUCT/SERVICE/INVENTORY_RETAIL price by the
-   * piece (`unitPriceOverrideValue`, replacing the catalog/sale price) —
-   * the only 4 kinds with no manual price-override concept until now.
+   * Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده"، same day:
+   * "في نقطة لازم النسبة تكون موجودة بردو... ده وده وانا اختار") — a
+   * manual price adjustment for BOARDS/PRODUCT/SERVICE/INVENTORY_RETAIL,
+   * the only 4 kinds with no price-override concept until now (no profit
+   * margin to hook into like LOOSE_PAPER/NOTEBOOK/etc.). Two mutually
+   * exclusive modes the staff member picks between: `FLAT` types the final
+   * per-unit price directly (`pricePerMeterOverride`/`unitPriceOverride`);
+   * `PERCENT` types a markup/markdown percentage applied on top of the
+   * catalog/computed price instead (`pricePerMeterMarkupPercent`/
+   * `unitPriceMarkupPercent`) — less error-prone than computing the final
+   * number by hand when the ask is just "+10%". BOARDS reads/writes the
+   * per-meter fields, PRODUCT/SERVICE/INVENTORY_RETAIL the per-piece ones;
+   * `priceOverrideValue` is shared since a draft is always exactly one kind.
    */
-  pricePerMeterOverrideEnabled: boolean;
-  pricePerMeterOverrideValue: string;
-  unitPriceOverrideEnabled: boolean;
-  unitPriceOverrideValue: string;
+  priceOverrideEnabled: boolean;
+  priceOverrideMode: 'FLAT' | 'PERCENT';
+  priceOverrideValue: string;
   /**
    * Owner (2026-08-17, "عايز انا اللي اقولك مقاس الطباعة... وتحسب بناءا
    * عليه عدد الأفرخ وكذلك عدد التراجات" / "بالنسبة للترقيم عايز بردو
@@ -373,10 +377,9 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     designCostOverrideValue: '0',
     wasteSheetsOverrideEnabled: false,
     wasteSheetsOverrideValue: '0',
-    pricePerMeterOverrideEnabled: false,
-    pricePerMeterOverrideValue: '0',
-    unitPriceOverrideEnabled: false,
-    unitPriceOverrideValue: '0',
+    priceOverrideEnabled: false,
+    priceOverrideMode: 'FLAT',
+    priceOverrideValue: '0',
     calcSizeOverrideEnabled: false,
     calcSizeOverrideValue: '',
     numberingSizeOverrideEnabled: false,
@@ -405,10 +408,34 @@ function extraServiceFieldsOf(d: DraftItem) {
   return { extraServices: enabled.length > 0 ? enabled.map((s) => ({ label: s.label, amount: toNum(s.amount) })) : undefined };
 }
 
+/**
+ * Owner (2026-08-26) — BOARDS/PRODUCT/SERVICE/INVENTORY_RETAIL's manual
+ * price adjustment, `FLAT` (flatKey) or `PERCENT` (percentKey) mode. Named
+ * per-kind at the call site (`pricePerMeterOverride`/
+ * `pricePerMeterMarkupPercent` for BOARDS, `unitPriceOverride`/
+ * `unitPriceMarkupPercent` for the other three) since the two field pairs
+ * aren't interchangeable on `OrderItemPricingInput`.
+ */
+function priceOverrideFieldsOf(
+  d: DraftItem,
+  flatKey: 'pricePerMeterOverride' | 'unitPriceOverride',
+  percentKey: 'pricePerMeterMarkupPercent' | 'unitPriceMarkupPercent',
+): Record<string, number> {
+  if (!d.priceOverrideEnabled) return {};
+  return d.priceOverrideMode === 'FLAT' ? { [flatKey]: toNum(d.priceOverrideValue) } : { [percentKey]: toNum(d.priceOverrideValue) };
+}
+
 /** Client mirror of `pricingEngineService.ts`'s `sumExtraCosts`, used only for the live preview. MANUAL has no `extraServices` concept at all (see its own schema comment) — `in` narrows that out instead of a structural type every kind would otherwise need to share at least one property with. */
 function sumExtraCosts(pricing: OrderItemPricingInput): number {
   if (!('extraServices' in pricing) || !pricing.extraServices) return 0;
   return pricing.extraServices.reduce((sum, s) => sum + s.amount, 0);
+}
+
+/** Client mirror of `pricingEngineService.ts`'s `resolveOverriddenUnitPrice`, used only for the live preview. */
+function resolveOverriddenUnitPrice(base: number | undefined, override: number | undefined, markupPercent: number | undefined): number | undefined {
+  if (override !== undefined) return override;
+  if (markupPercent !== undefined && base !== undefined) return base * (1 + markupPercent / 100);
+  return base;
 }
 
 /** Narrows a `DraftItem` into a real `OrderItemPricingInput` — returns null while required fields for that kind aren't filled in yet (not an error, just "not priceable yet"). */
@@ -539,7 +566,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         hasDesign: d.material === 'BANNER' ? d.hasDesign : undefined,
         hasSellophane: d.material === 'VINYL_NORMAL' || d.material === 'VINYL_PRINT_CUT' ? d.hasSellophane : undefined,
         ...extra,
-        ...(d.pricePerMeterOverrideEnabled ? { pricePerMeterOverride: toNum(d.pricePerMeterOverrideValue) } : {}),
+        ...priceOverrideFieldsOf(d, 'pricePerMeterOverride', 'pricePerMeterMarkupPercent'),
       };
     case 'DIGITAL': {
       // "Yield" is only meaningful for the QUARTER machine (Yield-packed
@@ -582,7 +609,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         kind: d.kind,
         quantity: toNum(d.quantity),
         ...extra,
-        ...(d.unitPriceOverrideEnabled ? { unitPriceOverride: toNum(d.unitPriceOverrideValue) } : {}),
+        ...priceOverrideFieldsOf(d, 'unitPriceOverride', 'unitPriceMarkupPercent'),
       };
     case 'INVENTORY_RETAIL':
       if (!d.inventoryItemId || !d.quantity) return null;
@@ -591,7 +618,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         inventoryItemId: d.inventoryItemId,
         quantity: toNum(d.quantity),
         ...extra,
-        ...(d.unitPriceOverrideEnabled ? { unitPriceOverride: toNum(d.unitPriceOverrideValue) } : {}),
+        ...priceOverrideFieldsOf(d, 'unitPriceOverride', 'unitPriceMarkupPercent'),
       };
     case 'MANUAL':
       if (!d.unitPrice || !d.quantity) return null;
@@ -610,6 +637,13 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
  * — so this just walks the same fields `buildPricingInput` reads,
  * backwards, no inference needed.
  */
+/** Reverse of `priceOverrideFieldsOf` — reconstructs the enabled/mode/value trio from whichever of the two stored fields is present (undefined on both = never overridden). */
+function applyPriceOverrideToDraft(d: DraftItem, flatVal: number | undefined, percentVal: number | undefined): void {
+  d.priceOverrideEnabled = flatVal !== undefined || percentVal !== undefined;
+  d.priceOverrideMode = percentVal !== undefined ? 'PERCENT' : 'FLAT';
+  d.priceOverrideValue = String((percentVal !== undefined ? percentVal : flatVal) ?? 0);
+}
+
 function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOption[]): DraftItem {
   const p = line.pricing;
   const d = emptyDraftItem(p.kind, extraServiceOptions);
@@ -740,8 +774,7 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       d.heightCm = String(p.heightCm);
       d.hasDesign = p.hasDesign ?? false;
       d.hasSellophane = p.hasSellophane ?? false;
-      d.pricePerMeterOverrideEnabled = p.pricePerMeterOverride !== undefined;
-      d.pricePerMeterOverrideValue = String(p.pricePerMeterOverride ?? 0);
+      applyPriceOverrideToDraft(d, p.pricePerMeterOverride, p.pricePerMeterMarkupPercent);
       break;
     case 'DIGITAL':
       d.digitalComponents = p.components.map((c) => ({
@@ -761,14 +794,12 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
     case 'PRODUCT':
     case 'SERVICE':
       d.quantity = String(p.quantity);
-      d.unitPriceOverrideEnabled = p.unitPriceOverride !== undefined;
-      d.unitPriceOverrideValue = String(p.unitPriceOverride ?? 0);
+      applyPriceOverrideToDraft(d, p.unitPriceOverride, p.unitPriceMarkupPercent);
       break;
     case 'INVENTORY_RETAIL':
       d.inventoryItemId = p.inventoryItemId;
       d.quantity = String(p.quantity);
-      d.unitPriceOverrideEnabled = p.unitPriceOverride !== undefined;
-      d.unitPriceOverrideValue = String(p.unitPriceOverride ?? 0);
+      applyPriceOverrideToDraft(d, p.unitPriceOverride, p.unitPriceMarkupPercent);
       break;
     case 'MANUAL':
       d.unitPrice = String(p.unitPrice);
@@ -993,6 +1024,7 @@ function pricingPreviewFromInput(
           settings: ctx.boardsConstants,
           extraCosts,
           pricePerMeterOverride: pricing.pricePerMeterOverride,
+          pricePerMeterMarkupPercent: pricing.pricePerMeterMarkupPercent,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -1032,13 +1064,17 @@ function pricingPreviewFromInput(
       case 'PRODUCT':
       case 'SERVICE': {
         if (!catalogId) return { total: 0, error: null, result: null };
-        const unitPrice = pricing.unitPriceOverride ?? ctx.catalogPriceById.get(catalogId);
+        const unitPrice = resolveOverriddenUnitPrice(ctx.catalogPriceById.get(catalogId), pricing.unitPriceOverride, pricing.unitPriceMarkupPercent);
         if (unitPrice === undefined) return { total: 0, error: 'لا يوجد سعر لهذا الصنف', result: null };
         const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
         return { total, error: null, result: { unitPrice, extraCosts, total } };
       }
       case 'INVENTORY_RETAIL': {
-        const unitPrice = pricing.unitPriceOverride ?? ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId);
+        const unitPrice = resolveOverriddenUnitPrice(
+          ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId),
+          pricing.unitPriceOverride,
+          pricing.unitPriceMarkupPercent,
+        );
         if (unitPrice === undefined) return { total: 0, error: 'هذا الصنف مالوش سعر بيع محدد', result: null };
         const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
         return { total, error: null, result: { unitPrice, extraCosts, total } };
@@ -2764,51 +2800,50 @@ function NewOrderForm({
           </div>
         )}
 
-        {/* Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده") — BOARDS/PRODUCT/SERVICE/INVENTORY_RETAIL never had a manual price-override concept before (no profit-margin step to hook into like the print-family kinds above), so this is a separate block rather than folded into "تعديل يدوي على بنود التكلفة" above. */}
+        {/* Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده"، same day: "في نقطة لازم النسبة تكون موجودة بردو... ده وده وانا اختار") — BOARDS/PRODUCT/SERVICE/INVENTORY_RETAIL never had a manual price-override concept before (no profit-margin step to hook into like the print-family kinds above), so this is a separate block rather than folded into "تعديل يدوي على بنود التكلفة" above. Two mutually exclusive modes: a flat replacement price, or a markup/markdown % on top of the catalog/computed price. */}
         {hasUnitPriceOverrideSection && (
           <div className="border-border space-y-2 rounded-lg border p-2">
             <p className="text-muted-foreground text-xs font-medium">تعديل يدوي على السعر (لحالات زي المناقصات)</p>
-            {draft.kind === 'BOARDS' ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Checkbox
-                  checked={draft.pricePerMeterOverrideEnabled}
-                  onCheckedChange={(v) => updateDraft({ pricePerMeterOverrideEnabled: v === true })}
-                />
-                <span className="text-sm">سعر المتر</span>
-                {draft.pricePerMeterOverrideEnabled ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Checkbox checked={draft.priceOverrideEnabled} onCheckedChange={(v) => updateDraft({ priceOverrideEnabled: v === true })} />
+              <span className="text-sm">{draft.kind === 'BOARDS' ? 'سعر المتر' : 'سعر الوحدة'}</span>
+              {draft.priceOverrideEnabled ? (
+                <>
+                  <div className="border-input flex overflow-hidden rounded-md border text-xs">
+                    <button
+                      type="button"
+                      onClick={() => updateDraft({ priceOverrideMode: 'FLAT' })}
+                      className={`px-2 py-1 ${draft.priceOverrideMode === 'FLAT' ? 'bg-primary text-primary-foreground' : 'bg-background'}`}
+                    >
+                      سعر ثابت
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateDraft({ priceOverrideMode: 'PERCENT' })}
+                      className={`px-2 py-1 ${draft.priceOverrideMode === 'PERCENT' ? 'bg-primary text-primary-foreground' : 'bg-background'}`}
+                    >
+                      نسبة %
+                    </button>
+                  </div>
                   <input
                     type="number"
-                    min={0}
                     step="0.01"
-                    value={draft.pricePerMeterOverrideValue}
-                    onChange={(e) => updateDraft({ pricePerMeterOverrideValue: e.target.value })}
+                    min={draft.priceOverrideMode === 'PERCENT' ? -100 : 0}
+                    value={draft.priceOverrideValue}
+                    onChange={(e) => updateDraft({ priceOverrideValue: e.target.value })}
+                    placeholder={draft.priceOverrideMode === 'PERCENT' ? 'مثال: 10 أو -5' : undefined}
                     className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
                   />
-                ) : (
-                  <span className="text-muted-foreground text-xs">الافتراضي من الإعدادات: {money(result?.pricePerMeter ?? 0)} ج.م</span>
-                )}
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                <Checkbox
-                  checked={draft.unitPriceOverrideEnabled}
-                  onCheckedChange={(v) => updateDraft({ unitPriceOverrideEnabled: v === true })}
-                />
-                <span className="text-sm">سعر الوحدة</span>
-                {draft.unitPriceOverrideEnabled ? (
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    value={draft.unitPriceOverrideValue}
-                    onChange={(e) => updateDraft({ unitPriceOverrideValue: e.target.value })}
-                    className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
-                  />
-                ) : (
-                  <span className="text-muted-foreground text-xs">سعر الكتالوج: {money(result?.unitPrice ?? 0)} ج.م</span>
-                )}
-              </div>
-            )}
+                  {draft.priceOverrideMode === 'PERCENT' && <span className="text-muted-foreground text-xs">%</span>}
+                </>
+              ) : (
+                <span className="text-muted-foreground text-xs">
+                  {draft.kind === 'BOARDS'
+                    ? `الافتراضي من الإعدادات: ${money(result?.pricePerMeter ?? 0)} ج.م`
+                    : `سعر الكتالوج: ${money(result?.unitPrice ?? 0)} ج.م`}
+                </span>
+              )}
+            </div>
           </div>
         )}
 

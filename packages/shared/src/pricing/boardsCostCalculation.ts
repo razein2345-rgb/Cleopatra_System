@@ -51,6 +51,16 @@ export interface BoardsCostInput {
    * `costCalculation.ts`.
    */
   pricePerMeterOverride?: number;
+  /**
+   * Owner (same day, "في نقطة لازم النسبة تكون موجودة بردو... ده وده وانا
+   * اختار") — an alternative to `pricePerMeterOverride`: a markup/markdown
+   * percentage applied on top of the settings-resolved `pricePerMeter`
+   * instead of typing a flat replacement price (positive = markup,
+   * negative = discount off the resolved rate). Mutually exclusive with
+   * `pricePerMeterOverride` at the caller/UI level — only one mode is
+   * active per item.
+   */
+  pricePerMeterMarkupPercent?: number;
 }
 
 export interface BoardsCostResult {
@@ -90,7 +100,12 @@ function resolvePricePerMeter(input: BoardsCostInput): number {
 
 /** §3.8 — boards & signage. */
 export function calculateBoardsCost(input: BoardsCostInput): BoardsCostResult {
-  const pricePerMeter = input.pricePerMeterOverride ?? resolvePricePerMeter(input);
+  const resolvedPricePerMeter = resolvePricePerMeter(input);
+  const pricePerMeter =
+    input.pricePerMeterOverride ??
+    (input.pricePerMeterMarkupPercent !== undefined
+      ? resolvedPricePerMeter * (1 + input.pricePerMeterMarkupPercent / 100)
+      : resolvedPricePerMeter);
   const extraCosts = input.extraCosts ?? 0;
 
   if (input.material === 'VINYL_PRINT_CUT') {

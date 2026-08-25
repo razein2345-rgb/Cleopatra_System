@@ -203,6 +203,14 @@ export const boardMaterialSchema = z.enum(['BANNER', 'VINYL_NORMAL', 'VINYL_PRIN
  */
 const unitPriceOverrideFields = {
   unitPriceOverride: z.number().nonnegative().optional(),
+  /**
+   * Owner (same day, "في نقطة لازم النسبة تكون موجودة بردو... ده وده وانا
+   * اختار") — an alternative mode to `unitPriceOverride`: a markup/markdown
+   * percentage on top of the catalog/computed unit price instead of typing
+   * a flat replacement (positive = markup, negative = discount). Mutually
+   * exclusive with `unitPriceOverride` at the caller/UI level.
+   */
+  unitPriceMarkupPercent: z.number().min(-100).optional(),
 };
 
 export const boardsPricingInputSchema = z.object({
@@ -214,6 +222,7 @@ export const boardsPricingInputSchema = z.object({
   hasDesign: z.boolean().optional(),
   hasSellophane: z.boolean().optional(),
   pricePerMeterOverride: z.number().nonnegative().optional(),
+  pricePerMeterMarkupPercent: z.number().min(-100).optional(),
   ...extraServiceFields,
 });
 

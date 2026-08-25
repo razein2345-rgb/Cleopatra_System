@@ -236,6 +236,21 @@ function sumExtraCosts(pricing: { extraServices?: { label: string; amount: numbe
 }
 
 /**
+ * Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده"، same day: "في
+ * نقطة لازم النسبة تكون موجودة بردو... ده وده وانا اختار") — BOARDS/
+ * PRODUCT/SERVICE/INVENTORY_RETAIL's manual price override, two mutually
+ * exclusive modes: a flat replacement price, or a markup/markdown
+ * percentage applied on top of the catalog/computed base. `override`
+ * takes priority if both are somehow present (shouldn't happen — the
+ * composer UI only ever sends one).
+ */
+function resolveOverriddenUnitPrice(base: number | undefined, override: number | undefined, markupPercent: number | undefined): number | undefined {
+  if (override !== undefined) return override;
+  if (markupPercent !== undefined && base !== undefined) return base * (1 + markupPercent / 100);
+  return base;
+}
+
+/**
  * The single dispatch point from a validated `OrderItemPricingInput` to a
  * real pricing-engine result — never trusts a client-supplied total (see
  * `orderItemPricing.ts`'s own doc comment). One `switch` arm per kind,
@@ -549,6 +564,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         settings: ctx.boardsConstants,
         extraCosts: sumExtraCosts(pricing),
         pricePerMeterOverride: pricing.pricePerMeterOverride,
+        pricePerMeterMarkupPercent: pricing.pricePerMeterMarkupPercent,
       });
       return {
         total: result.total,
@@ -568,7 +584,11 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       };
     }
     case 'INVENTORY_RETAIL': {
-      const unitPrice = pricing.unitPriceOverride ?? ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId);
+      const unitPrice = resolveOverriddenUnitPrice(
+        ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId),
+        pricing.unitPriceOverride,
+        pricing.unitPriceMarkupPercent,
+      );
       if (unitPrice === undefined) {
         throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no sale price set`);
       }
@@ -599,7 +619,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       if (!catalogId) {
         throw new PricingInputError(`A ${pricing.kind} item requires readyProductId or serviceId`);
       }
-      const unitPrice = pricing.unitPriceOverride ?? ctx.catalogPriceById.get(catalogId);
+      const unitPrice = resolveOverriddenUnitPrice(ctx.catalogPriceById.get(catalogId), pricing.unitPriceOverride, pricing.unitPriceMarkupPercent);
       if (unitPrice === undefined) {
         throw new PricingInputError(`No catalog price found for "${catalogId}"`);
       }
