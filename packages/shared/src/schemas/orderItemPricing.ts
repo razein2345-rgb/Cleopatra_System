@@ -17,6 +17,22 @@ const sheetJobFields = {
   isNewDesign: z.boolean(),
   /** Presence enables numbering; the run count/cost/end-number are all computed server-side. */
   numberingStartNumber: z.number().int().positive().optional(),
+  /**
+   * Owner (2026-08-26, "عايز اقدر اعدل على سعر الفرخ من شاشة الطلبات...
+   * بالنسبة للاوردر ده فقط") — replaces the linked `InventoryItem`'s own
+   * sheet price for this order item only; the item's actual stored price
+   * (and every other order using it) is untouched. Same "override the
+   * per-unit price, keep the existing multiplication" shape as every other
+   * override in this file.
+   */
+  sheetPriceOverride: z.number().nonnegative().optional(),
+  /**
+   * Owner (2026-08-26, "عايز اقدر اعدل في إجمالي سعر الورق في الصنف بعد ما
+   * يتحسب") — replaces the computed paper cost TOTAL directly, independent
+   * of `sheetPriceOverride` (per-sheet rate) — owner confirmed both should
+   * exist side by side as separate controls, not one instead of the other.
+   */
+  paperCostOverride: z.number().nonnegative().optional(),
 };
 
 /**
@@ -178,6 +194,9 @@ export const folderPricingInputSchema = z.object({
   jarab: z.number().nonnegative().optional(),
   forma: z.number().nonnegative().optional(),
   taksir: z.number().nonnegative().optional(),
+  /** See `sheetJobFields`'s own doc comment — same per-order sheet-price and total-paper-cost overrides. */
+  sheetPriceOverride: z.number().nonnegative().optional(),
+  paperCostOverride: z.number().nonnegative().optional(),
   ...marginOverrideFields,
   ...zincPrintOverrideFields,
   ...wasteSheetsOverrideFields,

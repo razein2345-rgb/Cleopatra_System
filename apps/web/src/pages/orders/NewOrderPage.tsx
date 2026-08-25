@@ -199,6 +199,24 @@ interface DraftItem {
   numberingStartNumber: string;
   sides: '1' | '2';
   quantity: string;
+  /**
+   * Owner (2026-08-26, "عايز اقدر اعدل على سعر الفرخ من شاشة الطلبات...
+   * بالنسبة للاوردر ده فقط") — right next to the paper-type combobox, not
+   * folded into "تعديل يدوي على بنود التكلفة" below (that section is for
+   * the print-cost formula components; this is the paper's own price).
+   * Replaces the InventoryItem's linked sheet price for this order item
+   * only.
+   */
+  sheetPriceOverrideEnabled: boolean;
+  sheetPriceOverrideValue: string;
+  /**
+   * Owner (2026-08-26, "عايز اقدر اعدل في إجمالي سعر الورق في الصنف بعد ما
+   * يتحسب") — a separate, independent control from `sheetPriceOverride`
+   * above: replaces the computed paper cost TOTAL directly (not the
+   * per-sheet rate). Owner confirmed both should exist side by side.
+   */
+  paperCostOverrideEnabled: boolean;
+  paperCostOverrideValue: string;
   // NOTEBOOK
   notebookQuantity: string;
   contentType: 'ORIGINAL_ONLY' | 'ORIGINAL_PLUS_COPIES';
@@ -348,6 +366,10 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     numberingStartNumber: '',
     sides: '1',
     quantity: '1',
+    sheetPriceOverrideEnabled: false,
+    sheetPriceOverrideValue: '0',
+    paperCostOverrideEnabled: false,
+    paperCostOverrideValue: '0',
     notebookQuantity: '1',
     contentType: 'ORIGINAL_ONLY',
     copies: '0',
@@ -406,6 +428,16 @@ const toOptionalNum = (v: string): number | undefined => (v.trim() === '' ? unde
 function extraServiceFieldsOf(d: DraftItem) {
   const enabled = d.extraServices.filter((s) => s.enabled && toNum(s.amount) > 0);
   return { extraServices: enabled.length > 0 ? enabled.map((s) => ({ label: s.label, amount: toNum(s.amount) })) : undefined };
+}
+
+/** Owner (2026-08-26, "عايز اقدر اعدل على سعر الفرخ... بالنسبة للاوردر ده فقط") — LOOSE_PAPER/NOTEBOOK/FOLDER's per-order sheet-price override. */
+function sheetPriceOverrideFieldOf(d: DraftItem) {
+  return d.sheetPriceOverrideEnabled ? { sheetPriceOverride: toNum(d.sheetPriceOverrideValue) } : {};
+}
+
+/** Owner (same day, "عايز اقدر اعدل في إجمالي سعر الورق في الصنف بعد ما يتحسب") — a separate total-replacing override, independent of `sheetPriceOverrideFieldOf`. */
+function paperCostOverrideFieldOf(d: DraftItem) {
+  return d.paperCostOverrideEnabled ? { paperCostOverride: toNum(d.paperCostOverrideValue) } : {};
 }
 
 /**
@@ -484,6 +516,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...numberingWaste,
         ...calcSize,
         ...numberingSize,
+        ...sheetPriceOverrideFieldOf(d),
+        ...paperCostOverrideFieldOf(d),
       };
     case 'NOTEBOOK': {
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.notebookQuantity || !d.colorCount) return null;
@@ -519,6 +553,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...calcSize,
         ...numberingSize,
         ...pageCounts,
+        ...sheetPriceOverrideFieldOf(d),
+        ...paperCostOverrideFieldOf(d),
       };
     }
     case 'ENVELOPE':
@@ -554,6 +590,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...zpd,
         ...(d.wasteSheetsOverrideEnabled ? { wasteSheetsOverride: toNum(d.wasteSheetsOverrideValue) } : {}),
         ...calcSize,
+        ...sheetPriceOverrideFieldOf(d),
+        ...paperCostOverrideFieldOf(d),
       };
     case 'BOARDS':
       if (!d.widthCm || !d.heightCm || !d.quantity) return null;
@@ -722,6 +760,10 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       d.numberingStartNumber = p.numberingStartNumber !== undefined ? String(p.numberingStartNumber) : '';
       d.quantity = String(p.quantity);
       d.sides = p.sides === 2 ? '2' : '1';
+      d.sheetPriceOverrideEnabled = p.sheetPriceOverride !== undefined;
+      d.sheetPriceOverrideValue = String(p.sheetPriceOverride ?? 0);
+      d.paperCostOverrideEnabled = p.paperCostOverride !== undefined;
+      d.paperCostOverrideValue = String(p.paperCostOverride ?? 0);
       break;
     case 'NOTEBOOK': {
       d.sizeFamilyKey = p.sizeFamilyKey;
@@ -746,6 +788,10 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       d.originalPagesOverrideValue = String(notebookPageOverrides.originalPagesOverride ?? '');
       d.copyPagesOverrideEnabled = notebookPageOverrides.copyPagesOverride !== undefined;
       d.copyPagesOverrideValue = String(notebookPageOverrides.copyPagesOverride ?? '');
+      d.sheetPriceOverrideEnabled = p.sheetPriceOverride !== undefined;
+      d.sheetPriceOverrideValue = String(p.sheetPriceOverride ?? 0);
+      d.paperCostOverrideEnabled = p.paperCostOverride !== undefined;
+      d.paperCostOverrideValue = String(p.paperCostOverride ?? 0);
       break;
     }
     case 'ENVELOPE':
@@ -767,6 +813,10 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       d.jarab = p.jarab !== undefined ? String(p.jarab) : '';
       d.forma = p.forma !== undefined ? String(p.forma) : '';
       d.taksir = p.taksir !== undefined ? String(p.taksir) : '';
+      d.sheetPriceOverrideEnabled = p.sheetPriceOverride !== undefined;
+      d.sheetPriceOverrideValue = String(p.sheetPriceOverride ?? 0);
+      d.paperCostOverrideEnabled = p.paperCostOverride !== undefined;
+      d.paperCostOverrideValue = String(p.paperCostOverride ?? 0);
       break;
     case 'BOARDS':
       d.material = p.material;
@@ -905,7 +955,7 @@ function pricingPreviewFromInput(
   try {
     switch (pricing.kind) {
       case 'LOOSE_PAPER': {
-        const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
+        const sheetPrice = pricing.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
         if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق', result: null };
         const r = calculateLoosePaperCost({
           familyKey: pricing.sizeFamilyKey,
@@ -927,11 +977,12 @@ function pricingPreviewFromInput(
           wasteSheetsOverride: pricing.wasteSheetsOverride,
           calcSizeOverride: pricing.calcSizeOverride,
           numberingSizeOverride: pricing.numberingSizeOverride,
+          paperCostOverride: pricing.paperCostOverride,
         });
         return { total: r.total, error: null, result: r };
       }
       case 'NOTEBOOK': {
-        const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
+        const sheetPrice = pricing.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
         if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق', result: null };
         // Multi-material (2026-08-17) — same orchestration the server uses,
         // for a live preview that matches what submitting will actually price.
@@ -965,6 +1016,7 @@ function pricingPreviewFromInput(
             numberingSizeOverride: pricing.numberingSizeOverride,
             originalPagesOverride: pricing.originalPagesOverride,
             copyPagesOverride: pricing.copyPagesOverride,
+            paperCostOverride: pricing.paperCostOverride,
           },
           materialOverrides.length ? materialOverrides : undefined,
         );
@@ -986,7 +1038,7 @@ function pricingPreviewFromInput(
         return { total: r.total, error: null, result: r };
       }
       case 'FOLDER': {
-        const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
+        const sheetPrice = pricing.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
         if (sheetPrice === undefined) return { total: 0, error: 'الصنف المختار غير مرتبط بسعر ورق', result: null };
         const r = calculateFolderCost({
           familyKey: pricing.sizeFamilyKey,
@@ -1010,6 +1062,7 @@ function pricingPreviewFromInput(
           designCostOverride: pricing.designCostOverride,
           wasteSheetsOverride: pricing.wasteSheetsOverride,
           calcSizeOverride: pricing.calcSizeOverride,
+          paperCostOverride: pricing.paperCostOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -3274,6 +3327,32 @@ function NewOrderForm({
                   searchPlaceholder="اكتب أول كام حرف من اسم الورق…"
                 />
               </label>
+              {/* Owner (2026-08-26, "عايز اقدر اعدل على سعر الفرخ من شاشة الطلبات... بالنسبة للاوردر ده فقط") — right next to the paper picker, not buried in "تعديل يدوي على بنود التكلفة" below. */}
+              {draft.inventoryItemId && (
+                <label className="space-y-1 text-sm sm:col-span-2">
+                  <span className="text-muted-foreground">سعر الفرخ</span>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      checked={draft.sheetPriceOverrideEnabled}
+                      onCheckedChange={(v) => updateDraft({ sheetPriceOverrideEnabled: v === true })}
+                    />
+                    {draft.sheetPriceOverrideEnabled ? (
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={draft.sheetPriceOverrideValue}
+                        onChange={(e) => updateDraft({ sheetPriceOverrideValue: e.target.value })}
+                        className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                      />
+                    ) : (
+                      <span className="text-muted-foreground text-xs">
+                        سعر المخزن: {(ctx.sheetPriceByInventoryItemId.get(draft.inventoryItemId) ?? 0).toFixed(2)} ج.م — فعّل الخانة لتعديله لهذا الطلب فقط
+                      </span>
+                    )}
+                  </div>
+                </label>
+              )}
             </div>
           )}
 
@@ -3429,6 +3508,27 @@ function NewOrderForm({
               ) = {result.sheetsNeeded} فرخ ×{' '}
               {(ctx.sheetPriceByInventoryItemId.get(draft.inventoryItemId) ?? 0).toFixed(2)} = {money(result.paperCost ?? 0)} ج.م
             </p>
+          )}
+
+          {/* Owner (2026-08-26, "عايز اقدر اعدل في إجمالي سعر الورق في الصنف بعد ما يتحسب") — a separate control from "سعر الفرخ" above: replaces the final paper-cost TOTAL directly, right after the formula that computes it. */}
+          {isSheetKind && result && typeof result.sheetsNeeded === 'number' && (
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <Checkbox
+                checked={draft.paperCostOverrideEnabled}
+                onCheckedChange={(v) => updateDraft({ paperCostOverrideEnabled: v === true })}
+              />
+              <span className="text-muted-foreground">تعديل إجمالي سعر الورق مباشرة</span>
+              {draft.paperCostOverrideEnabled && (
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.paperCostOverrideValue}
+                  onChange={(e) => updateDraft({ paperCostOverrideValue: e.target.value })}
+                  className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                />
+              )}
+            </div>
           )}
 
           {draft.kind === 'NOTEBOOK' && (

@@ -203,6 +203,15 @@ export interface LoosePaperCostInput {
   numberingSizeOverride?: string;
   profitPercentOverride?: number;
   extraCosts?: number;
+  /**
+   * Owner (2026-08-26, "عايز اقدر اعدل في إجمالي سعر الورق في الصنف بعد ما
+   * يتحسب") — replaces the computed `paperCost` TOTAL directly (unlike
+   * `sheetPriceOverride`, which replaces the per-sheet rate and keeps the
+   * `sheetsNeeded ×` multiplication). A separate, independent control —
+   * owner confirmed both should exist side by side, not one replacing the
+   * other.
+   */
+  paperCostOverride?: number;
 }
 
 export interface LoosePaperCostResult {
@@ -266,7 +275,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
     calcLabel = calc.calcLabel;
   }
 
-  const paperCost = sheetsNeeded * input.sheetPrice;
+  const paperCost = input.paperCostOverride ?? sheetsNeeded * input.sheetPrice;
   const zincCost = (input.zincPriceOverride ?? input.settings.zincPrice) * input.colorCount;
   // §3.4 — "وجهين" doubles the run count only, not the sheet count.
   const printRuns = Math.ceil(printUnits / 1000) * input.colorCount * input.sides;
@@ -352,6 +361,8 @@ export interface NotebookCostInput {
   copyPagesOverride?: number;
   profitPercentOverride?: number;
   extraCosts?: number;
+  /** See `LoosePaperCostInput.paperCostOverride`'s doc comment — same total-replacing override, independent of `sheetPriceOverride`/per-copy `materials`. Applied to the final aggregated paper cost in `calculateNotebookMultiMaterialCost`, not per-role. */
+  paperCostOverride?: number;
 }
 
 export interface NotebookCostResult {
@@ -399,7 +410,7 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
   const printCost = printRuns * (input.printRunPriceOverride ?? input.settings.printRunPrice);
 
   const sheetsNeeded = Math.ceil(units / calc.calcPiecesPerSheet) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
-  const paperCost = sheetsNeeded * input.sheetPrice;
+  const paperCost = input.paperCostOverride ?? sheetsNeeded * input.sheetPrice;
   const zincCost = (input.zincPriceOverride ?? input.settings.zincPrice) * input.colorCount;
   const designCost = input.designCostOverride ?? (input.isNewDesign ? input.settings.designPrice : 0);
   const bindingCost = input.bindingPricePerNotebook * input.notebookQuantity;
@@ -527,7 +538,7 @@ export function calculateNotebookMultiMaterialCost(
     return { role, sheetsNeeded, sheetPrice, paperCost: sheetsNeeded * sheetPrice };
   });
 
-  const paperCost = materials.reduce((sum, m) => sum + m.paperCost, 0);
+  const paperCost = input.paperCostOverride ?? materials.reduce((sum, m) => sum + m.paperCost, 0);
   const subtotal = base.designCost + base.zincCost + base.printCost + base.numberingCost + paperCost + base.bindingCost + base.extraCosts;
   const total = subtotal * (1 + base.profitPercentUsed / 100);
 
@@ -601,6 +612,8 @@ export interface FolderCostInput {
   calcSizeOverride?: string;
   profitPercentOverride?: number;
   extraCosts?: number;
+  /** See `LoosePaperCostInput.paperCostOverride`'s doc comment — passed straight through to the internal `calculateLoosePaperCost` call below. */
+  paperCostOverride?: number;
 }
 
 export interface FolderCostResult {
@@ -648,6 +661,7 @@ export function calculateFolderCost(input: FolderCostInput): FolderCostResult {
     designCostOverride: input.designCostOverride,
     wasteSheetsOverride: input.wasteSheetsOverride,
     calcSizeOverride: input.calcSizeOverride,
+    paperCostOverride: input.paperCostOverride,
   });
 
   const selloCost = input.sellophaneEnabled ? base.sheetsNeeded * input.settings.sellophanePricePerSheet : 0;

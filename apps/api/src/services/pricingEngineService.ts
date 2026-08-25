@@ -267,7 +267,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
 
   switch (pricing.kind) {
     case 'LOOSE_PAPER': {
-      const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
+      const sheetPrice = pricing.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
       if (sheetPrice === undefined) {
         throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no linked sheet price`);
       }
@@ -291,6 +291,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         numberingSizeOverride: pricing.numberingSizeOverride,
         profitPercentOverride: pricing.profitPercentOverride,
         extraCosts: sumExtraCosts(pricing),
+        paperCostOverride: pricing.paperCostOverride,
       });
       return {
         total: result.total,
@@ -320,7 +321,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       };
     }
     case 'NOTEBOOK': {
-      const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
+      const sheetPrice = pricing.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
       if (sheetPrice === undefined) {
         throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no linked sheet price`);
       }
@@ -364,6 +365,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           copyPagesOverride: pricing.copyPagesOverride,
           profitPercentOverride: pricing.profitPercentOverride,
           extraCosts: sumExtraCosts(pricing),
+          paperCostOverride: pricing.paperCostOverride,
         },
         materialOverrides.length ? materialOverrides : undefined,
       );
@@ -428,7 +430,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       };
     }
     case 'FOLDER': {
-      const sheetPrice = ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
+      const sheetPrice = pricing.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
       if (sheetPrice === undefined) {
         throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no linked sheet price`);
       }
@@ -454,6 +456,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         calcSizeOverride: pricing.calcSizeOverride,
         profitPercentOverride: pricing.profitPercentOverride,
         extraCosts: sumExtraCosts(pricing),
+        paperCostOverride: pricing.paperCostOverride,
       });
       return {
         total: result.total,

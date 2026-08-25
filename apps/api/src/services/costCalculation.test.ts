@@ -140,6 +140,40 @@ describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPE
     // 5 runs * 10 (overridden per-run price) — NOT 10 flat.
     expect(result.numberingCost).toBe(50);
   });
+
+  it('paperCostOverride replaces the paper cost TOTAL directly, independent of sheetPrice (owner, 2026-08-26)', () => {
+    const withoutOverride = calculateNotebookCost({
+      familyKey: 'extra2',
+      realLabel: '10×15',
+      notebookQuantity: 100,
+      contentType: 'ORIGINAL_PLUS_COPIES',
+      copies: 3,
+      colorCount: 1,
+      isNewDesign: true,
+      bindingPricePerNotebook: 2.5,
+      sheetPrice: 3,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    expect(withoutOverride.paperCost).toBe(1506); // 502 sheets * 3 — unaffected baseline
+
+    const withOverride = calculateNotebookCost({
+      familyKey: 'extra2',
+      realLabel: '10×15',
+      notebookQuantity: 100,
+      contentType: 'ORIGINAL_PLUS_COPIES',
+      copies: 3,
+      colorCount: 1,
+      isNewDesign: true,
+      bindingPricePerNotebook: 2.5,
+      sheetPrice: 3,
+      families: FAMILIES,
+      settings: SETTINGS,
+      paperCostOverride: 1000,
+    });
+    expect(withOverride.paperCost).toBe(1000); // flat override, not 502*3
+    expect(withOverride.sheetsNeeded).toBe(502); // sheet count itself is unaffected — only the price changes
+  });
 });
 
 describe('calculateLoosePaperCost — gayer sheets never tier (§3.4)', () => {
