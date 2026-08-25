@@ -253,6 +253,20 @@ interface DraftItem {
   wasteSheetsOverrideEnabled: boolean;
   wasteSheetsOverrideValue: string;
   /**
+   * Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده") — a manual
+   * per-unit price replacing the computed/catalog price for this line only
+   * (the catalog itself never changes), same "toggle + override, defaults
+   * to automatic" pattern as every other override above. BOARDS prices by
+   * the square meter (`pricePerMeterOverrideValue`, replacing
+   * `settings.boardsX`); PRODUCT/SERVICE/INVENTORY_RETAIL price by the
+   * piece (`unitPriceOverrideValue`, replacing the catalog/sale price) —
+   * the only 4 kinds with no manual price-override concept until now.
+   */
+  pricePerMeterOverrideEnabled: boolean;
+  pricePerMeterOverrideValue: string;
+  unitPriceOverrideEnabled: boolean;
+  unitPriceOverrideValue: string;
+  /**
    * Owner (2026-08-17, "عايز انا اللي اقولك مقاس الطباعة... وتحسب بناءا
    * عليه عدد الأفرخ وكذلك عدد التراجات" / "بالنسبة للترقيم عايز بردو
    * انا اللي اقولك مقاس الترقيم") — manual print-size / numbering-size
@@ -359,6 +373,10 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     designCostOverrideValue: '0',
     wasteSheetsOverrideEnabled: false,
     wasteSheetsOverrideValue: '0',
+    pricePerMeterOverrideEnabled: false,
+    pricePerMeterOverrideValue: '0',
+    unitPriceOverrideEnabled: false,
+    unitPriceOverrideValue: '0',
     calcSizeOverrideEnabled: false,
     calcSizeOverrideValue: '',
     numberingSizeOverrideEnabled: false,
@@ -521,6 +539,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         hasDesign: d.material === 'BANNER' ? d.hasDesign : undefined,
         hasSellophane: d.material === 'VINYL_NORMAL' || d.material === 'VINYL_PRINT_CUT' ? d.hasSellophane : undefined,
         ...extra,
+        ...(d.pricePerMeterOverrideEnabled ? { pricePerMeterOverride: toNum(d.pricePerMeterOverrideValue) } : {}),
       };
     case 'DIGITAL': {
       // "Yield" is only meaningful for the QUARTER machine (Yield-packed
@@ -559,10 +578,21 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
     case 'PRODUCT':
     case 'SERVICE':
       if (!d.quantity) return null;
-      return { kind: d.kind, quantity: toNum(d.quantity), ...extra };
+      return {
+        kind: d.kind,
+        quantity: toNum(d.quantity),
+        ...extra,
+        ...(d.unitPriceOverrideEnabled ? { unitPriceOverride: toNum(d.unitPriceOverrideValue) } : {}),
+      };
     case 'INVENTORY_RETAIL':
       if (!d.inventoryItemId || !d.quantity) return null;
-      return { kind: 'INVENTORY_RETAIL', inventoryItemId: d.inventoryItemId, quantity: toNum(d.quantity), ...extra };
+      return {
+        kind: 'INVENTORY_RETAIL',
+        inventoryItemId: d.inventoryItemId,
+        quantity: toNum(d.quantity),
+        ...extra,
+        ...(d.unitPriceOverrideEnabled ? { unitPriceOverride: toNum(d.unitPriceOverrideValue) } : {}),
+      };
     case 'MANUAL':
       if (!d.unitPrice || !d.quantity) return null;
       return { kind: 'MANUAL', unitPrice: toNum(d.unitPrice), quantity: toNum(d.quantity) };
@@ -710,6 +740,8 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       d.heightCm = String(p.heightCm);
       d.hasDesign = p.hasDesign ?? false;
       d.hasSellophane = p.hasSellophane ?? false;
+      d.pricePerMeterOverrideEnabled = p.pricePerMeterOverride !== undefined;
+      d.pricePerMeterOverrideValue = String(p.pricePerMeterOverride ?? 0);
       break;
     case 'DIGITAL':
       d.digitalComponents = p.components.map((c) => ({
@@ -729,10 +761,14 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
     case 'PRODUCT':
     case 'SERVICE':
       d.quantity = String(p.quantity);
+      d.unitPriceOverrideEnabled = p.unitPriceOverride !== undefined;
+      d.unitPriceOverrideValue = String(p.unitPriceOverride ?? 0);
       break;
     case 'INVENTORY_RETAIL':
       d.inventoryItemId = p.inventoryItemId;
       d.quantity = String(p.quantity);
+      d.unitPriceOverrideEnabled = p.unitPriceOverride !== undefined;
+      d.unitPriceOverrideValue = String(p.unitPriceOverride ?? 0);
       break;
     case 'MANUAL':
       d.unitPrice = String(p.unitPrice);
@@ -790,6 +826,10 @@ interface PricingPreviewResult {
   // في المتر"). No pricing-formula change, purely display.
   piecesPerMeter?: number;
   metersNeeded?: number;
+  // BOARDS only — the resolved (or overridden) per-square-meter rate, for
+  // showing the "الافتراضي من الإعدادات" fallback next to the manual
+  // override toggle (owner, 2026-08-26: "أكتب السعر النهائي يدويًا للصنف ده").
+  pricePerMeter?: number;
   // Multi-material NOTEBOOK (2026-08-17) — one entry per material actually
   // in use (just ORIGINAL when no copy overrides are set).
   materials?: { role: string; sheetsNeeded: number; sheetPrice: number; paperCost: number }[];
@@ -952,6 +992,7 @@ function pricingPreviewFromInput(
           hasSellophane: pricing.hasSellophane,
           settings: ctx.boardsConstants,
           extraCosts,
+          pricePerMeterOverride: pricing.pricePerMeterOverride,
         });
         return { total: r.total, error: null, result: r };
       }
@@ -991,13 +1032,13 @@ function pricingPreviewFromInput(
       case 'PRODUCT':
       case 'SERVICE': {
         if (!catalogId) return { total: 0, error: null, result: null };
-        const unitPrice = ctx.catalogPriceById.get(catalogId);
+        const unitPrice = pricing.unitPriceOverride ?? ctx.catalogPriceById.get(catalogId);
         if (unitPrice === undefined) return { total: 0, error: 'لا يوجد سعر لهذا الصنف', result: null };
         const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
         return { total, error: null, result: { unitPrice, extraCosts, total } };
       }
       case 'INVENTORY_RETAIL': {
-        const unitPrice = ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId);
+        const unitPrice = pricing.unitPriceOverride ?? ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId);
         if (unitPrice === undefined) return { total: 0, error: 'هذا الصنف مالوش سعر بيع محدد', result: null };
         const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
         return { total, error: null, result: { unitPrice, extraCosts, total } };
@@ -2444,6 +2485,13 @@ function NewOrderForm({
   const result = draftPreview.result;
   const isSheetKind = draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK' || draft.kind === 'FOLDER';
   const hasPrintSection = draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK' || draft.kind === 'ENVELOPE' || draft.kind === 'FOLDER';
+  /**
+   * Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده") — the 4 kinds
+   * that had no manual price-override concept at all until now (they never
+   * apply a profit-margin multiplier the way LOOSE_PAPER/NOTEBOOK/etc. do).
+   */
+  const hasUnitPriceOverrideSection =
+    draft.kind === 'BOARDS' || draft.kind === 'PRODUCT' || draft.kind === 'SERVICE' || draft.kind === 'INVENTORY_RETAIL';
 
   return (
     <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
@@ -2710,6 +2758,54 @@ function NewOrderForm({
                   <span className="text-muted-foreground text-xs">
                     الافتراضي من الإعدادات: {pricingReference.pricingConstants.wasteSheetsDefault} فرخ
                   </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده") — BOARDS/PRODUCT/SERVICE/INVENTORY_RETAIL never had a manual price-override concept before (no profit-margin step to hook into like the print-family kinds above), so this is a separate block rather than folded into "تعديل يدوي على بنود التكلفة" above. */}
+        {hasUnitPriceOverrideSection && (
+          <div className="border-border space-y-2 rounded-lg border p-2">
+            <p className="text-muted-foreground text-xs font-medium">تعديل يدوي على السعر (لحالات زي المناقصات)</p>
+            {draft.kind === 'BOARDS' ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <Checkbox
+                  checked={draft.pricePerMeterOverrideEnabled}
+                  onCheckedChange={(v) => updateDraft({ pricePerMeterOverrideEnabled: v === true })}
+                />
+                <span className="text-sm">سعر المتر</span>
+                {draft.pricePerMeterOverrideEnabled ? (
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={draft.pricePerMeterOverrideValue}
+                    onChange={(e) => updateDraft({ pricePerMeterOverrideValue: e.target.value })}
+                    className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                  />
+                ) : (
+                  <span className="text-muted-foreground text-xs">الافتراضي من الإعدادات: {money(result?.pricePerMeter ?? 0)} ج.م</span>
+                )}
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <Checkbox
+                  checked={draft.unitPriceOverrideEnabled}
+                  onCheckedChange={(v) => updateDraft({ unitPriceOverrideEnabled: v === true })}
+                />
+                <span className="text-sm">سعر الوحدة</span>
+                {draft.unitPriceOverrideEnabled ? (
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={draft.unitPriceOverrideValue}
+                    onChange={(e) => updateDraft({ unitPriceOverrideValue: e.target.value })}
+                    className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                  />
+                ) : (
+                  <span className="text-muted-foreground text-xs">سعر الكتالوج: {money(result?.unitPrice ?? 0)} ج.م</span>
                 )}
               </div>
             )}

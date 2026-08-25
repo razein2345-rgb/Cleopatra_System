@@ -106,3 +106,20 @@ describe('calculateBoardsCost — extraCosts (owner-approved manual override, 20
     expect(result.total).toBe(45 + 20); // pricePerMeter(45) * 1m² + extraCosts(20)
   });
 });
+
+// Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده") — BOARDS had no
+// price-override concept at all before this.
+describe('calculateBoardsCost — pricePerMeterOverride', () => {
+  it('replaces the settings-resolved rate, keeping the existing area multiplication', () => {
+    const result = calculateBoardsCost({
+      material: 'FLEX',
+      widthCm: 100,
+      heightCm: 100,
+      quantity: 2,
+      settings: SETTINGS,
+      pricePerMeterOverride: 30,
+    });
+    expect(result.pricePerMeter).toBe(30);
+    expect(result.total).toBe(60); // 2m² * 30 (overridden), not the catalog 45
+  });
+});

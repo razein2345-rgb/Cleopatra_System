@@ -187,6 +187,24 @@ export const folderPricingInputSchema = z.object({
 
 export const boardMaterialSchema = z.enum(['BANNER', 'VINYL_NORMAL', 'VINYL_PRINT_CUT', 'FLEX', 'SEASRO']);
 
+/**
+ * Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده") — a manual
+ * override replacing the computed/catalog unit price for BOARDS/PRODUCT/
+ * SERVICE/INVENTORY_RETAIL only, the 4 kinds that had no price-override
+ * concept at all until now (BOARDS/PRODUCT/SERVICE/... never apply a
+ * profit-margin multiplier the way LOOSE_PAPER/NOTEBOOK/etc. do — see
+ * `boardsCostCalculation.ts`'s own doc comment). BOARDS prices by the
+ * square meter, so its override is that per-meter rate
+ * (`pricePerMeterOverride`); PRODUCT/SERVICE/INVENTORY_RETAIL price by the
+ * piece, so theirs is the per-piece rate (`unitPriceOverride`) — same
+ * "replace the per-unit price, keep the existing quantity multiplication"
+ * shape as `zincPriceOverride`/`printRunPriceOverride`/
+ * `numberingRunPriceOverride` above.
+ */
+const unitPriceOverrideFields = {
+  unitPriceOverride: z.number().nonnegative().optional(),
+};
+
 export const boardsPricingInputSchema = z.object({
   kind: z.literal('BOARDS'),
   material: boardMaterialSchema,
@@ -195,6 +213,7 @@ export const boardsPricingInputSchema = z.object({
   quantity: z.number().int().positive(),
   hasDesign: z.boolean().optional(),
   hasSellophane: z.boolean().optional(),
+  pricePerMeterOverride: z.number().nonnegative().optional(),
   ...extraServiceFields,
 });
 
@@ -249,6 +268,7 @@ export const productOrServicePricingInputSchema = z.object({
   kind: z.enum(['PRODUCT', 'SERVICE']),
   quantity: z.number().int().positive(),
   ...extraServiceFields,
+  ...unitPriceOverrideFields,
 });
 
 /**
@@ -265,6 +285,7 @@ export const inventoryRetailPricingInputSchema = z.object({
   inventoryItemId: z.string().uuid(),
   quantity: z.number().int().positive(),
   ...extraServiceFields,
+  ...unitPriceOverrideFields,
 });
 
 /**

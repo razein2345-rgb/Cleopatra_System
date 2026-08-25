@@ -43,6 +43,14 @@ export interface BoardsCostInput {
    * — never multiplied by a margin, since boards never apply one at all.
    */
   extraCosts?: number;
+  /**
+   * Owner (2026-08-26, "أكتب السعر النهائي يدويًا للصنف ده") — replaces
+   * the settings-resolved `pricePerMeter` for this item only; the existing
+   * area/piece-packing multiplication that follows is unchanged, same
+   * "override the per-unit price, not the total" shape used throughout
+   * `costCalculation.ts`.
+   */
+  pricePerMeterOverride?: number;
 }
 
 export interface BoardsCostResult {
@@ -82,7 +90,7 @@ function resolvePricePerMeter(input: BoardsCostInput): number {
 
 /** §3.8 — boards & signage. */
 export function calculateBoardsCost(input: BoardsCostInput): BoardsCostResult {
-  const pricePerMeter = resolvePricePerMeter(input);
+  const pricePerMeter = input.pricePerMeterOverride ?? resolvePricePerMeter(input);
   const extraCosts = input.extraCosts ?? 0;
 
   if (input.material === 'VINYL_PRINT_CUT') {

@@ -548,6 +548,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         hasSellophane: pricing.hasSellophane,
         settings: ctx.boardsConstants,
         extraCosts: sumExtraCosts(pricing),
+        pricePerMeterOverride: pricing.pricePerMeterOverride,
       });
       return {
         total: result.total,
@@ -567,7 +568,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       };
     }
     case 'INVENTORY_RETAIL': {
-      const unitPrice = ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId);
+      const unitPrice = pricing.unitPriceOverride ?? ctx.salePriceByInventoryItemId.get(pricing.inventoryItemId);
       if (unitPrice === undefined) {
         throw new PricingInputError(`Inventory item "${pricing.inventoryItemId}" has no sale price set`);
       }
@@ -598,7 +599,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       if (!catalogId) {
         throw new PricingInputError(`A ${pricing.kind} item requires readyProductId or serviceId`);
       }
-      const unitPrice = ctx.catalogPriceById.get(catalogId);
+      const unitPrice = pricing.unitPriceOverride ?? ctx.catalogPriceById.get(catalogId);
       if (unitPrice === undefined) {
         throw new PricingInputError(`No catalog price found for "${catalogId}"`);
       }
