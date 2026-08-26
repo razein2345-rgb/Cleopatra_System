@@ -119,6 +119,14 @@ const MODULES: ModuleDef[] = [
       { action: 'create', label: 'Register stock items and record movements' },
       { action: 'edit', label: 'Edit stock items' },
       { action: 'delete', label: 'Delete stock items' },
+      // Owner (2026-08-26, "عايز دي تبقى صلاحية اقدر اديها للشخص اللي
+      // قاعد بيسجل المخزون") — a grantable permission, not hardcoded
+      // SUPER_ADMIN (the original restriction on cost price). Covers both
+      // InventoryItem.costPrice and ReadyProduct.costPrice — the same
+      // "purchase cost, sensitive financial data" concept built together
+      // as one feature, so one permission rather than two near-identical
+      // ones (avoid fragmenting the permission catalog).
+      { action: 'costPrice', label: 'View/edit purchase cost price (inventory items & ready products)' },
     ],
   },
   {

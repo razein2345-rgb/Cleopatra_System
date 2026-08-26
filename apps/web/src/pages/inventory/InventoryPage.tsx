@@ -57,11 +57,12 @@ const UNIT_LABELS: Record<InventoryUnit, string> = {
  * milestone, per the plan's scope (M4 wires the order-creation form).
  */
 export function InventoryPage() {
-  const { can, authContext } = useAuth();
-  // Owner (2026-08-26, "سعر التكلفة... مقصور على المسؤول العام") — same
-  // strict SUPER_ADMIN-only restriction discipline as attendance/payroll,
-  // not shared with ADMIN.
-  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
+  const { can } = useAuth();
+  // Owner (2026-08-26, "عايز دي تبقى صلاحية اقدر اديها للشخص اللي قاعد
+  // بيسجل المخزون") — a real grantable permission, not hardcoded to
+  // SUPER_ADMIN (SUPER_ADMIN still has it automatically via the `*`
+  // wildcard `can()` already resolves).
+  const canSeeCostPrice = can('inventory.costPrice');
   const [items, setItems] = useState<InventoryItem[] | null>(null);
   const [needsSupplier, setNeedsSupplier] = useState<InventoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -138,7 +139,7 @@ export function InventoryPage() {
     load();
   };
 
-  /** Owner (2026-08-26, "يتسجل هي واقفه علينا بكام") — purchase cost, so profit (salePrice - costPrice) is computable. SUPER_ADMIN only. */
+  /** Owner (2026-08-26, "يتسجل هي واقفه علينا بكام") — purchase cost, so profit (salePrice - costPrice) is computable. Requires the `inventory.costPrice` permission. */
   const saveCostPrice = async (item: InventoryItem, next: string) => {
     const parsed = next.trim() === '' ? null : Number(next);
     if (parsed !== null && (Number.isNaN(parsed) || parsed < 0)) {
@@ -269,7 +270,7 @@ export function InventoryPage() {
                 <th className="p-3">الرصيد الحالي</th>
                 <th className="p-3">حد التنبيه</th>
                 <th className="p-3">سعر البيع</th>
-                {isSuperAdmin && <th className="p-3">سعر التكلفة</th>}
+                {canSeeCostPrice && <th className="p-3">سعر التكلفة</th>}
                 <th className="p-3">الحالة</th>
                 <th className="p-3" />
               </tr>
@@ -279,7 +280,7 @@ export function InventoryPage() {
                 if (filteredItems.length === 0) {
                   return (
                     <tr>
-                      <td className="text-muted-foreground p-3 text-center" colSpan={isSuperAdmin ? 10 : 9}>
+                      <td className="text-muted-foreground p-3 text-center" colSpan={canSeeCostPrice ? 10 : 9}>
                         {items.length === 0 ? 'لا توجد بضاعة مسجلة بعد.' : 'لا توجد أصناف مطابقة.'}
                       </td>
                     </tr>
@@ -362,7 +363,7 @@ export function InventoryPage() {
                         (item.salePrice?.toLocaleString('en-US') ?? '—')
                       )}
                     </td>
-                    {isSuperAdmin && (
+                    {canSeeCostPrice && (
                       <td className="text-muted-foreground p-3">
                         <EditableTextCell
                           value={item.costPrice?.toString() ?? ''}
@@ -846,8 +847,8 @@ function NewInventoryItemForm({
   const [costPrice, setCostPrice] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const { authContext } = useAuth();
-  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
+  const { can } = useAuth();
+  const canSeeCostPrice = can('inventory.costPrice');
 
   const changeCategory = (next: MaterialCategory) => {
     setCategory(next);
@@ -869,7 +870,7 @@ function NewInventoryItemForm({
         initialQuantity: initialQuantity ? Number(initialQuantity) : undefined,
         barcode: barcode.trim() || undefined,
         salePrice: salePrice ? Number(salePrice) : undefined,
-        costPrice: isSuperAdmin && costPrice ? Number(costPrice) : undefined,
+        costPrice: canSeeCostPrice && costPrice ? Number(costPrice) : undefined,
       };
       await apiPost('/api/inventory-items', input);
       onCreated();
@@ -983,7 +984,7 @@ function NewInventoryItemForm({
             />
           </label>
         )}
-        {category === 'READY_MADE' && isSuperAdmin && (
+        {category === 'READY_MADE' && canSeeCostPrice && (
           <label className="space-y-1 text-sm">
             <span className="text-muted-foreground">سعر التكلفة للقطعة (اختياري)</span>
             <input

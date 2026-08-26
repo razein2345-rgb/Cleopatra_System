@@ -17,12 +17,12 @@ export function ReadyProductsEditor({
   readyProducts: ReadyProduct[];
   onChanged: () => void;
 }) {
-  const { can, authContext } = useAuth();
+  const { can } = useAuth();
   const confirm = useConfirm();
   const canManage = can('settings.edit');
-  // Owner (2026-08-26, "سعر التكلفة... مقصور على المسؤول العام") — strict
-  // SUPER_ADMIN-only, same discipline as attendance/payroll.
-  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
+  // Owner (2026-08-26, "عايز دي تبقى صلاحية اقدر اديها للشخص اللي قاعد
+  // بيسجل المخزون") — grantable permission, not hardcoded SUPER_ADMIN.
+  const canSeeCostPrice = can('inventory.costPrice');
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<ReadyProduct | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export function ReadyProductsEditor({
       {error && <div className="text-destructive mb-2 text-sm">{error}</div>}
       {showCreate && (
         <ReadyProductForm
-          isSuperAdmin={isSuperAdmin}
+          canSeeCostPrice={canSeeCostPrice}
           onSubmit={(name, price, sourceType, costPrice) =>
             apiPost('/api/ready-products', { name, price, sourceType, costPrice })
           }
@@ -67,7 +67,7 @@ export function ReadyProductsEditor({
           editing?.id === p.id ? (
             <li key={p.id} className="border-border border-b py-1.5">
               <ReadyProductForm
-                isSuperAdmin={isSuperAdmin}
+                canSeeCostPrice={canSeeCostPrice}
                 initialName={p.name}
                 initialPrice={p.price}
                 initialSourceType={p.sourceType}
@@ -90,7 +90,7 @@ export function ReadyProductsEditor({
               </span>
               <div className="flex items-center gap-3">
                 <span>{p.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج</span>
-                {isSuperAdmin && (
+                {canSeeCostPrice && (
                   <span className="text-muted-foreground text-xs">
                     (تكلفة: {p.costPrice != null ? p.costPrice.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'})
                   </span>
@@ -120,7 +120,7 @@ function ReadyProductForm({
   initialPrice = 0,
   initialSourceType = null,
   initialCostPrice = null,
-  isSuperAdmin,
+  canSeeCostPrice,
   onSubmit,
   onSaved,
   onCancel,
@@ -129,7 +129,7 @@ function ReadyProductForm({
   initialPrice?: number;
   initialSourceType?: ProductSourceType | null;
   initialCostPrice?: number | null;
-  isSuperAdmin: boolean;
+  canSeeCostPrice: boolean;
   onSubmit: (
     name: string,
     price: number,
@@ -152,7 +152,7 @@ function ReadyProductForm({
     setError(null);
     setSubmitting(true);
     try {
-      await onSubmit(name, price, sourceType || null, isSuperAdmin && costPrice ? Number(costPrice) : undefined);
+      await onSubmit(name, price, sourceType || null, canSeeCostPrice && costPrice ? Number(costPrice) : undefined);
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر الحفظ');
@@ -197,7 +197,7 @@ function ReadyProductForm({
           className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
         />
       </label>
-      {isSuperAdmin && (
+      {canSeeCostPrice && (
         <label className="w-28 space-y-1 text-xs">
           <span className="text-muted-foreground">التكلفة (اختياري)</span>
           <input
