@@ -21,11 +21,12 @@ import { CategoryTagsSection } from './CategoryTagsSection';
 import { NotesTab } from './NotesTab';
 import { CommercialTab } from './CommercialTab';
 import { OrdersHistoryTab } from './OrdersHistoryTab';
+import { CustomerStatementTab } from './CustomerStatementTab';
 import { PaymentsHistoryTab } from './PaymentsHistoryTab';
 import { ReorderPredictionTab } from './ReorderPredictionTab';
 import { whatsappLink } from '@/lib/whatsapp';
 
-type Tab = 'overview' | 'orders' | 'reorder' | 'contacts' | 'addresses' | 'notes' | 'commercial' | 'payments';
+type Tab = 'overview' | 'orders' | 'statement' | 'reorder' | 'contacts' | 'addresses' | 'notes' | 'commercial' | 'payments';
 
 /**
  * Partner Profile. Overview (FEATURE-002 M1), Contacts (M2), Addresses
@@ -90,6 +91,7 @@ export function PartnerProfilePage() {
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: 'overview', label: 'نظرة عامة' },
     ...(can('orders.view') ? [{ id: 'orders' as const, label: 'الطلبات' }] : []),
+    ...(can('orders.view') ? [{ id: 'statement' as const, label: 'كشف الحساب' }] : []),
     ...(can('orders.view') ? [{ id: 'reorder' as const, label: 'توقع إعادة الطلب' }] : []),
     { id: 'contacts', label: 'جهات الاتصال' },
     { id: 'addresses', label: 'العناوين' },
@@ -142,6 +144,10 @@ export function PartnerProfilePage() {
       )}
 
       {tab === 'orders' && can('orders.view') && <OrdersHistoryTab partnerId={partner.id} />}
+
+      {tab === 'statement' && can('orders.view') && (
+        <CustomerStatementTab partnerId={partner.id} partnerName={partner.nameAr} />
+      )}
 
       {tab === 'reorder' && can('orders.view') && (
         <ReorderPredictionTab partnerId={partner.id} partnerName={partner.nameAr} partnerPhone={partner.phone} />
