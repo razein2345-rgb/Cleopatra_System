@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import { BUSINESS_TIMEZONE, getTimezoneOffsetMinutes } from '../lib/businessTimezone.js';
 import type { EmployeePayroll, EmployeePayrollDay, PayFrequency } from '@cleopatra/shared';
 
 /**
@@ -78,18 +79,13 @@ function resolvePeriod(payFrequency: PayFrequency, payDayOfMonth: number | null)
  * UTC offset (+2 or +3 depending on Egypt's DST, which resumed in 2023) —
  * shifting the whole late/early-leave/overtime comparison by 2-3 hours
  * and turning a normal early-arrival/late-departure day into a wrongly
- * "docked" one. `getTimezoneOffsetMinutes` reads the IANA `Africa/Cairo`
- * offset for the given day (so it keeps working correctly across DST
- * transitions, not just today), rather than a fixed hardcoded number.
+ * "docked" one. `getTimezoneOffsetMinutes` (now shared via
+ * `lib/businessTimezone.ts` — `attendanceService.ts`'s day-bucketing bug
+ * fix reuses the exact same Cairo-offset primitive) reads the IANA
+ * `Africa/Cairo` offset for the given day (so it keeps working correctly
+ * across DST transitions, not just today), rather than a fixed hardcoded
+ * number.
  */
-const BUSINESS_TIMEZONE = 'Africa/Cairo';
-
-function getTimezoneOffsetMinutes(date: Date, timeZone: string): number {
-  const utcAsLocal = new Date(date.toLocaleString('en-US', { timeZone: 'UTC' }));
-  const tzAsLocal = new Date(date.toLocaleString('en-US', { timeZone }));
-  return (tzAsLocal.getTime() - utcAsLocal.getTime()) / 60000;
-}
-
 function combineDayAndTime(day: Date, hhmm: string): Date {
   const [h, m] = hhmm.split(':').map(Number);
   const offsetMinutes = getTimezoneOffsetMinutes(day, BUSINESS_TIMEZONE);

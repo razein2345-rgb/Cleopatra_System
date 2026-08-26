@@ -1,5 +1,6 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { prisma } from '../lib/prisma.js';
+import { todayInBusinessTimezone } from '../lib/businessTimezone.js';
 import type {
   AttendanceEntry,
   AttendanceSource,
@@ -13,17 +14,15 @@ import type { Prisma } from '../generated/prisma/client.js';
 /**
  * FEATURE-008 — software check-in/check-out (see attendance.ts's doc
  * comment for the "no device yet" rationale). `date` is always normalized
- * to UTC midnight of the calendar day, matching every other date-only
- * field in this codebase (e.g. Order.deliveryDate) and the
- * `@@unique([staffId, date])` constraint's own semantics.
+ * to the current calendar day in Cairo local time (see
+ * `todayInBusinessTimezone`'s doc comment — a plain UTC-midnight anchor
+ * silently misfiled early-morning Cairo check-ins under the wrong day),
+ * matching every other date-only field in this codebase (e.g.
+ * Order.deliveryDate) and the `@@unique([staffId, date])` constraint's own
+ * semantics.
  */
 
 type AttendanceRecord = Prisma.AttendanceEntryGetPayload<object>;
-
-function todayUtcMidnight(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-}
 
 export function mapAttendanceToDto(entry: AttendanceRecord): AttendanceEntry {
   return {
@@ -66,7 +65,7 @@ export class AlreadyCheckedOutError extends Error {
 
 export async function getTodayEntryForStaff(staffId: string): Promise<AttendanceEntry | null> {
   const entry = await prisma.attendanceEntry.findUnique({
-    where: { staffId_date: { staffId, date: todayUtcMidnight() } },
+    where: { staffId_date: { staffId, date: todayInBusinessTimezone() } },
   });
   return entry ? mapAttendanceToDto(entry) : null;
 }
@@ -85,7 +84,7 @@ export async function checkIn(
   recordedById: string,
   options?: { source?: AttendanceSource; latitude?: number; longitude?: number },
 ): Promise<AttendanceEntry> {
-  const date = todayUtcMidnight();
+  const date = todayInBusinessTimezone();
   const existing = await prisma.attendanceEntry.findUnique({ where: { staffId_date: { staffId, date } } });
   if (existing?.checkInAt) {
     throw new AlreadyCheckedInError();
@@ -106,7 +105,7 @@ export async function checkIn(
 }
 
 export async function checkOut(staffId: string): Promise<AttendanceEntry> {
-  const date = todayUtcMidnight();
+  const date = todayInBusinessTimezone();
   const existing = await prisma.attendanceEntry.findUnique({ where: { staffId_date: { staffId, date } } });
   if (!existing?.checkInAt) {
     throw new NotCheckedInError();
@@ -300,7 +299,7 @@ export async function listFieldAssignments(staffId?: string): Promise<FieldAssig
 }
 
 export async function myTodayFieldAssignments(staffId: string): Promise<FieldAssignment[]> {
-  const date = todayUtcMidnight();
+  const date = todayInBusinessTimezone();
   const records = await prisma.fieldAssignment.findMany({
     where: { staffId, date, status: 'PENDING', isDeleted: false },
     orderBy: { createdAt: 'asc' },
