@@ -19,6 +19,11 @@ export const settingSchema = z.object({
   looseThreshold: z.number().int(),
   sellophanePricePerSheet: z.number(),
   logoUrl: z.string().nullable(),
+  // Owner (2026-08-27, "سعر الزنكات بكام من عند المورد اللي هو اسمارت")
+  // — real supplier cost, separate from `zincPrice` (the pricing-formula
+  // input, confirmed padded above the real supplier charge). Never touches
+  // the formula — purely additive for profit reporting.
+  zincSupplierCost: z.number(),
   boardsBannerNoDesign: z.number(),
   boardsBannerWithDesign: z.number(),
   boardsVinylPrintCutNoSello: z.number(),

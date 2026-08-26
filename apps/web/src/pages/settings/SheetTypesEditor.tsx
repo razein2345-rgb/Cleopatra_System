@@ -72,6 +72,14 @@ export function SheetTypesEditor({
         />
       )}
       <table className="w-full text-sm">
+        <thead>
+          <tr className="text-muted-foreground text-xs">
+            <th className="text-start font-normal">الاسم</th>
+            <th className="text-end font-normal">السعر</th>
+            <th className="text-end font-normal">تكلفة من التاجر</th>
+            {canManage && <th />}
+          </tr>
+        </thead>
         <tbody>
           {sheetTypes.map((s) => (
             <tr key={s.id} className="border-border border-b">
@@ -95,6 +103,20 @@ export function SheetTypesEditor({
                   `${s.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج`
                 )}
               </td>
+              <td className="py-1.5 text-end">
+                {canManage ? (
+                  <EditableNumberCell
+                    value={s.costPrice}
+                    placeholder="—"
+                    min={0}
+                    step={0.01}
+                    onSave={(next) => updateSheetTypeField(s, { costPrice: next })}
+                    className="text-end"
+                  />
+                ) : (
+                  (s.costPrice?.toLocaleString('en-US', { minimumFractionDigits: 2 }) ?? '—')
+                )}
+              </td>
               {canManage && (
                 <td className="py-1.5 text-end">
                   <Button variant="ghost" size="sm" onClick={() => void remove(s)}>
@@ -106,7 +128,7 @@ export function SheetTypesEditor({
           ))}
           {sheetTypes.length === 0 && (
             <tr>
-              <td className="text-muted-foreground py-2" colSpan={3}>
+              <td className="text-muted-foreground py-2" colSpan={4}>
                 لا توجد أنواع ورق بعد.
               </td>
             </tr>
@@ -130,6 +152,7 @@ function SheetTypeForm({
 }) {
   const [name, setName] = useState(sheetType?.name ?? '');
   const [price, setPrice] = useState(sheetType?.price ?? 0);
+  const [costPrice, setCostPrice] = useState(sheetType?.costPrice != null ? String(sheetType.costPrice) : '');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -139,10 +162,11 @@ function SheetTypeForm({
     setError(null);
     setSubmitting(true);
     try {
+      const costPriceValue = costPrice === '' ? null : Number(costPrice);
       if (sheetType) {
-        await apiPut(`/api/sheet-types/${sheetType.id}`, { name, price });
+        await apiPut(`/api/sheet-types/${sheetType.id}`, { name, price, costPrice: costPriceValue });
       } else {
-        await apiPost('/api/sheet-types', { base, name, price });
+        await apiPost('/api/sheet-types', { base, name, price, costPrice: costPriceValue });
       }
       onSaved();
     } catch (err) {
@@ -173,6 +197,18 @@ function SheetTypeForm({
           required
           value={price}
           onChange={(e) => setPrice(Number(e.target.value))}
+          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+        />
+      </label>
+      <label className="w-32 space-y-1 text-xs">
+        <span className="text-muted-foreground">تكلفة من التاجر</span>
+        <input
+          type="number"
+          step="0.01"
+          min={0}
+          placeholder="—"
+          value={costPrice}
+          onChange={(e) => setCostPrice(e.target.value)}
           className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
         />
       </label>

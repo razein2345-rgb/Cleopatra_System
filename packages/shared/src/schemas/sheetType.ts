@@ -18,6 +18,10 @@ export const sheetTypeSchema = z.object({
   name: z.string().min(1),
   price: z.number().nonnegative(),
   unit: inventoryUnitSchema,
+  // Owner (2026-08-27, "سعر الورق من عند التاجر نفسه علشان اقدر احسب فرق
+  // السعر والربح") — real merchant cost, separate from `price` (the
+  // pricing-formula input). Never touches the formula.
+  costPrice: z.number().nonnegative().nullable(),
 });
 
 export const createSheetTypeSchema = z.object({
@@ -25,6 +29,7 @@ export const createSheetTypeSchema = z.object({
   name: z.string().min(1),
   price: z.number().nonnegative().default(0),
   unit: inventoryUnitSchema.default('SHEET'),
+  costPrice: z.number().nonnegative().nullable().optional(),
 });
 
 export const updateSheetTypeSchema = createSheetTypeSchema.partial();

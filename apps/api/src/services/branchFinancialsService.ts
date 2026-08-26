@@ -40,6 +40,62 @@ interface ItemBreakdownShape {
   unitPrice?: number;
   /** BOARDS only — see boardsCostCalculation.ts's `BoardsCostResult.supplierCost` doc comment (part 4 of this same initiative). */
   supplierCost?: number;
+  /** LOOSE_PAPER/NOTEBOOK/FOLDER/ENVELOPE — zinc plates consumed, for the real zinc-supplier-cost calc below. */
+  colorCount?: number;
+  /** ENVELOPE only — the real per-piece supplier price the staff typed in at order time (already the true cost, no lookup needed). */
+  readyEnvelopePricePerPiece?: number;
+  /** NOTEBOOK (multi-material) only — each copy's own paper consumption, mirroring `OrderItem.materials`. */
+  materials?: Array<{ inventoryItemId: string; sheetsNeeded: number }>;
+  /** LOOSE_PAPER/FOLDER — sheets consumed (same value as the real `OrderItem.sheetsConsumed` column, also frozen into the breakdown itself). */
+  sheetsNeeded?: number;
+}
+
+/**
+ * Owner (2026-08-27, "سعر الزنكات بكام من عند المورد... وسعر الورق من عند
+ * التاجر... علشان اقدر احسب فرق السعر والربح") — real cost for the OFFSET
+ * family (LOOSE_PAPER/NOTEBOOK/FOLDER/ENVELOPE), using the real supplier
+ * rates (`Setting.zincSupplierCost`/`SheetType.costPrice`) confirmed
+ * separate from the padded pricing-formula inputs (`zincPrice`/
+ * `SheetType.price`). Returns `null` (not a fallback estimate) unless BOTH
+ * the paper cost and the zinc cost are fully resolvable — mixing one real
+ * figure with one formula-derived guess would be a worse number than an
+ * honest "unknown", not a better one.
+ */
+function resolveOffsetRealCost(
+  breakdown: ItemBreakdownShape,
+  item: { inventoryItemId: string | null },
+  paperCostPriceByInventoryItemId: Map<string, number | null>,
+  zincSupplierCost: number,
+): number | null {
+  if (zincSupplierCost <= 0) return null; // not configured yet (part 4's precedent: 0 = unconfigured)
+  const colorCount = typeof breakdown.colorCount === 'number' ? breakdown.colorCount : 0;
+  const zincCost = colorCount * zincSupplierCost;
+
+  // ENVELOPE — the real supplier price is already what the staff typed in per order, no lookup needed.
+  if (typeof breakdown.readyEnvelopePricePerPiece === 'number') {
+    const quantity = typeof breakdown.quantity === 'number' ? breakdown.quantity : 0;
+    return breakdown.readyEnvelopePricePerPiece * quantity + zincCost;
+  }
+
+  // NOTEBOOK (multi-material) — sum every copy's own paper.
+  if (breakdown.materials && breakdown.materials.length > 0) {
+    let paperCost = 0;
+    for (const m of breakdown.materials) {
+      const costPrice = paperCostPriceByInventoryItemId.get(m.inventoryItemId);
+      if (costPrice == null) return null; // any copy missing a real cost — don't mix real+guessed
+      paperCost += costPrice * m.sheetsNeeded;
+    }
+    return paperCost + zincCost;
+  }
+
+  // LOOSE_PAPER/FOLDER — single sheet-consuming material.
+  if (item.inventoryItemId && typeof breakdown.sheetsNeeded === 'number') {
+    const costPrice = paperCostPriceByInventoryItemId.get(item.inventoryItemId);
+    if (costPrice == null) return null;
+    return costPrice * breakdown.sheetsNeeded + zincCost;
+  }
+
+  return null;
 }
 
 export function resolveItemProfit(
@@ -55,6 +111,8 @@ export function resolveItemProfit(
   costPriceByInventoryItemId: Map<string, number | null>,
   costPriceByReadyProductId: Map<string, number | null>,
   costPriceByReadyProductName: Map<string, number | null>,
+  paperCostPriceByInventoryItemId: Map<string, number | null> = new Map(),
+  zincSupplierCost = 0,
 ): { revenue: number; profit: number | null } {
   const itemTotal = item.itemTotal ?? 0;
   const revenue = (itemTotal - item.discountAmount) * orderDiscountFactor;
@@ -62,6 +120,11 @@ export function resolveItemProfit(
 
   // 1. Margin-priced kinds — subtotal is the pre-margin cost, always present.
   if (typeof breakdown.subtotal === 'number') {
+    const realCost = resolveOffsetRealCost(breakdown, item, paperCostPriceByInventoryItemId, zincSupplierCost);
+    if (realCost != null) {
+      return { revenue, profit: revenue - realCost * orderDiscountFactor };
+    }
+    // Fallback — the pricing engine's own frozen (padded) cost baseline, same as before real supplier costs were tracked.
     const marginRatio = itemTotal > 0 ? (itemTotal - breakdown.subtotal) / itemTotal : 0;
     return { revenue, profit: revenue * marginRatio };
   }
@@ -106,7 +169,7 @@ export function resolveItemProfit(
 }
 
 export async function getCompanyFinancialSummary(): Promise<CompanyFinancialSummary> {
-  const [branches, treasuryGrouped, orders, inventoryItems, readyProducts] = await Promise.all([
+  const [branches, treasuryGrouped, orders, inventoryItems, readyProducts, paperInventoryItems, setting] = await Promise.all([
     prisma.branch.findMany({ where: { isDeleted: false }, select: { id: true, name: true } }),
     prisma.treasuryEntry.groupBy({
       by: ['branchId', 'type'],
@@ -133,6 +196,13 @@ export async function getCompanyFinancialSummary(): Promise<CompanyFinancialSumm
     }),
     prisma.inventoryItem.findMany({ select: { id: true, costPrice: true } }),
     prisma.readyProduct.findMany({ where: { isDeleted: false }, select: { id: true, name: true, costPrice: true } }),
+    // Owner (2026-08-27) — real merchant cost per paper type, for the OFFSET
+    // real-cost calc (see `resolveOffsetRealCost`'s doc comment).
+    prisma.inventoryItem.findMany({
+      where: { sheetTypeId: { not: null } },
+      select: { id: true, sheetType: { select: { costPrice: true } } },
+    }),
+    prisma.setting.findFirst({ select: { zincSupplierCost: true } }),
   ]);
 
   const costPriceByInventoryItemId = new Map(inventoryItems.map((i) => [i.id, i.costPrice?.toNumber() ?? null]));
@@ -140,6 +210,10 @@ export async function getCompanyFinancialSummary(): Promise<CompanyFinancialSumm
   const costPriceByReadyProductName = new Map(
     readyProducts.map((p) => [p.name.trim().toLowerCase(), p.costPrice?.toNumber() ?? null]),
   );
+  const paperCostPriceByInventoryItemId = new Map(
+    paperInventoryItems.map((i) => [i.id, i.sheetType?.costPrice?.toNumber() ?? null]),
+  );
+  const zincSupplierCost = setting?.zincSupplierCost.toNumber() ?? 0;
 
   const byBranch = new Map<
     string,
@@ -179,6 +253,8 @@ export async function getCompanyFinancialSummary(): Promise<CompanyFinancialSumm
         costPriceByInventoryItemId,
         costPriceByReadyProductId,
         costPriceByReadyProductName,
+        paperCostPriceByInventoryItemId,
+        zincSupplierCost,
       );
       if (profit === null) {
         entry.hasUnknown = true;

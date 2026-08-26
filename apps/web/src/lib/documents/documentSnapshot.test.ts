@@ -19,6 +19,7 @@ const baseSetting: Setting = {
   looseThreshold: 0,
   sellophanePricePerSheet: 0,
   logoUrl: 'https://example.com/logo.png',
+  zincSupplierCost: 0,
   boardsBannerNoDesign: 0,
   boardsBannerWithDesign: 0,
   boardsVinylPrintCutNoSello: 0,

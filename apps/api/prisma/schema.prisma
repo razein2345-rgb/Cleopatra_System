@@ -515,6 +515,18 @@ model Setting {
   sellophanePricePerSheet Decimal @db.Decimal(12, 2)
   logoUrl                 String?
 
+  /// Owner (2026-08-27, "محتاج كمان يكون عندي سعر الزنكات بكام من عند
+  /// المورد... علشان اقدر احسب فرق السعر والربح") — `zincPrice` above
+  /// already feeds the pricing formula's cost baseline, but owner confirmed
+  /// it's a padded/estimated number ("سعر التسعير غير السعر بتاع المورد
+  /// بزود على سعر المورد شوية"), not the real supplier charge. This is the
+  /// real cost from the zinc supplier (e.g. "اسمارت") — purely additive for
+  /// profit reporting, never touches the existing pricing formula/`zincPrice`
+  /// (same "cost tracked separately from the charge" pattern as
+  /// `boardsBannerSupplierCost` etc.). Defaults to 0 so it stays honestly
+  /// "unknown" until an admin fills it in.
+  zincSupplierCost Decimal @default(0) @db.Decimal(12, 2)
+
   boardsBannerNoDesign         Decimal @db.Decimal(12, 2)
   boardsBannerWithDesign       Decimal @db.Decimal(12, 2)
   boardsVinylPrintCutNoSello   Decimal @db.Decimal(12, 2)
@@ -692,6 +704,15 @@ model SheetType {
   name  String
   price Decimal       @db.Decimal(12, 2)
   unit  InventoryUnit @default(SHEET)
+
+  /// Owner (2026-08-27, "سعر الورق من عند التاجر نفسه علشان اقدر احسب فرق
+  /// السعر والربح") — `price` above already feeds the pricing formula
+  /// (`sheetPriceByInventoryItemId`) as a padded/estimated cost baseline,
+  /// not the real merchant charge. This is the real purchase cost per
+  /// sheet — purely additive for profit reporting, never touches `price`
+  /// or the pricing formula. Nullable — stays honestly "unknown" until an
+  /// admin fills it in for that sheet type.
+  costPrice Decimal? @db.Decimal(12, 2)
 
   inventoryItem InventoryItem?
 
