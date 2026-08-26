@@ -8,6 +8,7 @@ import type {
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { EditableCheckboxCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
+import { whatsappLink } from '@/lib/whatsapp';
 
 const PREFERRED_METHOD_OPTIONS: Array<[PreferredContactMethod, string]> = [
   ['PHONE', 'تليفون'],
@@ -129,9 +130,37 @@ export function ContactsTab({
                 </td>
                 <td className="text-muted-foreground p-3">
                   <div className="flex flex-col gap-0.5">
-                    {contact.mobile && <span>{contact.mobile}</span>}
+                    {contact.mobile && (
+                      <span>
+                        {contact.mobile}
+                        {whatsappLink(contact.mobile) && (
+                          <a
+                            href={whatsappLink(contact.mobile) ?? undefined}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-success mr-1.5 hover:underline"
+                          >
+                            واتساب ↗
+                          </a>
+                        )}
+                      </span>
+                    )}
                     {contact.phone && <span>{contact.phone}</span>}
-                    {contact.whatsapp && <span>واتساب: {contact.whatsapp}</span>}
+                    {contact.whatsapp && (
+                      <span>
+                        واتساب: {contact.whatsapp}
+                        {whatsappLink(contact.whatsapp) && (
+                          <a
+                            href={whatsappLink(contact.whatsapp) ?? undefined}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-success mr-1.5 hover:underline"
+                          >
+                            فتح ↗
+                          </a>
+                        )}
+                      </span>
+                    )}
                     {contact.email && <span>{contact.email}</span>}
                     {!contact.mobile && !contact.phone && !contact.whatsapp && !contact.email && (
                       <span>—</span>

@@ -22,8 +22,10 @@ import { NotesTab } from './NotesTab';
 import { CommercialTab } from './CommercialTab';
 import { OrdersHistoryTab } from './OrdersHistoryTab';
 import { PaymentsHistoryTab } from './PaymentsHistoryTab';
+import { ReorderPredictionTab } from './ReorderPredictionTab';
+import { whatsappLink } from '@/lib/whatsapp';
 
-type Tab = 'overview' | 'orders' | 'contacts' | 'addresses' | 'notes' | 'commercial' | 'payments';
+type Tab = 'overview' | 'orders' | 'reorder' | 'contacts' | 'addresses' | 'notes' | 'commercial' | 'payments';
 
 /**
  * Partner Profile. Overview (FEATURE-002 M1), Contacts (M2), Addresses
@@ -88,6 +90,7 @@ export function PartnerProfilePage() {
   const tabs: Array<{ id: Tab; label: string }> = [
     { id: 'overview', label: 'نظرة عامة' },
     ...(can('orders.view') ? [{ id: 'orders' as const, label: 'الطلبات' }] : []),
+    ...(can('orders.view') ? [{ id: 'reorder' as const, label: 'توقع إعادة الطلب' }] : []),
     { id: 'contacts', label: 'جهات الاتصال' },
     { id: 'addresses', label: 'العناوين' },
     ...(can('partners.edit') ? [{ id: 'notes' as const, label: 'الملاحظات' }] : []),
@@ -139,6 +142,8 @@ export function PartnerProfilePage() {
       )}
 
       {tab === 'orders' && can('orders.view') && <OrdersHistoryTab partnerId={partner.id} />}
+
+      {tab === 'reorder' && can('orders.view') && <ReorderPredictionTab partnerId={partner.id} />}
 
       {tab === 'contacts' && (
         <ContactsTab partnerId={partner.id} canManage={can('partners.contacts.manage')} />
@@ -335,7 +340,19 @@ function OverviewForm({
         )}
 
         <label className="space-y-1 text-sm">
-          <span className="text-muted-foreground">الهاتف</span>
+          <span className="text-muted-foreground flex items-center justify-between gap-2">
+            الهاتف
+            {phone && whatsappLink(phone) && (
+              <a
+                href={whatsappLink(phone) ?? undefined}
+                target="_blank"
+                rel="noreferrer"
+                className="text-success hover:underline"
+              >
+                فتح واتساب ↗
+              </a>
+            )}
+          </span>
           <input
             disabled={!canEdit}
             value={phone}
