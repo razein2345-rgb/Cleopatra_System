@@ -225,6 +225,23 @@ const MODULES: ModuleDef[] = [
     moduleLabel: 'Returns',
     actions: [{ action: 'create', label: 'Record a return for a sold inventory item' }],
   },
+  {
+    // Owner (2026-08-26, "صفحة موردين منفصله عن صفحة العملا... كل مورد
+    // معروف بتعامل معاه كل قد ايه... اقدر اسجل دفعات واطبع كشف حساب") —
+    // part 3 of the branch/profit/suppliers/reports initiative. Its own
+    // module rather than folding into `partners.*`: the Suppliers page is a
+    // financial ledger view (purchases owed, payments made, balance), not
+    // general partner-record editing — same separation-of-concern reasoning
+    // as `payments`/`returns` above.
+    module: 'suppliers',
+    moduleLabel: 'Suppliers',
+    actions: [
+      { action: 'view', label: 'View suppliers and their ledger' },
+      { action: 'create', label: 'Record supplier purchases and payments' },
+      { action: 'edit', label: 'Edit a recorded supplier purchase or payment' },
+      { action: 'delete', label: 'Delete a recorded supplier purchase or payment' },
+    ],
+  },
 ];
 
 export type PermissionCatalogEntry = { key: string; module: string; label: string };

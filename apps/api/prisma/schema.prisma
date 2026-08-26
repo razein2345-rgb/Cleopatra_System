@@ -861,6 +861,8 @@ model StaffProfile {
   salaryPaymentsRecorded     SalaryPayment[]            @relation("SalaryPaymentRecordedBy")
   leadsAssigned              Lead[]                     @relation("LeadAssignedTo")
   leadsRecorded              Lead[]                     @relation("LeadRecordedBy")
+  supplierPurchasesRecorded  SupplierPurchase[]         @relation("SupplierPurchaseRecordedBy")
+  supplierPaymentsRecorded   SupplierPayment[]          @relation("SupplierPaymentRecordedBy")
   attendanceEntries          AttendanceEntry[]          @relation("AttendanceStaff")
   attendanceEntriesRecorded  AttendanceEntry[]          @relation("AttendanceRecordedBy")
   fieldAssignments           FieldAssignment[]          @relation("FieldAssignmentStaff")
@@ -2959,9 +2961,14 @@ model FieldAssignment {
 }
 
 // ---------------------------------------------------------------------------
-// Supplier purchases/payments (schema only — API/UI in Phase 11). The
-// Supplier role is now just a PartnerRole on BusinessPartner (FEATURE-002),
-// not a separate model — see the BusinessPartner section above.
+// Supplier purchases/payments — الموردين (docs/AI/PROJECT_STATUS.md § 6،
+// جزء 3 من مبادرة "فصل الخزينة/الربح بالفرع + الموردين + التقارير"). The
+// Supplier role is just a PartnerRole on BusinessPartner (FEATURE-002), not
+// a separate model — see the BusinessPartner section above. Purchase =
+// "المورد ده بياخد مني كام" (increases what we owe them); Payment = "دفعتله
+// كام" (reduces it) — balance = sum(purchases) - sum(payments), exactly the
+// "كام عندي بالظبط" owner asked for. Soft delete + recordedBy, same
+// discipline as every other sensitive financial record (CLAUDE.md rule 7/19).
 // ---------------------------------------------------------------------------
 
 model SupplierPurchase {
@@ -2972,7 +2979,17 @@ model SupplierPurchase {
   description String?
   date        DateTime
 
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation("SupplierPurchaseRecordedBy", fields: [recordedById], references: [id])
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
   createdAt DateTime @default(now())
+
+  @@index([partnerId])
+  @@index([isDeleted])
 }
 
 model SupplierPayment {
@@ -2983,7 +3000,17 @@ model SupplierPayment {
   note      String?
   date      DateTime
 
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation("SupplierPaymentRecordedBy", fields: [recordedById], references: [id])
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
   createdAt DateTime @default(now())
+
+  @@index([partnerId])
+  @@index([isDeleted])
 }
 
 // ---------------------------------------------------------------------------

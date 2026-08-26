@@ -18,6 +18,7 @@ import {
   History,
   GitBranch,
   UserPlus,
+  Truck,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -55,6 +56,7 @@ const NAV_ITEMS: NavEntry[] = [
     items: [
       { kind: 'link', to: '/leads', label: 'العملاء المحتملون', icon: UserPlus, permission: 'leads.view' },
       { kind: 'link', to: '/partners', label: 'العملاء', icon: Building2, permission: 'partners.view' },
+      { kind: 'link', to: '/suppliers', label: 'الموردين', icon: Truck, permission: 'suppliers.view' },
       { kind: 'link', to: '/quotations', label: 'المستندات', icon: FileText, permission: 'quotations.view' },
       { kind: 'link', to: '/inventory', label: 'المخزن', icon: Package, permission: 'inventory.view' },
     ],
