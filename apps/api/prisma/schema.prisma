@@ -718,6 +718,9 @@ model ReadyProduct {
 
   // FEATURE-003 M1.
   quotationItems QuotationItem[]
+  // Owner (2026-08-26, branch-profit reporting) — mirrors quotationItems
+  // above; see OrderItem.readyProductId's own doc comment.
+  orderItems     OrderItem[]
 
   @@index([isDeleted])
 }
@@ -730,6 +733,9 @@ model Service {
 
   // FEATURE-003 M1.
   quotationItems QuotationItem[]
+  // Owner (2026-08-26, branch-profit reporting) — mirrors quotationItems
+  // above; see OrderItem.readyProductId's own doc comment.
+  orderItems     OrderItem[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -1719,6 +1725,20 @@ model OrderItem {
   modelName String?
   breakdown Json
 
+  /// Owner (2026-08-26, branch-profit reporting) — a real catalog FK,
+  /// mirroring `QuotationItem.readyProductId`/`serviceId` exactly. Before
+  /// this, a PRODUCT/SERVICE OrderItem carried no persisted link back to
+  /// its catalog row at all (only `modelName`, a frozen name snapshot,
+  /// survived) — `readyProducts.ts`'s new `costPrice` couldn't be joined
+  /// for profit reporting without one. Nullable/additive: only populated
+  /// going forward (`orderService.ts`'s create/update paths); historical
+  /// orders created before this column existed keep `null` here and fall
+  /// back to best-effort `modelName` matching for reporting purposes.
+  readyProductId String?       @db.Uuid
+  readyProduct   ReadyProduct? @relation(fields: [readyProductId], references: [id])
+  serviceId      String?       @db.Uuid
+  service        Service?      @relation(fields: [serviceId], references: [id])
+
   /// FEATURE-007 PE-E — the frozen pricing-engine result for this item
   /// (packages/shared/src/pricing/*'s `.total`). Kept as its own queryable/
   /// summable column alongside `breakdown` (which holds the full
@@ -1816,6 +1836,8 @@ model OrderItem {
   @@index([workOrderId])
   @@index([orderId, productionTrack])
   @@index([groupId])
+  @@index([readyProductId])
+  @@index([serviceId])
 }
 
 /// Owner (2026-08-23, "مرتجعات" — عمل مرتجع لبضاعة جاهزة بيعت غلط، رجّع

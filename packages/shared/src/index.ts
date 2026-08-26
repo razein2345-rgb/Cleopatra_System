@@ -39,6 +39,7 @@ export * from './schemas/payment.js';
 export * from './schemas/orderItemReturn.js';
 export * from './schemas/attachment.js';
 export * from './schemas/treasuryEntry.js';
+export * from './schemas/branchFinancials.js';
 export * from './pricing/sizeCalculation.js';
 export * from './pricing/costCalculation.js';
 export * from './pricing/boardsCostCalculation.js';

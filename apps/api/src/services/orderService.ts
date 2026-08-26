@@ -196,6 +196,11 @@ export function mapOrderItemToDto(item: OrderItemRecord): OrderItem {
     returns: item.returns.map(mapOrderItemReturnToDto),
     discountAmount: item.discountAmount.toNumber(),
     preferredSupplierId: item.preferredSupplierId,
+    // Owner (2026-08-26, branch-profit reporting) — real catalog FK, see
+    // OrderItem.readyProductId's own schema doc comment. Null on orders
+    // created before this column existed.
+    readyProductId: item.readyProductId,
+    serviceId: item.serviceId,
     createdAt: item.createdAt.toISOString(),
   };
 }
@@ -428,6 +433,8 @@ export function buildOrderItemCreate(item: {
   requiredQuantity: number | null;
   discountAmount: number;
   preferredSupplierId: string | null;
+  readyProductId: string | null;
+  serviceId: string | null;
 } {
   return {
     kind: item.itemType,
@@ -442,6 +449,11 @@ export function buildOrderItemCreate(item: {
     requiredQuantity: item.requiredQuantity ?? null,
     discountAmount: item.discountAmount ?? 0,
     preferredSupplierId: item.preferredSupplierId ?? null,
+    // Owner (2026-08-26, branch-profit reporting) — a real catalog FK now
+    // persisted (see OrderItem.readyProductId's own doc comment), not just
+    // baked into the ad-hoc breakdown fallback below.
+    readyProductId: item.readyProductId ?? null,
+    serviceId: item.serviceId ?? null,
     breakdown:
       item.breakdownOverride ??
       {

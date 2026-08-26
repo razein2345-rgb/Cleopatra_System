@@ -153,6 +153,12 @@ export const orderItemSchema = z.object({
   // items only in practice; auto-copied into the "الإحضار من المورد"
   // stage instance once the Workflow reaches it.
   preferredSupplierId: z.string().uuid().nullable(),
+  // Owner (2026-08-26, branch-profit reporting) — real catalog FK for
+  // PRODUCT/SERVICE items, mirroring QuotationItem's own field exactly.
+  // Null on orders created before this column existed (2026-08-26) —
+  // reporting falls back to best-effort `modelName` matching for those.
+  readyProductId: z.string().uuid().nullable(),
+  serviceId: z.string().uuid().nullable(),
   createdAt: z.string(),
 });
 
