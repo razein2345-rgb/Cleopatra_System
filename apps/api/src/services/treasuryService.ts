@@ -126,10 +126,19 @@ export async function getMyTreasurySummary(branchId: string): Promise<MyTreasury
  * `method` (pre-M3 history) are excluded from the breakdown, not folded
  * into a misleading "unknown wallet" bucket.
  */
-export async function getTreasuryBalance(): Promise<TreasuryBalance> {
+/**
+ * Owner (2026-08-26, "المفروض إنك فرقت بين أمين خزينة برينتنج وأمين خزينة
+ * كليوباترا... يبقى عندي إمكانية رؤية الإتنين وإمكانية رؤية كليوباترا بس
+ * ورؤية برينتنج بس") — `branchId` was always accepted by the entries-list
+ * endpoint (`listTreasuryEntries`) but never by this balance summary,
+ * leaving the admin Treasury screen with no way to narrow the top-line
+ * figures to one branch. Undefined (the existing default) still means
+ * "both combined" — nothing changes for a caller that never passes it.
+ */
+export async function getTreasuryBalance(branchId?: string): Promise<TreasuryBalance> {
   const grouped = await prisma.treasuryEntry.groupBy({
     by: ['type'],
-    where: { isDeleted: false },
+    where: { isDeleted: false, ...(branchId ? { branchId } : {}) },
     _sum: { amount: true },
   });
   const totals: Record<'INCOME' | 'EXPENSE' | 'TRANSFER', number> = { INCOME: 0, EXPENSE: 0, TRANSFER: 0 };
@@ -137,7 +146,7 @@ export async function getTreasuryBalance(): Promise<TreasuryBalance> {
 
   const groupedByMethod = await prisma.treasuryEntry.groupBy({
     by: ['method', 'type'],
-    where: { isDeleted: false, method: { not: null }, type: { in: ['INCOME', 'EXPENSE'] } },
+    where: { isDeleted: false, method: { not: null }, type: { in: ['INCOME', 'EXPENSE'] }, ...(branchId ? { branchId } : {}) },
     _sum: { amount: true },
   });
   const byMethodTotals = new Map<string, number>();

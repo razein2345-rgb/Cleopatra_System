@@ -61,25 +61,35 @@ function FullTreasuryView() {
 
   const [typeFilter, setTypeFilter] = useState<TreasuryType | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
+  // Owner (2026-08-26, "المفروض إنك فرقت بين أمين خزينة برينتنج وأمين خزينة
+  // كليوباترا... يبقى عندي إمكانية رؤية الإتنين وإمكانية رؤية كليوباترا بس
+  // ورؤية برينتنج بس") — the backend already scopes every cashier who lacks
+  // `treasury.view` to their own branch (`resolveTargetBranchId`); the gap
+  // was this admin screen itself always combining both with no way to
+  // narrow it. 'ALL' (both combined) stays the default — nothing changes
+  // for an admin who never touches this filter.
+  const [branchFilter, setBranchFilter] = useState<string>('ALL');
 
   const loadList = () => {
     const params = new URLSearchParams();
     if (typeFilter !== 'ALL') params.set('type', typeFilter);
     if (search.trim()) params.set('search', search.trim());
+    if (branchFilter !== 'ALL') params.set('branchId', branchFilter);
     apiGet<TreasuryEntry[]>(`/api/treasury-entries?${params.toString()}`)
       .then(setEntries)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل حركات الخزينة'));
   };
 
   const loadBalance = () => {
-    apiGet<TreasuryBalance>('/api/treasury-entries/balance')
+    const qs = branchFilter !== 'ALL' ? `?branchId=${branchFilter}` : '';
+    apiGet<TreasuryBalance>(`/api/treasury-entries/balance${qs}`)
       .then(setBalance)
       .catch(() => undefined);
   };
 
-  useEffect(loadList, [typeFilter, search]);
+  useEffect(loadList, [typeFilter, search, branchFilter]);
+  useEffect(loadBalance, [branchFilter]);
   useEffect(() => {
-    loadBalance();
     apiGet<BranchSummary[]>('/api/branches').then(setBranches).catch(() => undefined);
     apiGet<BusinessPartner[]>('/api/partners').then(setPartners).catch(() => undefined);
     apiGet<User[]>('/api/users').then(setStaff).catch(() => undefined);
@@ -249,6 +259,18 @@ function FullTreasuryView() {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={branchFilter}
+          onChange={(e) => setBranchFilter(e.target.value)}
+          className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+        >
+          <option value="ALL">كل الفروع</option>
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
         <select
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value as TreasuryType | 'ALL')}

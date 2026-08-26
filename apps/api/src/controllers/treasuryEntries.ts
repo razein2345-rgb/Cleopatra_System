@@ -59,9 +59,15 @@ export async function listTreasuryEntriesHandler(req: Request, res: Response) {
   res.json({ success: true, data: entries });
 }
 
-/** Full org-wide balance — `treasury.view` only (see routes file), never reachable by a `treasury.create`-only caller. */
-export async function getTreasuryBalanceHandler(_req: Request, res: Response) {
-  const balance = await getTreasuryBalance();
+/**
+ * `treasury.view` only (see routes file), never reachable by a
+ * `treasury.create`-only caller. `?branchId=` narrows to one branch — the
+ * admin's "رؤية كليوباترا بس / برينتنج بس" toggle (2026-08-26); omitted
+ * means both branches combined, the pre-existing default.
+ */
+export async function getTreasuryBalanceHandler(req: Request, res: Response) {
+  const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+  const balance = await getTreasuryBalance(branchId);
   res.json({ success: true, data: balance });
 }
 
