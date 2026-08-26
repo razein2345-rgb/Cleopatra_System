@@ -9,6 +9,7 @@ import {
   deleteQuickSaleEntryHandler,
   deleteTreasuryEntryHandler,
   getDayClosurePreviewHandler,
+  getMyCashCustodyHandler,
   getMyTreasurySummaryHandler,
   getTodayClosureHandler,
   getTreasuryBalanceHandler,
@@ -49,6 +50,8 @@ function requireTreasuryReadAccess(req: Request, res: Response, next: NextFuncti
 treasuryEntriesRouter.get('/', requireTreasuryReadAccess, listTreasuryEntriesHandler);
 treasuryEntriesRouter.get('/balance', requirePermission('treasury.view'), getTreasuryBalanceHandler);
 treasuryEntriesRouter.get('/my-summary', requireTreasuryReadAccess, getMyTreasurySummaryHandler);
+// Owner (2026-08-26, "عهدة نقدية فعلية") — every authenticated staff member reads their OWN custody (the handler never accepts a target staffId), same access bar as /my-summary.
+treasuryEntriesRouter.get('/my-cash-custody', requireTreasuryReadAccess, getMyCashCustodyHandler);
 // FEATURE-016, rebuilt 2026-08-18 — "تقفيل حساب اليوم" is now a real
 // cash-drawer reconciliation that locks new entries for the day (see
 // treasuryService's own doc comments). Preview/close/today-closure share

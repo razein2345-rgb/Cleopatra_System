@@ -112,6 +112,22 @@ export const myTreasurySummarySchema = z.object({
 });
 
 /**
+ * Owner (2026-08-26, "لما يكون موظف مبيعات يظهرله بعد تقفيل الحساب اليوم
+ * متصفر وهيبدأ من الاول لأن كده مفترض إنه سلم فلوس المبيعات لأمين
+ * الخزينة") — real cash custody for a sales employee, not just a daily
+ * stat. Computed at read time, never stored: sum of every CASH-method
+ * INCOME entry this staff member recorded, since their branch's last
+ * daily treasury closing. Resets automatically the moment that closing
+ * happens — no separate "handed over" action exists, per owner's explicit
+ * confirmation the closing itself is the reset trigger.
+ */
+export const employeeCashCustodySchema = z.object({
+  amount: z.number(),
+  /** null when this branch has never closed a day yet — the custody then covers every CASH entry this employee ever recorded. */
+  sinceDate: z.string().nullable(),
+});
+
+/**
  * FEATURE-016, rebuilt 2026-08-18 (owner: "The goal is to have a proper
  * daily cash register closing system... Opening Balance + Total Inflows -
  * Total Outflows = Expected Closing Balance") — a real cash-drawer
@@ -179,6 +195,7 @@ export type CreateTreasuryEntryInput = z.infer<typeof createTreasuryEntrySchema>
 export type UpdateTreasuryEntryInput = z.infer<typeof updateTreasuryEntrySchema>;
 export type TreasuryBalance = z.infer<typeof treasuryBalanceSchema>;
 export type MyTreasurySummary = z.infer<typeof myTreasurySummarySchema>;
+export type EmployeeCashCustody = z.infer<typeof employeeCashCustodySchema>;
 export type TreasuryDayClosure = z.infer<typeof treasuryDayClosureSchema>;
 export type TreasuryDayClosurePreview = z.infer<typeof treasuryDayClosurePreviewSchema>;
 export type CloseTreasuryDayInput = z.infer<typeof closeTreasuryDaySchema>;

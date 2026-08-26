@@ -16,6 +16,7 @@ import {
   DayNotClosedError,
   deleteManualTreasuryEntry,
   getDayClosurePreview,
+  getEmployeeCashCustody,
   getMyTreasurySummary,
   getTodayClosure,
   getTreasuryBalance,
@@ -76,6 +77,13 @@ export async function getMyTreasurySummaryHandler(req: Request, res: Response) {
   const auth = req.auth!;
   const summary = await getMyTreasurySummary(auth.branchId);
   res.json({ success: true, data: summary });
+}
+
+/** Owner (2026-08-26, "عهدة نقدية فعلية") — the caller's own real cash custody, always their own (never another staff member's). */
+export async function getMyCashCustodyHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const custody = await getEmployeeCashCustody(auth.staffId);
+  res.json({ success: true, data: custody });
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { Prisma } from '../generated/prisma/client.js';
 import type {
   CreateTreasuryEntryInput,
+  EmployeeCashCustody,
   MyTreasurySummary,
   TreasuryBalance,
   TreasuryCategoryTotal,
@@ -115,6 +116,38 @@ export async function getMyTreasurySummary(branchId: string): Promise<MyTreasury
     _count: true,
   });
   return { total: result._sum.amount?.toNumber() ?? 0, entryCount: result._count };
+}
+
+/**
+ * Owner (2026-08-26, "لما يكون موظف مبيعات يظهرله بعد تقفيل الحساب اليوم
+ * متصفر... مفترض إنه سلم فلوس المبيعات لأمين الخزينة") — real cash
+ * custody, computed at read time (never stored/mutated). `staffId`'s
+ * branch is looked up from `StaffProfile.branchId`, then every CASH-method
+ * INCOME entry THIS employee recorded since their branch's most recent
+ * daily closing is summed. No separate "handed over" action exists —
+ * closing the day (`closeTreasuryDay`) is itself the reset trigger, since
+ * any entry recorded after that `closedAt` starts a fresh custody period.
+ */
+export async function getEmployeeCashCustody(staffId: string): Promise<EmployeeCashCustody> {
+  const staff = await prisma.staffProfile.findUniqueOrThrow({ where: { id: staffId }, select: { branchId: true } });
+  const lastClosure = await prisma.treasuryDayClosure.findFirst({
+    where: { branchId: staff.branchId },
+    orderBy: { closedAt: 'desc' },
+    select: { closedAt: true },
+  });
+
+  const result = await prisma.treasuryEntry.aggregate({
+    where: {
+      isDeleted: false,
+      staffId,
+      type: 'INCOME',
+      method: 'CASH',
+      ...(lastClosure ? { date: { gt: lastClosure.closedAt } } : {}),
+    },
+    _sum: { amount: true },
+  });
+
+  return { amount: result._sum.amount?.toNumber() ?? 0, sinceDate: lastClosure?.closedAt.toISOString() ?? null };
 }
 
 /**
