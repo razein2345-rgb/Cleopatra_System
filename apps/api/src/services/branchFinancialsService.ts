@@ -95,7 +95,7 @@ export function resolveItemProfit(
 
 export async function getCompanyFinancialSummary(): Promise<CompanyFinancialSummary> {
   const [branches, treasuryGrouped, orders, inventoryItems, readyProducts] = await Promise.all([
-    prisma.branch.findMany({ select: { id: true, name: true } }),
+    prisma.branch.findMany({ where: { isDeleted: false }, select: { id: true, name: true } }),
     prisma.treasuryEntry.groupBy({
       by: ['branchId', 'type'],
       where: { isDeleted: false },
