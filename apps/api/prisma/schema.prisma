@@ -525,6 +525,21 @@ model Setting {
   boardsSeasro                 Decimal @db.Decimal(12, 2)
   boardsGapMM                  Decimal @db.Decimal(6, 2)
 
+  /// Owner (2026-08-26, "هيتصمم ويتبعت للمورد... هكتبلك سعر المتر عليا انا
+  /// سعر المورد في الإعدادات") — جزء 4 من مبادرة الخزينة/الموردين
+  /// (docs/AI/PROJECT_STATUS.md § 6). Mirrors the sell-side boardsXxx keys
+  /// above one-for-one, but this is what the EXTERNAL supplier charges US
+  /// per meter (never shown to the customer) — used to auto-compute both
+  /// this item's real profit and the automatic SupplierPurchase entry, not
+  /// a manually-typed number per job. Defaults to 0 so existing rows don't
+  /// need a backfill; a real value must be entered before boards items
+  /// carry an accurate cost.
+  boardsBannerSupplierCost         Decimal @default(0) @db.Decimal(12, 2)
+  boardsVinylPrintCutSupplierCost  Decimal @default(0) @db.Decimal(12, 2)
+  boardsVinylNormalSupplierCost    Decimal @default(0) @db.Decimal(12, 2)
+  boardsFlexSupplierCost           Decimal @default(0) @db.Decimal(12, 2)
+  boardsSeasroSupplierCost         Decimal @default(0) @db.Decimal(12, 2)
+
   /// system_specifications_v2.md §13.3 — Digital printing Yield-based
   /// costing. Quarter-sheet dimensions are configurable (rule 15) rather
   /// than hardcoded, defaulting to the spec's 50×35cm, in case the feed
@@ -2194,6 +2209,11 @@ model WorkOrder {
 
   attachments Attachment[]
 
+  /// Reverse of `SupplierPurchase.workOrderId` — see that field's own doc
+  /// comment (auto-booked BOARDS_SIGNAGE supplier cost, part 4 of the
+  /// treasury/suppliers initiative).
+  supplierPurchases SupplierPurchase[]
+
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
@@ -2982,6 +3002,16 @@ model SupplierPurchase {
   recordedById String       @db.Uuid
   recordedBy   StaffProfile @relation("SupplierPurchaseRecordedBy", fields: [recordedById], references: [id])
 
+  /// Owner (2026-08-26, "هيتصمم ويتبعت للمورد... تتحسب تلقائي") — set only
+  /// for a BOARDS_SIGNAGE Work Order's auto-created purchase (see
+  /// `workflowInstanceService.ts`'s `maybeCreateBoardsSupplierPurchase`),
+  /// never for a purchase entered by hand from the Suppliers page (those
+  /// stay null). Doubles as the idempotency check that stops the same
+  /// Work Order from being booked twice if its workflow re-enters the
+  /// EXTERNAL stage (a retry/failure loop).
+  workOrderId String?    @db.Uuid
+  workOrder   WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
@@ -2990,6 +3020,7 @@ model SupplierPurchase {
 
   @@index([partnerId])
   @@index([isDeleted])
+  @@index([workOrderId])
 }
 
 model SupplierPayment {

@@ -38,6 +38,8 @@ interface ItemBreakdownShape {
   subtotal?: number;
   quantity?: number;
   unitPrice?: number;
+  /** BOARDS only — see boardsCostCalculation.ts's `BoardsCostResult.supplierCost` doc comment (part 4 of this same initiative). */
+  supplierCost?: number;
 }
 
 export function resolveItemProfit(
@@ -89,7 +91,17 @@ export function resolveItemProfit(
     return { revenue, profit: null };
   }
 
-  // 4. BOARDS/SERVICE/MANUAL — no cost basis concept yet.
+  // 4. BOARDS — real supplier cost, computed at pricing time from the
+  // area/piece geometry × the settings-configured supplier rate (part 4 of
+  // this initiative). `undefined` means the item predates this feature or
+  // its material's supplier rate was never configured (still 0/default) —
+  // an honest "unknown" rather than a fabricated number.
+  if (typeof breakdown.supplierCost === 'number') {
+    const costBasis = breakdown.supplierCost * orderDiscountFactor;
+    return { revenue, profit: revenue - costBasis };
+  }
+
+  // 5. SERVICE/MANUAL, or a BOARDS item with no supplier cost recorded — no cost basis concept yet.
   return { revenue, profit: null };
 }
 

@@ -1,5 +1,5 @@
 import type { Prisma } from '../generated/prisma/client.js';
-import type { BoardsPricingConstants, DigitalColorMode, DigitalPrintBasis, DigitalSides, OrderItemPricingInput, PricingConstants } from '@cleopatra/shared';
+import type { BoardsPricingConstants, BoardsSupplierPricingConstants, DigitalColorMode, DigitalPrintBasis, DigitalSides, OrderItemPricingInput, PricingConstants } from '@cleopatra/shared';
 import {
   calculateBoardsCost,
   calculateDigitalMultiComponentCost,
@@ -41,6 +41,7 @@ export interface PricingContext {
   families: SizeFamilyInput[];
   pricingConstants: PricingConstants;
   boardsConstants: BoardsPricingConstants;
+  boardsSupplierConstants: BoardsSupplierPricingConstants;
   digitalConstants: DigitalPricingConstants;
   vatRate: number;
   sheetPriceByInventoryItemId: Map<string, number>;
@@ -90,6 +91,17 @@ export function mapSettingToBoardsPricingConstants(setting: SettingRecord): Boar
     boardsFlex: setting.boardsFlex.toNumber(),
     boardsSeasro: setting.boardsSeasro.toNumber(),
     boardsGapMM: setting.boardsGapMM.toNumber(),
+  };
+}
+
+/** Owner (2026-08-26) — part 4 of the treasury/suppliers initiative; see boardsCostCalculation.ts's `BoardsSupplierPricingConstants` doc comment. */
+export function mapSettingToBoardsSupplierPricingConstants(setting: SettingRecord): BoardsSupplierPricingConstants {
+  return {
+    boardsBannerSupplierCost: setting.boardsBannerSupplierCost.toNumber(),
+    boardsVinylNormalSupplierCost: setting.boardsVinylNormalSupplierCost.toNumber(),
+    boardsVinylPrintCutSupplierCost: setting.boardsVinylPrintCutSupplierCost.toNumber(),
+    boardsFlexSupplierCost: setting.boardsFlexSupplierCost.toNumber(),
+    boardsSeasroSupplierCost: setting.boardsSeasroSupplierCost.toNumber(),
   };
 }
 
@@ -194,6 +206,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
     families: families.map(mapSizeFamilyToInput),
     pricingConstants: mapSettingToPricingConstants(setting),
     boardsConstants: mapSettingToBoardsPricingConstants(setting),
+    boardsSupplierConstants: mapSettingToBoardsSupplierPricingConstants(setting),
     digitalConstants: mapSettingToDigitalPricingConstants(setting),
     vatRate: setting.vatRate.toNumber(),
     sheetPriceByInventoryItemId,
@@ -568,6 +581,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         hasDesign: pricing.hasDesign,
         hasSellophane: pricing.hasSellophane,
         settings: ctx.boardsConstants,
+        supplierSettings: ctx.boardsSupplierConstants,
         extraCosts: sumExtraCosts(pricing),
         pricePerMeterOverride: pricing.pricePerMeterOverride,
         pricePerMeterMarkupPercent: pricing.pricePerMeterMarkupPercent,

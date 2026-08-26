@@ -34,7 +34,7 @@ export function mapWorkOrderToDto(record: WorkOrderRecord, canSeeInternal: boole
     orderId: record.orderId,
     branchId: record.branchId,
     productionTrack: record.productionTrack,
-    items: record.items.map(mapOrderItemToDto),
+    items: record.items.map((item) => mapOrderItemToDto(item, canSeeInternal)),
     workflowInstance: record.workflowInstance
       ? mapWorkflowInstanceToDto(record.workflowInstance, canSeeInternal)
       : null,

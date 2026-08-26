@@ -30,6 +30,14 @@ const NUMBER_FIELDS: Array<{ key: keyof UpdateSettingInput; label: string; step?
   { key: 'boardsFlex', label: 'فلكس' },
   { key: 'boardsSeasro', label: 'سيسرو' },
   { key: 'boardsGapMM', label: 'المسافة بين القطع (مم)' },
+  // Owner (2026-08-26, "هكتبلك سعر المتر عليا انا سعر المورد في الإعدادات")
+  // — جزء 4 من مبادرة الخزينة/الموردين: تكلفة المورد الخارجي بالمتر (مش
+  // مرئية للعميل)، أساس حساب الربح الحقيقي وتسجيل المديونية التلقائي.
+  { key: 'boardsBannerSupplierCost', label: 'تكلفة المورد — بنر (بالمتر)' },
+  { key: 'boardsVinylNormalSupplierCost', label: 'تكلفة المورد — فنيل عادي (بالمتر)' },
+  { key: 'boardsVinylPrintCutSupplierCost', label: 'تكلفة المورد — فنيل برنت اند كت (بالمتر)' },
+  { key: 'boardsFlexSupplierCost', label: 'تكلفة المورد — فلكس (بالمتر)' },
+  { key: 'boardsSeasroSupplierCost', label: 'تكلفة المورد — سيسرو (بالمتر)' },
   // "سعر طباعة الربع" انتقل لشرائح الكمية الجديدة (owner، 2026-08-20) —
   // شاشة "تسعير الديجيتال — شرائح الكمية" تحت نفس تاب الأسعار. العمود في
   // قاعدة البيانات فضل موجود (قاعدة 2 — لا حذف بدون طلب صريح) بس مبقاش

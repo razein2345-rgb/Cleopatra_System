@@ -28,6 +28,15 @@ export const settingSchema = z.object({
   boardsFlex: z.number(),
   boardsSeasro: z.number(),
   boardsGapMM: z.number(),
+  // Owner (2026-08-26, "هكتبلك سعر المتر عليا انا سعر المورد في الإعدادات")
+  // — part 4 of the treasury/suppliers initiative: what the EXTERNAL
+  // supplier charges us per meter, never shown to the customer. Mirrors
+  // the sell-side boardsXxx keys above one-for-one, one rate per material.
+  boardsBannerSupplierCost: z.number(),
+  boardsVinylNormalSupplierCost: z.number(),
+  boardsVinylPrintCutSupplierCost: z.number(),
+  boardsFlexSupplierCost: z.number(),
+  boardsSeasroSupplierCost: z.number(),
 
   // system_specifications_v2.md §13.3 — Digital printing Yield-based costing.
   digitalPrintPricePerQuarter: z.number(),

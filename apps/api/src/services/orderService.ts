@@ -164,13 +164,31 @@ export function mapOrderItemReturnToDto(ret: OrderItemReturnRecord): OrderItemRe
   };
 }
 
-export function mapOrderItemToDto(item: OrderItemRecord): OrderItem {
+/**
+ * Owner (2026-08-26, "هيتصمم ويتبعت للمورد... سعر المورد") — a BOARDS
+ * item's `breakdown.supplierCost` is real money owed to a real external
+ * vendor, the same "internal, not customer/general-staff facing" class of
+ * data as `StageInstance.externalCost` (see `workflowInstanceService.ts`'s
+ * identical `canSeeInternal` gate on that field) — stripped here rather
+ * than at the controller layer since `breakdown` is a single opaque JSON
+ * blob, not a flat column `stripCostPrice`-style helpers can target.
+ */
+function stripSupplierCostIfNeeded(breakdown: Prisma.JsonValue, canSeeInternal: boolean): Prisma.JsonValue {
+  if (canSeeInternal || breakdown === null || typeof breakdown !== 'object' || Array.isArray(breakdown)) {
+    return breakdown;
+  }
+  if (!('supplierCost' in breakdown)) return breakdown;
+  const { supplierCost: _supplierCost, ...rest } = breakdown as Record<string, unknown>;
+  return rest as Prisma.JsonValue;
+}
+
+export function mapOrderItemToDto(item: OrderItemRecord, canSeeInternal: boolean): OrderItem {
   return {
     id: item.id,
     orderId: item.orderId,
     kind: item.kind,
     modelName: item.modelName,
-    breakdown: item.breakdown,
+    breakdown: stripSupplierCostIfNeeded(item.breakdown, canSeeInternal),
     itemTotal: item.itemTotal?.toNumber() ?? null,
     sizeFamilyKey: item.sizeFamilyKey,
     realSizeLabel: item.realSizeLabel,
@@ -320,7 +338,7 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
     status: order.status,
     quotationOriginId: order.quotationOrigin?.id ?? null,
     workOrders: order.workOrders.map((w) => ({ id: w.id, workOrderNumber: w.workOrderNumber, productionTrack: w.productionTrack })),
-    items: order.items.map(mapOrderItemToDto),
+    items: order.items.map((item) => mapOrderItemToDto(item, canSeeInternal)),
     itemDiscountsTotal,
     // FEATURE-006 M3 — computed from `payments` at read time, never
     // stored (same discipline as computeIsDelayed).
@@ -1143,7 +1161,8 @@ export async function updateOrderItemProduction(
     },
     include: { materials: true, returns: true },
   });
-  return mapOrderItemToDto(updated);
+  // Reached only via `work-orders.edit` (route-level gate, see workOrders.ts) — same bar `canSeeInternal` already enforces elsewhere, so it's trivially satisfied here.
+  return mapOrderItemToDto(updated, true);
 }
 
 /**

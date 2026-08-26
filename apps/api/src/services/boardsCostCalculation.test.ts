@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateBoardsCost, type BoardsPricingConstants } from '@cleopatra/shared';
+import { calculateBoardsCost, type BoardsPricingConstants, type BoardsSupplierPricingConstants } from '@cleopatra/shared';
 
 // No confirmed worked example exists for boards/signage (unlike notebooks)
 // — these tests check the formula is applied exactly as written in
@@ -161,5 +161,54 @@ describe('calculateBoardsCost — pricePerMeterMarkupPercent', () => {
       pricePerMeterMarkupPercent: 10,
     });
     expect(result.pricePerMeter).toBe(30);
+  });
+});
+
+// Owner (2026-08-26, "هيتصمم ويتبعت للمورد... هكتبلك سعر المتر عليا انا
+// سعر المورد في الإعدادات") — جزء 4 من مبادرة الخزينة/الموردين: what the
+// EXTERNAL supplier charges us, computed from the same area/piece geometry
+// as the sell price but a separate per-material rate, never shown to the
+// customer and never touched by extraCosts (our own add-ons).
+const SUPPLIER_SETTINGS: BoardsSupplierPricingConstants = {
+  boardsBannerSupplierCost: 20,
+  boardsVinylNormalSupplierCost: 15,
+  boardsVinylPrintCutSupplierCost: 25,
+  boardsFlexSupplierCost: 18,
+  boardsSeasroSupplierCost: 12,
+};
+
+describe('calculateBoardsCost — supplierCost (part 4 of the treasury/suppliers initiative)', () => {
+  it('is undefined when no supplierSettings are passed (e.g. a live price preview)', () => {
+    const result = calculateBoardsCost({ material: 'FLEX', widthCm: 100, heightCm: 100, quantity: 1, settings: SETTINGS });
+    expect(result.supplierCost).toBeUndefined();
+  });
+
+  it('computes area × the material-specific supplier rate, independent of the sell price/extraCosts', () => {
+    const result = calculateBoardsCost({
+      material: 'BANNER',
+      widthCm: 200,
+      heightCm: 100,
+      quantity: 5,
+      hasDesign: true,
+      settings: SETTINGS,
+      supplierSettings: SUPPLIER_SETTINGS,
+      extraCosts: 999,
+    });
+    expect(result.totalAreaM2).toBe(10);
+    expect(result.supplierCost).toBe(200); // 10m² * 20 (supplier banner rate) — extraCosts never touches this
+    expect(result.total).toBe(10 * 60 + 999); // sell side unaffected
+  });
+
+  it('uses metersNeeded (not totalAreaM2) for VINYL_PRINT_CUT, same geometry as the sell price', () => {
+    const result = calculateBoardsCost({
+      material: 'VINYL_PRINT_CUT',
+      widthCm: 20,
+      heightCm: 20,
+      quantity: 100,
+      settings: SETTINGS,
+      supplierSettings: SUPPLIER_SETTINGS,
+    });
+    expect(result.metersNeeded).toBe(7);
+    expect(result.supplierCost).toBe(7 * 25);
   });
 });

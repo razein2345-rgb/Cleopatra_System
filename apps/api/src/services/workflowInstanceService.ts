@@ -52,6 +52,58 @@ async function resolvePreferredSupplierId(
 }
 
 /**
+ * Owner (2026-08-26, "هيتصمم ويتبعت للمورد... تتحسب تلقائي") — part 4 of
+ * the treasury/suppliers initiative. Unlike READY_PRODUCTS' `externalCost`
+ * (a manually-typed, arbitrary work-order-level number — untouched here),
+ * a BOARDS_SIGNAGE item's supplier cost is already fully determined at
+ * pricing time (`breakdown.supplierCost`, computed from size × the
+ * settings-configured supplier rate — see boardsCostCalculation.ts), so
+ * there's nothing for staff to type: the moment the job reaches the
+ * external-supplier stage, the debt is real and gets booked automatically.
+ * Idempotent via `SupplierPurchase.workOrderId` — a workflow that re-enters
+ * this stage (a retry/failure loop) never double-books the same job.
+ */
+async function maybeCreateBoardsSupplierPurchase(
+  tx: Prisma.TransactionClient,
+  workOrderId: string | null,
+  stageType: string,
+  assignedSupplierId: string | null,
+  performedById: string,
+): Promise<void> {
+  if (stageType !== 'EXTERNAL' || !workOrderId || !assignedSupplierId) return;
+
+  const workOrder = await tx.workOrder.findUnique({
+    where: { id: workOrderId },
+    select: {
+      workOrderNumber: true,
+      productionTrack: true,
+      items: { select: { breakdown: true } },
+    },
+  });
+  if (!workOrder || workOrder.productionTrack !== 'BOARDS_SIGNAGE') return;
+
+  const alreadyBooked = await tx.supplierPurchase.findFirst({ where: { workOrderId }, select: { id: true } });
+  if (alreadyBooked) return;
+
+  const totalSupplierCost = workOrder.items.reduce((sum, item) => {
+    const breakdown = item.breakdown as { supplierCost?: number } | null;
+    return sum + (typeof breakdown?.supplierCost === 'number' ? breakdown.supplierCost : 0);
+  }, 0);
+  if (totalSupplierCost <= 0) return;
+
+  await tx.supplierPurchase.create({
+    data: {
+      partnerId: assignedSupplierId,
+      amount: totalSupplierCost,
+      description: `لوحات وإعلانات — أمر شغل ${workOrder.workOrderNumber}`,
+      date: new Date(),
+      recordedById: performedById,
+      workOrderId,
+    },
+  });
+}
+
+/**
  * Delay is deliberately never a stored column — computed here from
  * `dueDate` at read time (FEATURE-004 01_ANALYSIS.md's Queue Metadata
  * reasoning: a stored flag needs active maintenance a scheduler this
@@ -252,6 +304,7 @@ async function applyStageTransition(
     where: { id: params.instanceId },
     select: { workOrderId: true },
   });
+  const nextAssignedSupplierId = await resolvePreferredSupplierId(tx, nextWorkOrderId, nextStage.stageType);
   const newStageInstance = await tx.stageInstance.create({
     data: {
       workflowInstanceId: params.instanceId,
@@ -261,9 +314,10 @@ async function applyStageTransition(
       assignedEmployeeId: nextStage.defaultAssignedEmployeeId,
       estimatedDurationMinutes: nextStage.estimatedDurationMinutes,
       startedAt: now,
-      assignedSupplierId: await resolvePreferredSupplierId(tx, nextWorkOrderId, nextStage.stageType),
+      assignedSupplierId: nextAssignedSupplierId,
     },
   });
+  await maybeCreateBoardsSupplierPurchase(tx, nextWorkOrderId, nextStage.stageType, nextAssignedSupplierId, params.performedById);
   await tx.workflowInstance.update({
     where: { id: params.instanceId },
     data: { currentStageId: nextStage.id },
@@ -316,6 +370,7 @@ export async function createWorkflowInstance(
   });
 
   const now = new Date();
+  const startingAssignedSupplierId = await resolvePreferredSupplierId(tx, params.workOrderId, startingStage.stageType);
   const stageInstance = await tx.stageInstance.create({
     data: {
       workflowInstanceId: instance.id,
@@ -325,9 +380,16 @@ export async function createWorkflowInstance(
       assignedEmployeeId: startingStage.defaultAssignedEmployeeId,
       estimatedDurationMinutes: startingStage.estimatedDurationMinutes,
       startedAt: now,
-      assignedSupplierId: await resolvePreferredSupplierId(tx, params.workOrderId, startingStage.stageType),
+      assignedSupplierId: startingAssignedSupplierId,
     },
   });
+  await maybeCreateBoardsSupplierPurchase(
+    tx,
+    params.workOrderId,
+    startingStage.stageType,
+    startingAssignedSupplierId,
+    params.performedById,
+  );
 
   await recordWorkflowEvent(tx, {
     workflowInstanceId: instance.id,
@@ -438,6 +500,7 @@ export async function advanceWorkflowInstance(
     }
 
     const nextStage = await tx.workflowStage.findUniqueOrThrow({ where: { id: destinationStageId } });
+    const loopAssignedSupplierId = await resolvePreferredSupplierId(tx, instance.workOrderId, nextStage.stageType);
     const newStageInstance = await tx.stageInstance.create({
       data: {
         workflowInstanceId: instance.id,
@@ -447,9 +510,10 @@ export async function advanceWorkflowInstance(
         assignedEmployeeId: nextStage.defaultAssignedEmployeeId,
         estimatedDurationMinutes: nextStage.estimatedDurationMinutes,
         startedAt: now,
-        assignedSupplierId: await resolvePreferredSupplierId(tx, instance.workOrderId, nextStage.stageType),
+        assignedSupplierId: loopAssignedSupplierId,
       },
     });
+    await maybeCreateBoardsSupplierPurchase(tx, instance.workOrderId, nextStage.stageType, loopAssignedSupplierId, performedById);
     await tx.workflowInstance.update({
       where: { id: instance.id },
       data: { currentStageId: nextStage.id },

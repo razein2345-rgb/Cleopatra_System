@@ -93,7 +93,7 @@ describe('resolveItemProfit', () => {
     expect(result.profit).toBeCloseTo(140, 5);
   });
 
-  it('returns null profit for SERVICE/MANUAL/BOARDS kinds — no cost basis concept yet', () => {
+  it('returns null profit for SERVICE/MANUAL kinds — no cost basis concept yet', () => {
     const { byInv, byProdId, byProdName } = noCostMaps();
     const result = resolveItemProfit(
       { itemTotal: 100, discountAmount: 0, breakdown: { kind: 'SERVICE', quantity: 1, unitPrice: 100 }, inventoryItemId: null, readyProductId: null, modelName: null },
@@ -104,5 +104,46 @@ describe('resolveItemProfit', () => {
     );
     expect(result.profit).toBeNull();
     expect(result.revenue).toBe(100);
+  });
+
+  // Owner (2026-08-26, "هيتصمم ويتبعت للمورد... سعر المورد") — part 4 of
+  // the treasury/suppliers initiative: BOARDS profit from the real
+  // supplier cost computed at pricing time, same discount-shrinking rule
+  // as every other tier.
+  it('computes BOARDS profit from breakdown.supplierCost', () => {
+    const { byInv, byProdId, byProdName } = noCostMaps();
+    const result = resolveItemProfit(
+      { itemTotal: 600, discountAmount: 0, breakdown: { supplierCost: 200 }, inventoryItemId: null, readyProductId: null, modelName: null },
+      1,
+      byInv,
+      byProdId,
+      byProdName,
+    );
+    expect(result.profit).toBe(400); // 600 - 200
+  });
+
+  it('shrinks BOARDS supplier cost basis by the order discount factor, same as other tiers', () => {
+    const { byInv, byProdId, byProdName } = noCostMaps();
+    const result = resolveItemProfit(
+      { itemTotal: 600, discountAmount: 0, breakdown: { supplierCost: 200 }, inventoryItemId: null, readyProductId: null, modelName: null },
+      0.8, // 20% order discount
+      byInv,
+      byProdId,
+      byProdName,
+    );
+    expect(result.revenue).toBe(480); // 600 * 0.8
+    expect(result.profit).toBeCloseTo(320, 5); // 480 - (200 * 0.8)
+  });
+
+  it('returns null profit for a BOARDS item with no supplierCost recorded (predates the feature or rate never configured)', () => {
+    const { byInv, byProdId, byProdName } = noCostMaps();
+    const result = resolveItemProfit(
+      { itemTotal: 600, discountAmount: 0, breakdown: { material: 'FLEX', quantity: 2 }, inventoryItemId: null, readyProductId: null, modelName: null },
+      1,
+      byInv,
+      byProdId,
+      byProdName,
+    );
+    expect(result.profit).toBeNull();
   });
 });

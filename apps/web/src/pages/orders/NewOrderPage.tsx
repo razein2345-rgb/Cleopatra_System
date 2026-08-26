@@ -2338,7 +2338,11 @@ function NewOrderForm({
       // an already-grouped line keeps whatever group it already had.
       groupKey: pendingGroupKey ?? (editingKey ? cart.find((l) => l.key === editingKey)?.groupKey : undefined),
       discountPercent: discountPercent || undefined,
-      preferredSupplierId: draft.kind === 'PRODUCT' ? draft.preferredSupplierId || undefined : undefined,
+      // Owner (2026-08-26, "هيتصمم ويتبعت للمورد") — BOARDS items now go
+      // through the same external-supplier workflow as PRODUCT (part 4 of
+      // the treasury/suppliers initiative), so they reuse this exact field.
+      preferredSupplierId:
+        draft.kind === 'PRODUCT' || draft.kind === 'BOARDS' ? draft.preferredSupplierId || undefined : undefined,
     };
     if (editingKey) {
       setCart((prev) => prev.map((l) => (l.key === editingKey ? line : l)));
@@ -3910,6 +3914,17 @@ function NewOrderForm({
                   {draft.quantity || 0} قطعة
                 </p>
               )}
+              {/* Owner (2026-08-26, "هيتصمم ويتبعت للمورد") — البند ده هياخد
+                  Workflow الموردين زي المنتجات الجاهزة بالظبط، نفس الحقل. */}
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">المورد (اختياري — لو هيتحضر من مورد خارجي)</span>
+                <PartnerCombobox
+                  partners={partners}
+                  value={draft.preferredSupplierId}
+                  onChange={(id) => updateDraft({ preferredSupplierId: id })}
+                  placeholder="— بدون —"
+                />
+              </label>
             </div>
           )}
 
