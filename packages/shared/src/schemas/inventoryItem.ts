@@ -117,6 +117,14 @@ export const quickInventorySaleSchema = z.object({
   quantity: z.number().positive(),
   /** Defaults to `InventoryItem.salePrice` server-side when omitted. */
   unitPrice: z.number().nonnegative().optional(),
+  /**
+   * Owner (2026-08-26, "الخصم على بند واحد عايزها نسبه... ويتضاف الخصم ده
+   * على البيع السريع") — same percentage-off-the-item convention as the
+   * order composer's per-item discount. Applied on top of `unitPrice`
+   * (or `salePrice` when omitted) before multiplying by `quantity` —
+   * the treasury entry's `amount` always reflects the actual price charged.
+   */
+  discountPercent: z.number().min(0).max(100).optional(),
   method: paymentMethodSchema,
   category: z.string().trim().min(1).max(100).optional(),
   note: z.string().trim().min(1).max(500).optional(),

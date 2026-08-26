@@ -142,8 +142,12 @@ export const orderItemSchema = z.object({
   // every other kind. Several rows = partial-quantity returns over time.
   returns: z.array(orderItemReturnSchema),
   // Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") —
-  // an absolute discount on this item's own frozen itemTotal, staff-
-  // entered at composition time, stacking with Order.discountPercent.
+  // the frozen currency amount actually discounted off this item's own
+  // itemTotal, stacking with Order.discountPercent. Staff enters a
+  // *percentage* at composition time (createOrderItemSchema.discountPercent,
+  // 2026-08-26) — this column always stores the resulting amount, never the
+  // percentage itself, so a printed invoice/historical order always shows a
+  // real EGP figure regardless of which input mode created it.
   discountAmount: z.number(),
   // Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — READY_PRODUCTS
   // items only in practice; auto-copied into the "الإحضار من المورد"
@@ -263,13 +267,16 @@ export const createOrderItemSchema = z.object({
    * simply gets no group, exactly like today.
    */
   groupKey: z.string().trim().min(1).max(50).optional(),
-  // Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") —
-  // an absolute discount amount on this item alone, stacking with the
+  // Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة"),
+  // switched from a flat amount to a percentage (2026-08-26, owner: "عايزها
+  // نسبه مش بالجنيه") — a percentage of this item alone, stacking with the
   // whole-invoice discountPercent below (owner: "متلغيش التخفيض على
-  // الفاتورة كلها طبعاً"). Validated server-side against the item's own
-  // freshly-computed total (orderService.ts's assertItemDiscountsValid),
-  // never against a caller-supplied number.
-  discountAmount: z.number().min(0).optional(),
+  // الفاتورة كلها طبعاً"). The server converts this to a frozen currency
+  // amount against the item's own freshly-computed total
+  // (orderService.ts's resolveItemDiscountAmounts) before storing —
+  // OrderItem.discountAmount itself stays a currency column, unchanged,
+  // so every historical order's stored discount keeps its original meaning.
+  discountPercent: z.number().min(0).max(100).optional(),
   // Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — see
   // orderItemSchema's own doc comment on this same field.
   preferredSupplierId: z.string().uuid().optional(),

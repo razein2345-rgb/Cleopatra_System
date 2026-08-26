@@ -294,7 +294,8 @@ export async function quickSaleFromInventory(
 
   const unitPrice = input.unitPrice ?? existing.salePrice?.toNumber();
   if (unitPrice === undefined) throw new NoSalePriceError();
-  const amount = unitPrice * input.quantity;
+  const discountPercent = input.discountPercent ?? 0;
+  const amount = unitPrice * input.quantity * (1 - discountPercent / 100);
   const now = new Date();
 
   await assertBranchDayNotClosed(branchId, now);
@@ -311,7 +312,9 @@ export async function quickSaleFromInventory(
         amount,
         method: input.method,
         category: input.category ?? 'مبيعات نقدية',
-        note: input.note ?? `بيع سريع — ${existing.name} × ${input.quantity}`,
+        note:
+          input.note ??
+          `بيع سريع — ${existing.name} × ${input.quantity}${discountPercent > 0 ? ` (خصم ${discountPercent}%)` : ''}`,
         date: now,
         sourceType: 'QUICK_SALE',
         stockMovementId: movement.id,

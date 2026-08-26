@@ -4,7 +4,14 @@ import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
-import { assertItemDiscountsValid, assertPartnerPresentUnlessWalkIn, ItemDiscountExceedsTotalError, PartnerRequiredError, sumItemDiscounts } from './orderService.js';
+import {
+  assertItemDiscountsValid,
+  assertPartnerPresentUnlessWalkIn,
+  ItemDiscountExceedsTotalError,
+  PartnerRequiredError,
+  resolveItemDiscountAmounts,
+  sumItemDiscounts,
+} from './orderService.js';
 
 export { ItemDiscountExceedsTotalError, PartnerRequiredError };
 
@@ -254,9 +261,10 @@ export async function createQuotation(
       : [],
   );
 
-  assertItemDiscountsValid(input.items, priced);
+  const itemDiscountAmounts = resolveItemDiscountAmounts(input.items, priced);
+  assertItemDiscountsValid(itemDiscountAmounts, priced);
   const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
-  const itemDiscountsTotal = sumItemDiscounts(input.items);
+  const itemDiscountsTotal = sumItemDiscounts(itemDiscountAmounts);
   const discountPercent = input.discountPercent ?? 0;
   const afterDiscount = (subtotal - itemDiscountsTotal) * (1 - discountPercent / 100);
   const vatOn = input.vatOn ?? false;
@@ -316,7 +324,7 @@ export async function createQuotation(
               productionTrack: item.productionTrack ?? null,
               groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
               requiredQuantity: resolveRequiredQuantity(item.pricing),
-              discountAmount: item.discountAmount ?? 0,
+              discountAmount: itemDiscountAmounts[index],
             };
           }),
         },

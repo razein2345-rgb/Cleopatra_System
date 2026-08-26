@@ -167,7 +167,13 @@ export async function quickSaleHandler(req: Request<{ id: string }>, res: Respon
     action: 'UPDATE',
     performedById: auth.staffId,
     branchId: auth.branchId,
-    newValue: { quickSale: true, quantity: input.quantity, amount: result.treasuryEntry.amount, treasuryEntryId: result.treasuryEntry.id },
+    newValue: {
+      quickSale: true,
+      quantity: input.quantity,
+      discountPercent: input.discountPercent ?? 0,
+      amount: result.treasuryEntry.amount,
+      treasuryEntryId: result.treasuryEntry.id,
+    },
   });
 
   res.status(201).json({ success: true, data: result });

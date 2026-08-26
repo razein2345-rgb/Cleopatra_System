@@ -50,7 +50,8 @@ export const quotationItemSchema = z.object({
   // reasoning as productionTrack above.
   groupId: z.string().uuid().nullable(),
   requiredQuantity: z.number().int().nullable(),
-  // Owner (2026-08-23, "تخفيض على صنف محدد") — mirrors OrderItem.discountAmount.
+  // Owner (2026-08-23, "تخفيض على صنف محدد") — mirrors OrderItem.discountAmount
+  // (always a frozen currency amount — see its doc comment, order.ts).
   discountAmount: z.number(),
   createdAt: z.string(),
 });
@@ -78,9 +79,9 @@ export const createQuotationItemSchema = z.object({
   // Same client-correlation-key pattern as createOrderItemSchema — see its
   // doc comment (order.ts).
   groupKey: z.string().trim().min(1).max(50).optional(),
-  // Same as createOrderItemSchema's discountAmount (order.ts) — see its
+  // Same as createOrderItemSchema's discountPercent (order.ts) — see its
   // doc comment.
-  discountAmount: z.number().min(0).optional(),
+  discountPercent: z.number().min(0).max(100).optional(),
 });
 
 export type QuotationItem = z.infer<typeof quotationItemSchema>;

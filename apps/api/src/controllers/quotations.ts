@@ -31,6 +31,7 @@ import {
   nextInvoiceNumber,
   ORDER_INCLUDE,
   resolveItemCatalogNames,
+  resolveItemDiscountAmounts,
   sumItemDiscounts,
 } from '../services/orderService.js';
 import { buildPricingContext, computeItemPricing, PricingInputError } from '../services/pricingEngineService.js';
@@ -201,14 +202,16 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
   let recomputedTotals: { subtotal: number; vatAmount: number; finalTotal: number } | null = null;
   let itemNames = new Map<string, string>();
   let priced: ReturnType<typeof computeItemPricing>[] = [];
+  let itemDiscountAmounts: number[] = [];
   if (input.items) {
     try {
       itemNames = await resolveItemCatalogNames(input.items);
       const ctx = await buildPricingContext(input.items);
       priced = input.items.map((item) => computeItemPricing(item, ctx));
-      assertItemDiscountsValid(input.items, priced);
+      itemDiscountAmounts = resolveItemDiscountAmounts(input.items, priced);
+      assertItemDiscountsValid(itemDiscountAmounts, priced);
       const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
-      const itemDiscountsTotal = sumItemDiscounts(input.items);
+      const itemDiscountsTotal = sumItemDiscounts(itemDiscountAmounts);
       const discountPercent = input.discountPercent ?? existing.discountPercent.toNumber();
       const afterDiscount = (subtotal - itemDiscountsTotal) * (1 - discountPercent / 100);
       const vatOn = input.vatOn ?? existing.vatOn;
@@ -249,7 +252,7 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
             productionTrack: item.productionTrack ?? null,
             groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
             requiredQuantity: resolveRequiredQuantity(item.pricing),
-            discountAmount: item.discountAmount ?? 0,
+            discountAmount: itemDiscountAmounts[index],
           };
         }),
       });

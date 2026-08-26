@@ -346,9 +346,11 @@ interface DraftItem {
   // no formula — this is the whole price, quantity reuses the shared
   // `quantity` field above.
   unitPrice: string;
-  // Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") —
-  // universal, every kind, stacks with the order-level discountPercent.
-  discountAmount: string;
+  // Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة"),
+  // switched from a flat amount to a percentage (2026-08-26, owner: "عايزها
+  // نسبه مش بالجنيه") — universal, every kind, stacks with the order-level
+  // discountPercent (a *different* percentage, applied on top after items).
+  discountPercent: string;
   // Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — READY_PRODUCTS
   // only (shown for the "منتجات جاهزة" tab specifically); pre-fills the
   // "الإحضار من المورد" stage's assigned supplier once production reaches it.
@@ -429,7 +431,7 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     attachmentUploading: false,
     attachmentError: null,
     unitPrice: '',
-    discountAmount: '0',
+    discountPercent: '0',
     preferredSupplierId: '',
   };
 }
@@ -712,7 +714,7 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
   d.attachmentId = line.attachmentId ?? '';
   d.attachmentUrl = line.attachmentUrl ?? '';
   d.attachmentFileName = line.attachmentUrl ? d.attachmentFileName : '';
-  d.discountAmount = line.discountAmount ? String(line.discountAmount) : '0';
+  d.discountPercent = line.discountPercent ? String(line.discountPercent) : '0';
   d.preferredSupplierId = line.preferredSupplierId ?? '';
 
   // extraServiceFields's inverse — matches stored entries back to the
@@ -1998,8 +2000,8 @@ interface CartLine {
    * row. Undefined = this line isn't part of any group, exactly like today.
    */
   groupKey?: string;
-  /** Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") — an absolute discount on this line alone, stacking with the order-level discountPercent. */
-  discountAmount?: number;
+  /** Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة"), percentage since 2026-08-26 — a discount on this line alone, stacking with the order-level discountPercent. */
+  discountPercent?: number;
   /** Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — READY_PRODUCTS only. */
   preferredSupplierId?: string;
 }
@@ -2237,7 +2239,7 @@ function NewOrderForm({
   // تصميم؟" toggle per track instead of the old single global one.
   const tracksInCart = [...new Set(cart.map((l) => l.productionTrack).filter((t): t is ProductionTrack => Boolean(t)))];
   const subtotal = cart.reduce((sum, line) => sum + line.total, 0);
-  const itemDiscountsTotal = cart.reduce((sum, line) => sum + (line.discountAmount ?? 0), 0);
+  const itemDiscountsTotal = cart.reduce((sum, line) => sum + (line.total * (line.discountPercent ?? 0)) / 100, 0);
   const discountNum = toNum(discountPercent);
   const afterDiscount = (subtotal - itemDiscountsTotal) * (1 - discountNum / 100);
   const vatAmount = vatOn ? afterDiscount * (pricingReference.vatRate / 100) : 0;
@@ -2307,9 +2309,9 @@ function NewOrderForm({
       setItemError(preview.error);
       return;
     }
-    const discountAmount = toNum(draft.discountAmount) || 0;
-    if (discountAmount < 0 || discountAmount > preview.total) {
-      setItemError(`الخصم لازم يكون بين 0 و${money(preview.total)} ج.م`);
+    const discountPercent = toNum(draft.discountPercent) || 0;
+    if (discountPercent < 0 || discountPercent > 100) {
+      setItemError('الخصم لازم يكون بين 0 و100%');
       return;
     }
     setItemError(null);
@@ -2335,7 +2337,7 @@ function NewOrderForm({
       // from "كرر بمقاس مختلف" carries `pendingGroupKey`; a normal edit of
       // an already-grouped line keeps whatever group it already had.
       groupKey: pendingGroupKey ?? (editingKey ? cart.find((l) => l.key === editingKey)?.groupKey : undefined),
-      discountAmount: discountAmount || undefined,
+      discountPercent: discountPercent || undefined,
       preferredSupplierId: draft.kind === 'PRODUCT' ? draft.preferredSupplierId || undefined : undefined,
     };
     if (editingKey) {
@@ -2502,7 +2504,7 @@ function NewOrderForm({
       pricing: line.pricing,
       productionTrack: line.productionTrack,
       groupKey: line.groupKey,
-      discountAmount: line.discountAmount,
+      discountPercent: line.discountPercent,
       preferredSupplierId: line.preferredSupplierId,
     }));
 
@@ -2657,9 +2659,10 @@ function NewOrderForm({
                         <p className="font-medium">
                           {money(line.total)} ج.م {beingEdited && <span className="text-primary text-xs font-normal">(بيتعدل الآن)</span>}
                         </p>
-                        {!!line.discountAmount && (
+                        {!!line.discountPercent && (
                           <p className="text-muted-foreground text-xs">
-                            خصم {money(line.discountAmount)} ج.م — الصافي {money(line.total - line.discountAmount)} ج.م
+                            خصم {line.discountPercent}% ({money((line.total * line.discountPercent) / 100)} ج.م) — الصافي{' '}
+                            {money(line.total - (line.total * line.discountPercent) / 100)} ج.م
                           </p>
                         )}
                         {/* Owner (2026-08-17, "عايزه يطلعلي سعر الدفتر الواحد والإجمالي مش بس سعر الإجمالي") — notebook-only, since that's the unit the owner prices tenders/quotes against. */}
@@ -4450,20 +4453,20 @@ function NewOrderForm({
             {draft.attachmentError && <p className="text-destructive text-xs">{draft.attachmentError}</p>}
           </div>
 
-          {/* Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") — an absolute discount on this line alone, independent of the order-level نسبة الخصم %. */}
+          {/* Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة")، نسبة % بدل الجنيه (2026-08-26) — على هذا البند بس، مستقل عن نسبة الخصم % على مستوى الفاتورة كلها. */}
           {!draftPreview.error && (
             <label className="flex items-center gap-2 border-t pt-2 text-sm">
               <span className="text-muted-foreground">خصم على البند ده</span>
               <input
                 type="number"
                 min={0}
-                max={draftPreview.total}
-                step={0.01}
-                value={draft.discountAmount}
-                onChange={(e) => updateDraft({ discountAmount: e.target.value })}
+                max={100}
+                step={0.1}
+                value={draft.discountPercent}
+                onChange={(e) => updateDraft({ discountPercent: e.target.value })}
                 className="border-input bg-background w-28 rounded-md border px-2 py-1 text-sm"
               />
-              <span className="text-muted-foreground text-xs">ج.م</span>
+              <span className="text-muted-foreground text-xs">٪</span>
             </label>
           )}
 
@@ -4484,9 +4487,9 @@ function NewOrderForm({
                     قبل نسبة الربح: {money(result.subtotal)} ج.م — الفرق: {money(draftPreview.total - result.subtotal)} ج.م
                   </p>
                 )}
-              {!draftPreview.error && toNum(draft.discountAmount) > 0 && (
+              {!draftPreview.error && toNum(draft.discountPercent) > 0 && (
                 <p className="text-muted-foreground text-xs">
-                  بعد الخصم: {money(Math.max(0, draftPreview.total - toNum(draft.discountAmount)))} ج.م
+                  بعد الخصم: {money(draftPreview.total * (1 - toNum(draft.discountPercent) / 100))} ج.م
                 </p>
               )}
               {draft.kind === 'NOTEBOOK' && !draftPreview.error && toNum(draft.notebookQuantity) > 0 && (
@@ -4562,6 +4565,8 @@ interface QuickSaleLine {
   item: InventoryItem | null;
   quantity: string;
   unitPrice: string;
+  /** Owner (2026-08-26, "الخصم على بند واحد عايزها نسبه مش بالجنيه، ويتضاف الخصم ده على البيع السريع") — a percentage off this line's own price, same convention as the order composer's per-item discount. */
+  discountPercent: string;
   /** Set once this line's own `POST .../quick-sale` call has succeeded — kept out of the retry set if a later line in the same batch fails. */
   done: boolean;
 }
@@ -4569,7 +4574,7 @@ interface QuickSaleLine {
 let quickSaleLineSeq = 0;
 function emptyQuickSaleLine(): QuickSaleLine {
   quickSaleLineSeq += 1;
-  return { key: `qsl-${quickSaleLineSeq}`, itemId: '', item: null, quantity: '1', unitPrice: '', done: false };
+  return { key: `qsl-${quickSaleLineSeq}`, itemId: '', item: null, quantity: '1', unitPrice: '', discountPercent: '', done: false };
 }
 
 /**
@@ -4620,7 +4625,8 @@ function QuickSaleDialog({
   const lineTotal = (line: QuickSaleLine) => {
     const q = Number(line.quantity);
     const p = Number(line.unitPrice);
-    return q > 0 && p >= 0 ? q * p : 0;
+    const d = Number(line.discountPercent) || 0;
+    return q > 0 && p >= 0 ? q * p * (1 - d / 100) : 0;
   };
   const grandTotal = lines.reduce((sum, l) => sum + lineTotal(l), 0);
   const pendingLines = lines.filter((l) => !l.done);
@@ -4643,6 +4649,11 @@ function QuickSaleDialog({
         setError(`اكتب سعر بيع صحيح لصنف "${line.item.name}"`);
         return;
       }
+      const d = Number(line.discountPercent);
+      if (line.discountPercent && (Number.isNaN(d) || d < 0 || d > 100)) {
+        setError(`الخصم لازم يكون بين 0 و100% لصنف "${line.item.name}"`);
+        return;
+      }
     }
     setError(null);
     setSubmitting(true);
@@ -4652,6 +4663,7 @@ function QuickSaleDialog({
       const input: QuickInventorySaleInput = {
         quantity: Number(line.quantity),
         unitPrice: Number(line.unitPrice),
+        discountPercent: line.discountPercent ? Number(line.discountPercent) : undefined,
         method,
         category: category || undefined,
         note: note.trim() || undefined,
@@ -4721,7 +4733,7 @@ function QuickSaleDialog({
             {lines.map((line, idx) => (
               <div
                 key={line.key}
-                className={`border-border grid grid-cols-[1fr_auto_auto_auto] items-end gap-2 rounded-lg border p-2 ${line.done ? 'bg-success/5 opacity-60' : ''}`}
+                className={`border-border grid grid-cols-[1fr_auto_auto_auto_auto] items-end gap-2 rounded-lg border p-2 ${line.done ? 'bg-success/5 opacity-60' : ''}`}
               >
                 <label className="block space-y-1 text-sm">
                   {idx === 0 && <span className="text-muted-foreground">الصنف</span>}
@@ -4756,6 +4768,19 @@ function QuickSaleDialog({
                     disabled={line.done}
                     value={line.unitPrice}
                     onChange={(e) => updateLine(line.key, { unitPrice: e.target.value })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
+                  />
+                </label>
+                <label className="block w-20 space-y-1 text-sm">
+                  {idx === 0 && <span className="text-muted-foreground">خصم ٪</span>}
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="0.1"
+                    disabled={line.done}
+                    value={line.discountPercent}
+                    onChange={(e) => updateLine(line.key, { discountPercent: e.target.value })}
                     className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
                   />
                 </label>

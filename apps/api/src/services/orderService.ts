@@ -70,17 +70,29 @@ export class ItemDiscountExceedsTotalError extends Error {
   }
 }
 
-export function assertItemDiscountsValid(items: { discountAmount?: number }[], priced: { total: number }[]): void {
-  items.forEach((item, index) => {
-    const discount = item.discountAmount ?? 0;
+/**
+ * Owner (2026-08-26, "الخصم على بند واحد عايزها نسبه مش بالجنيه") — the
+ * caller now supplies a percentage (0-100) per item instead of a flat
+ * amount; this converts each to a frozen currency amount against that
+ * item's own freshly-computed total, the shape `assertItemDiscountsValid`/
+ * `sumItemDiscounts`/every write path below still work with unchanged
+ * (they never cared whether the amount came from a percent or was typed
+ * directly — only `OrderItem.discountAmount`'s storage format matters).
+ */
+export function resolveItemDiscountAmounts(items: { discountPercent?: number }[], priced: { total: number }[]): number[] {
+  return items.map((item, index) => (priced[index]!.total * (item.discountPercent ?? 0)) / 100);
+}
+
+export function assertItemDiscountsValid(discountAmounts: number[], priced: { total: number }[]): void {
+  discountAmounts.forEach((discount, index) => {
     if (discount > priced[index]!.total) {
       throw new ItemDiscountExceedsTotalError(index);
     }
   });
 }
 
-export function sumItemDiscounts(items: { discountAmount?: number }[]): number {
-  return items.reduce((sum, item) => sum + (item.discountAmount ?? 0), 0);
+export function sumItemDiscounts(discountAmounts: number[]): number {
+  return discountAmounts.reduce((sum, discount) => sum + discount, 0);
 }
 
 export function assertPartnerPresentUnlessWalkIn(partnerId: string | null | undefined, items: { pricing: { kind: string } }[]) {
@@ -537,9 +549,10 @@ export async function createOrder(
       : [],
   );
 
-  assertItemDiscountsValid(input.items, priced);
+  const itemDiscountAmounts = resolveItemDiscountAmounts(input.items, priced);
+  assertItemDiscountsValid(itemDiscountAmounts, priced);
   const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
-  const itemDiscountsTotal = sumItemDiscounts(input.items);
+  const itemDiscountsTotal = sumItemDiscounts(itemDiscountAmounts);
   const discountPercent = input.discountPercent ?? 0;
   // Owner (2026-08-23, "متلغيش التخفيض على الفاتورة كلها طبعاً") — item
   // discounts and the whole-invoice percentage stack: items are
@@ -605,7 +618,7 @@ export async function createOrder(
             itemTotal: result.total,
             groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
             requiredQuantity: resolveRequiredQuantity(item.pricing),
-            discountAmount: item.discountAmount,
+            discountAmount: itemDiscountAmounts[index],
             preferredSupplierId: item.preferredSupplierId,
             // `computeItemPricing`'s breakdown is pricing-only — it has
             // no access to `notes` (not part of `PricingLineItem`). Merge
@@ -830,9 +843,10 @@ export async function updateOrder(
       : [],
   );
 
-  assertItemDiscountsValid(input.items, priced);
+  const itemDiscountAmounts = resolveItemDiscountAmounts(input.items, priced);
+  assertItemDiscountsValid(itemDiscountAmounts, priced);
   const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
-  const itemDiscountsTotal = sumItemDiscounts(input.items);
+  const itemDiscountsTotal = sumItemDiscounts(itemDiscountAmounts);
   const discountPercent = input.discountPercent ?? existing.discountPercent.toNumber();
   const afterDiscount = (subtotal - itemDiscountsTotal) * (1 - discountPercent / 100);
   const vatOn = input.vatOn ?? existing.vatOn;
@@ -907,7 +921,7 @@ export async function updateOrder(
             itemTotal: result.total,
             groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
             requiredQuantity: resolveRequiredQuantity(item.pricing),
-            discountAmount: item.discountAmount,
+            discountAmount: itemDiscountAmounts[index],
             preferredSupplierId: item.preferredSupplierId,
             breakdownOverride: {
               ...(result.breakdown as Record<string, unknown>),
