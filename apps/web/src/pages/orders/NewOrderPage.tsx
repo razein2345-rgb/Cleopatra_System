@@ -2316,6 +2316,26 @@ function NewOrderForm({
     }
     setItemError(null);
     const label = draft.itemType || KIND_LABELS[draft.kind];
+    // Owner (CLAUDE.md §12.4, "مش كل Order Item بيتصنّع داخليًا... النظام
+    // يحدد نوع الـ Job تلقائيًا حسب إعداد المنتج، من غير تدخل يدوي وقت
+    // الأوردر") — the "منتجات جاهزة" tab always routed every PRODUCT item
+    // to READY_PRODUCTS (design → send to supplier → fetch from supplier),
+    // even one explicitly marked `sourceType: 'INTERNAL_PRODUCTION'` — that
+    // forced an in-house item through pointless external-supplier stages.
+    // OTHER_PRODUCTS (published, previously unreachable from any composer
+    // tab) is the correct simple design→production→delivery path for those.
+    // Unset sourceType (most existing catalog products) keeps today's
+    // behavior (READY_PRODUCTS) — only an explicit INTERNAL_PRODUCTION flag
+    // switches the track, never a silent default change for unconfigured
+    // products. SUBLIMATION_GIFTS (a different tab, same PRODUCT kind) is
+    // untouched — that routing is about the physical process, not sourcing.
+    let productionTrack = resolveProductionTrackForTab(activeParentId);
+    if (draft.kind === 'PRODUCT' && activeParentId === 'READY_PRODUCTS') {
+      const selectedProduct = readyProducts.find((p) => p.id === draft.readyProductId);
+      if (selectedProduct?.sourceType === 'INTERNAL_PRODUCTION') {
+        productionTrack = 'OTHER_PRODUCTS';
+      }
+    }
     const line: CartLine = {
       key: draft.key,
       itemType: label,
@@ -2331,7 +2351,7 @@ function NewOrderForm({
       attachmentUrl: draft.attachmentUrl || undefined,
       pricing,
       total: preview.total,
-      productionTrack: resolveProductionTrackForTab(activeParentId),
+      productionTrack,
       breakdown: preview.result ?? undefined,
       // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — a brand-new line
       // from "كرر بمقاس مختلف" carries `pendingGroupKey`; a normal edit of
