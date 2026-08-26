@@ -33,6 +33,16 @@ export const inventoryItemSchema = z.object({
   // READY_MADE item, sold directly off the shelf (owner: "مخزون جاهز
   // عندي"). Null for the other 5 categories.
   salePrice: z.number().nullable(),
+  /**
+   * Owner (2026-08-26, "المفروض إنها وهي بتتسجل يتسجل هي واقفه علينا بكام
+   * وبنبيعها بكام") — purchase/cost price, so profit (salePrice -
+   * costPrice) is computable. Sensitive financial data — restricted to
+   * SUPER_ADMIN for both read and write (inventoryItems.ts controller
+   * strips this from the response for anyone else, and rejects a write
+   * attempt that includes it). `.optional()` reflects that it's omitted,
+   * not merely null, for a non-SUPER_ADMIN caller.
+   */
+  costPrice: z.number().nullable().optional(),
   reorderLevel: z.number().nonnegative().nullable(),
   quantityOnHand: z.number(),
   isLowStock: z.boolean(),
@@ -55,6 +65,7 @@ export const createInventoryItemSchema = z.object({
   initialQuantity: z.number().nonnegative().optional(),
   barcode: z.string().trim().min(1).max(100).optional(),
   salePrice: z.number().nonnegative().optional(),
+  costPrice: z.number().nonnegative().optional(),
 });
 
 export const updateInventoryItemSchema = z.object({
@@ -68,6 +79,7 @@ export const updateInventoryItemSchema = z.object({
   reorderLevel: z.number().nonnegative().nullable().optional(),
   barcode: z.string().trim().min(1).max(100).nullable().optional(),
   salePrice: z.number().nonnegative().nullable().optional(),
+  costPrice: z.number().nonnegative().nullable().optional(),
 });
 
 export const createStockMovementSchema = z.object({

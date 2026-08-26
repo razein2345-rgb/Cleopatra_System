@@ -28,6 +28,7 @@ import {
 } from '../services/inventoryService.js';
 import { DayClosedError } from '../services/treasuryService.js';
 import { recordAudit } from '../services/auditService.js';
+import { rejectCostPriceWrite, stripCostPrice, stripCostPriceList } from '../lib/costPriceGuard.js';
 
 function handleServiceError(err: unknown, res: Response): boolean {
   if (err instanceof InventoryItemNotFoundError || err instanceof StockMovementNotFoundError) {
@@ -53,15 +54,15 @@ function handleServiceError(err: unknown, res: Response): boolean {
   return false;
 }
 
-export async function listInventoryItemsHandler(_req: Request, res: Response) {
+export async function listInventoryItemsHandler(req: Request, res: Response) {
   const items = await listInventoryItems();
-  res.json({ success: true, data: items });
+  res.json({ success: true, data: stripCostPriceList(items, req.auth!) });
 }
 
 /** "بضاعة ناقصة من الموردين" — items at/below reorder level or already negative. */
-export async function listItemsNeedingSupplierHandler(_req: Request, res: Response) {
+export async function listItemsNeedingSupplierHandler(req: Request, res: Response) {
   const items = await listItemsNeedingSupplier();
-  res.json({ success: true, data: items });
+  res.json({ success: true, data: stripCostPriceList(items, req.auth!) });
 }
 
 /** POS scan-to-add — exact match by barcode, not a fuzzy search (the scanner's raw input is the lookup key). */
@@ -71,7 +72,7 @@ export async function getInventoryItemByBarcodeHandler(req: Request<{ barcode: s
     res.status(404).json({ success: false, error: { message: 'مفيش صنف بهذا الباركود', code: 'BARCODE_NOT_FOUND' } });
     return;
   }
-  res.json({ success: true, data: item });
+  res.json({ success: true, data: stripCostPrice(item, req.auth!) });
 }
 
 export async function getInventoryItemHandler(req: Request<{ id: string }>, res: Response) {
@@ -80,12 +81,13 @@ export async function getInventoryItemHandler(req: Request<{ id: string }>, res:
     res.status(404).json({ success: false, error: { message: 'Inventory item not found' } });
     return;
   }
-  res.json({ success: true, data: item });
+  res.json({ success: true, data: stripCostPrice(item, req.auth!) });
 }
 
 export async function createInventoryItemHandler(req: Request, res: Response) {
   const auth = req.auth!;
   const input = createInventoryItemSchema.parse(req.body);
+  if (rejectCostPriceWrite(input, auth, res)) return;
 
   let created;
   try {
@@ -104,12 +106,13 @@ export async function createInventoryItemHandler(req: Request, res: Response) {
     newValue: { name: created.name, category: created.category, quantityOnHand: created.quantityOnHand },
   });
 
-  res.status(201).json({ success: true, data: created });
+  res.status(201).json({ success: true, data: stripCostPrice(created, auth) });
 }
 
 export async function updateInventoryItemHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
   const input = updateInventoryItemSchema.parse(req.body);
+  if (rejectCostPriceWrite(input, auth, res)) return;
 
   let updated;
   try {
@@ -128,7 +131,7 @@ export async function updateInventoryItemHandler(req: Request<{ id: string }>, r
     newValue: input,
   });
 
-  res.json({ success: true, data: updated });
+  res.json({ success: true, data: stripCostPrice(updated, auth) });
 }
 
 /** Owner ("موظف المخزن مقدرش يجاوب 'الرصيد ده نزل امتى وليه'") — read-only, no Audit Log call (this is a view action, not a mutation). */

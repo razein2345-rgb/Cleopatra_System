@@ -17,9 +17,12 @@ export function ReadyProductsEditor({
   readyProducts: ReadyProduct[];
   onChanged: () => void;
 }) {
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
   const confirm = useConfirm();
   const canManage = can('settings.edit');
+  // Owner (2026-08-26, "سعر التكلفة... مقصور على المسؤول العام") — strict
+  // SUPER_ADMIN-only, same discipline as attendance/payroll.
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<ReadyProduct | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +51,10 @@ export function ReadyProductsEditor({
       {error && <div className="text-destructive mb-2 text-sm">{error}</div>}
       {showCreate && (
         <ReadyProductForm
-          onSubmit={(name, price, sourceType) => apiPost('/api/ready-products', { name, price, sourceType })}
+          isSuperAdmin={isSuperAdmin}
+          onSubmit={(name, price, sourceType, costPrice) =>
+            apiPost('/api/ready-products', { name, price, sourceType, costPrice })
+          }
           onSaved={() => {
             setShowCreate(false);
             onChanged();
@@ -61,10 +67,14 @@ export function ReadyProductsEditor({
           editing?.id === p.id ? (
             <li key={p.id} className="border-border border-b py-1.5">
               <ReadyProductForm
+                isSuperAdmin={isSuperAdmin}
                 initialName={p.name}
                 initialPrice={p.price}
                 initialSourceType={p.sourceType}
-                onSubmit={(name, price, sourceType) => apiPut(`/api/ready-products/${p.id}`, { name, price, sourceType })}
+                initialCostPrice={p.costPrice ?? null}
+                onSubmit={(name, price, sourceType, costPrice) =>
+                  apiPut(`/api/ready-products/${p.id}`, { name, price, sourceType, costPrice })
+                }
                 onSaved={() => {
                   setEditing(null);
                   onChanged();
@@ -80,6 +90,11 @@ export function ReadyProductsEditor({
               </span>
               <div className="flex items-center gap-3">
                 <span>{p.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج</span>
+                {isSuperAdmin && (
+                  <span className="text-muted-foreground text-xs">
+                    (تكلفة: {p.costPrice != null ? p.costPrice.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'})
+                  </span>
+                )}
                 {canManage && (
                   <div className="flex gap-1">
                     <Button variant="ghost" size="sm" onClick={() => setEditing(p)}>
@@ -104,6 +119,8 @@ function ReadyProductForm({
   initialName = '',
   initialPrice = 0,
   initialSourceType = null,
+  initialCostPrice = null,
+  isSuperAdmin,
   onSubmit,
   onSaved,
   onCancel,
@@ -111,13 +128,21 @@ function ReadyProductForm({
   initialName?: string;
   initialPrice?: number;
   initialSourceType?: ProductSourceType | null;
-  onSubmit: (name: string, price: number, sourceType: ProductSourceType | null) => Promise<unknown>;
+  initialCostPrice?: number | null;
+  isSuperAdmin: boolean;
+  onSubmit: (
+    name: string,
+    price: number,
+    sourceType: ProductSourceType | null,
+    costPrice: number | undefined,
+  ) => Promise<unknown>;
   onSaved: () => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(initialName);
   const [price, setPrice] = useState(initialPrice);
   const [sourceType, setSourceType] = useState<ProductSourceType | ''>(initialSourceType ?? '');
+  const [costPrice, setCostPrice] = useState(initialCostPrice != null ? String(initialCostPrice) : '');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -127,7 +152,7 @@ function ReadyProductForm({
     setError(null);
     setSubmitting(true);
     try {
-      await onSubmit(name, price, sourceType || null);
+      await onSubmit(name, price, sourceType || null, isSuperAdmin && costPrice ? Number(costPrice) : undefined);
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر الحفظ');
@@ -172,6 +197,20 @@ function ReadyProductForm({
           className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
         />
       </label>
+      {isSuperAdmin && (
+        <label className="w-28 space-y-1 text-xs">
+          <span className="text-muted-foreground">التكلفة (اختياري)</span>
+          <input
+            type="number"
+            step="0.01"
+            min={0}
+            value={costPrice}
+            onChange={(e) => setCostPrice(e.target.value)}
+            placeholder="واقف عليك بكام"
+            className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+          />
+        </label>
+      )}
       <Button type="submit" size="sm" disabled={submitting}>
         {submitting ? '...' : 'حفظ'}
       </Button>

@@ -46,6 +46,11 @@ function mapInventoryItemToDto(record: InventoryItemRecord): InventoryItem {
     barcode: record.barcode,
     sheetPrice: record.sheetType?.price.toNumber() ?? null,
     salePrice: record.salePrice?.toNumber() ?? null,
+    // SUPER_ADMIN-only financial field — always included here (this
+    // service layer is auth-agnostic, same discipline as every other
+    // mapper); inventoryItems.ts's controller strips it from the response
+    // for anyone else, and rejects a write attempt that includes it.
+    costPrice: record.costPrice?.toNumber() ?? null,
     reorderLevel,
     quantityOnHand,
     // Owner (2026-08-20, "ازاي مكتوب متوفر والعدد صفر لكل الأفرخ اللي
@@ -157,6 +162,7 @@ export async function createInventoryItem(
           reorderLevel: input.reorderLevel ?? null,
           barcode: input.barcode ?? null,
           salePrice: input.salePrice ?? null,
+          costPrice: input.costPrice ?? null,
         },
       });
     } catch (err) {
@@ -202,6 +208,7 @@ export async function updateInventoryItem(id: string, input: UpdateInventoryItem
           reorderLevel: input.reorderLevel,
           barcode: input.barcode,
           salePrice: input.salePrice,
+          costPrice: input.costPrice,
         },
         include: INCLUDE,
       });

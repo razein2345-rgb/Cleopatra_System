@@ -694,6 +694,14 @@ model ReadyProduct {
   id         String             @id @default(uuid()) @db.Uuid
   name       String
   price      Decimal            @db.Decimal(12, 2)
+  /// Owner (2026-08-26, "المفروض إنها وهي بتتسجل يتسجل هي واقفه علينا
+  /// بكام وبنبيعها بكام") — the purchase/cost price, so a real profit
+  /// margin can be computed (price - costPrice), not just tracked as
+  /// "the sale price" with no cost basis at all. Nullable — most existing
+  /// products have none set yet. Sensitive financial data: restricted to
+  /// SUPER_ADMIN for both read and write (see readyProductService.ts),
+  /// same restriction discipline as attendance/payroll records.
+  costPrice  Decimal?           @db.Decimal(12, 2)
   /// FEATURE-009 (2026-08-13, owner: "لا تبني Products جاهزة على افتراض أن
   /// كل المنتجات يتم إنتاجها داخل المطبعة... يجب أن يكون الـarchitecture
   /// قادرًا على تحديد مصدر تنفيذ المنتج") — metadata only, no pricing/
@@ -3011,6 +3019,14 @@ model InventoryItem {
   /// Nullable — meaningless for the other 5 categories, whose cost feeds
   /// into a production pricing formula instead of a direct sale price.
   salePrice    Decimal?         @db.Decimal(12, 2)
+  /// Owner (2026-08-26, "المفروض إنها وهي بتتسجل يتسجل هي واقفه علينا
+  /// بكام وبنبيعها بكام") — the purchase/cost price for a `READY_MADE`
+  /// item, so a real profit margin (salePrice - costPrice) can be
+  /// computed, not just the sale price alone. Nullable — most existing
+  /// items have none set yet. Sensitive financial data: restricted to
+  /// SUPER_ADMIN for both read and write, same discipline as
+  /// ReadyProduct.costPrice/attendance/payroll records.
+  costPrice    Decimal?         @db.Decimal(12, 2)
 
   /// Owner (2026-08-25, "عايز البضاعه في المخزون تكون تصنيفات واقدر اعمل
   /// فلتر اشوف بيه كل صنف") — a separate, admin-editable browsing

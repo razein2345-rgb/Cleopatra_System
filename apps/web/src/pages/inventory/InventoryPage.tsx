@@ -57,7 +57,11 @@ const UNIT_LABELS: Record<InventoryUnit, string> = {
  * milestone, per the plan's scope (M4 wires the order-creation form).
  */
 export function InventoryPage() {
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
+  // Owner (2026-08-26, "سعر التكلفة... مقصور على المسؤول العام") — same
+  // strict SUPER_ADMIN-only restriction discipline as attendance/payroll,
+  // not shared with ADMIN.
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
   const [items, setItems] = useState<InventoryItem[] | null>(null);
   const [needsSupplier, setNeedsSupplier] = useState<InventoryItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -131,6 +135,16 @@ export function InventoryPage() {
       throw new Error('لازم يكون رقم صحيح موجب');
     }
     await apiPut(`/api/inventory-items/${item.id}`, { salePrice: parsed });
+    load();
+  };
+
+  /** Owner (2026-08-26, "يتسجل هي واقفه علينا بكام") — purchase cost, so profit (salePrice - costPrice) is computable. SUPER_ADMIN only. */
+  const saveCostPrice = async (item: InventoryItem, next: string) => {
+    const parsed = next.trim() === '' ? null : Number(next);
+    if (parsed !== null && (Number.isNaN(parsed) || parsed < 0)) {
+      throw new Error('لازم يكون رقم صحيح موجب');
+    }
+    await apiPut(`/api/inventory-items/${item.id}`, { costPrice: parsed });
     load();
   };
 
@@ -255,6 +269,7 @@ export function InventoryPage() {
                 <th className="p-3">الرصيد الحالي</th>
                 <th className="p-3">حد التنبيه</th>
                 <th className="p-3">سعر البيع</th>
+                {isSuperAdmin && <th className="p-3">سعر التكلفة</th>}
                 <th className="p-3">الحالة</th>
                 <th className="p-3" />
               </tr>
@@ -264,7 +279,7 @@ export function InventoryPage() {
                 if (filteredItems.length === 0) {
                   return (
                     <tr>
-                      <td className="text-muted-foreground p-3 text-center" colSpan={9}>
+                      <td className="text-muted-foreground p-3 text-center" colSpan={isSuperAdmin ? 10 : 9}>
                         {items.length === 0 ? 'لا توجد بضاعة مسجلة بعد.' : 'لا توجد أصناف مطابقة.'}
                       </td>
                     </tr>
@@ -347,6 +362,15 @@ export function InventoryPage() {
                         (item.salePrice?.toLocaleString('en-US') ?? '—')
                       )}
                     </td>
+                    {isSuperAdmin && (
+                      <td className="text-muted-foreground p-3">
+                        <EditableTextCell
+                          value={item.costPrice?.toString() ?? ''}
+                          placeholder="—"
+                          onSave={(next) => saveCostPrice(item, next)}
+                        />
+                      </td>
+                    )}
                     <td className="p-3">
                       {item.isLowStock ? (
                         <StatusBadge tone="danger">ناقصة</StatusBadge>
@@ -819,8 +843,11 @@ function NewInventoryItemForm({
   const [initialQuantity, setInitialQuantity] = useState('0');
   const [barcode, setBarcode] = useState('');
   const [salePrice, setSalePrice] = useState('');
+  const [costPrice, setCostPrice] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const { authContext } = useAuth();
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
 
   const changeCategory = (next: MaterialCategory) => {
     setCategory(next);
@@ -842,6 +869,7 @@ function NewInventoryItemForm({
         initialQuantity: initialQuantity ? Number(initialQuantity) : undefined,
         barcode: barcode.trim() || undefined,
         salePrice: salePrice ? Number(salePrice) : undefined,
+        costPrice: isSuperAdmin && costPrice ? Number(costPrice) : undefined,
       };
       await apiPost('/api/inventory-items', input);
       onCreated();
@@ -951,6 +979,20 @@ function NewInventoryItemForm({
               value={salePrice}
               onChange={(e) => setSalePrice(e.target.value)}
               placeholder="مطلوب عشان يتباع من نقطة البيع"
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+        )}
+        {category === 'READY_MADE' && isSuperAdmin && (
+          <label className="space-y-1 text-sm">
+            <span className="text-muted-foreground">سعر التكلفة للقطعة (اختياري)</span>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={costPrice}
+              onChange={(e) => setCostPrice(e.target.value)}
+              placeholder="واقفة عليك بكام — لحساب صافي الربح"
               className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
             />
           </label>

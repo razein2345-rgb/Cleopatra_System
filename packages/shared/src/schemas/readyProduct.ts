@@ -8,9 +8,20 @@ export const readyProductSchema = z.object({
   name: z.string().min(1),
   price: z.number().nonnegative(),
   sourceType: productSourceTypeSchema.nullable(),
+  /**
+   * Owner (2026-08-26, "المفروض إنها وهي بتتسجل يتسجل هي واقفه علينا بكام
+   * وبنبيعها بكام") — the purchase/cost price, so profit (price -
+   * costPrice) is computable. Sensitive financial data — restricted to
+   * SUPER_ADMIN for both read and write (readyProducts.ts controller
+   * strips this field from the response entirely for anyone else, and
+   * rejects a write attempt that includes it), same discipline as
+   * attendance/payroll records. Omitted (not merely null) for a
+   * non-SUPER_ADMIN caller — `.optional()` reflects that.
+   */
+  costPrice: z.number().nonnegative().nullable().optional(),
 });
 
-export const createReadyProductSchema = readyProductSchema.omit({ id: true }).partial({ sourceType: true });
+export const createReadyProductSchema = readyProductSchema.omit({ id: true }).partial({ sourceType: true, costPrice: true });
 export const updateReadyProductSchema = readyProductSchema.omit({ id: true }).partial();
 
 export type ProductSourceType = z.infer<typeof productSourceTypeSchema>;
