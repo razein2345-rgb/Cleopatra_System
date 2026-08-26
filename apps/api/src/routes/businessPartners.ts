@@ -34,6 +34,11 @@ import {
   getPartnerCommercialProfile,
   upsertPartnerCommercialProfile,
 } from '../controllers/partnerCommercialProfile.js';
+import {
+  deleteItemReorderOverride,
+  listItemReorderOverrides,
+  upsertItemReorderOverride,
+} from '../controllers/itemReorderOverrides.js';
 
 export const businessPartnersRouter = Router();
 
@@ -169,4 +174,25 @@ businessPartnersRouter.put(
   '/:partnerId/commercial-profile',
   requirePermission('partners.credit.manage'),
   upsertPartnerCommercialProfile,
+);
+
+// Manual reorder-prediction overrides (2026-08-26, owner: "الوقت بيتحسب
+// تقريبي بس ممكن اعدله يدوي") — view gated the same as the tab itself
+// (`orders.view`); writing/clearing an override is an edit action on
+// orders-adjacent data, so `orders.edit` (not `partners.edit` — this has
+// nothing to do with partner identity/notes).
+businessPartnersRouter.get(
+  '/:partnerId/reorder-overrides',
+  requirePermission('orders.view'),
+  listItemReorderOverrides,
+);
+businessPartnersRouter.put(
+  '/:partnerId/reorder-overrides/:itemKey',
+  requirePermission('orders.edit'),
+  upsertItemReorderOverride,
+);
+businessPartnersRouter.delete(
+  '/:partnerId/reorder-overrides/:itemKey',
+  requirePermission('orders.edit'),
+  deleteItemReorderOverride,
 );

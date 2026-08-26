@@ -35,6 +35,7 @@ import { machinesRouter } from './machines.js';
 import { auditLogsRouter } from './auditLogs.js';
 import { devicesRouter } from './devices.js';
 import { inventoryCategoriesRouter } from './inventoryCategories.js';
+import { reorderOverridesRouter } from './reorderOverrides.js';
 
 export const apiRouter = Router();
 
@@ -53,6 +54,7 @@ api.use('/size-families', sizeFamiliesRouter);
 api.use('/ready-products', readyProductsRouter);
 api.use('/services', servicesRouter);
 api.use('/partners', businessPartnersRouter);
+api.use('/reorder-overrides', reorderOverridesRouter);
 api.use('/leads', leadsRouter);
 api.use('/partner-categories', partnerCategoriesRouter);
 api.use('/partner-tags', partnerTagsRouter);

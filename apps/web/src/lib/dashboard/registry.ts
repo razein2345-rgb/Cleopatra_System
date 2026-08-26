@@ -16,6 +16,7 @@ import { supplierPickupWidget } from './widgets/SupplierPickupWidget';
 import { readyForDeliveryWidget } from './widgets/ReadyForDeliveryWidget';
 import { attendanceWidget } from './widgets/AttendanceWidget';
 import { lowStockWidget } from './widgets/LowStockWidget';
+import { reorderDueWidget } from './widgets/ReorderDueWidget';
 
 /**
  * Every Dashboard card, in render order. Add a widget by writing a
@@ -43,6 +44,7 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   supplierPickupWidget,
   readyForDeliveryWidget,
   lowStockWidget,
+  reorderDueWidget,
 ];
 
 /**

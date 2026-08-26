@@ -1108,6 +1108,7 @@ model BusinessPartner {
   // back-relation exists (Timeline Preparation / Activity Feed Ready).
   auditLogs              AuditLog[]
   orderTemplates         OrderTemplate[]
+  itemReorderOverrides   ItemReorderOverride[]
 
   @@index([isDeleted])
   @@index([status])
@@ -1462,6 +1463,45 @@ model PartnerNote {
   @@index([partnerId])
   @@index([isDeleted])
   @@index([isPinned])
+}
+
+/// Owner (2026-08-26, "الوقت بيتحسب تقريبي بس ممكن اعدله يدوي" — a manual
+/// correction on top of ReorderPredictionTab.tsx's auto average-gap
+/// estimate, per item per customer. `itemKey` is the same best-effort
+/// join key `ReorderPredictionTab.tsx`'s `itemIdentity()` computes
+/// (`inv:<inventoryItemId>` or `name:<lowercased label>`) — OrderItem has
+/// no real catalog FK to key off (see PROJECT_STATUS.md), so this is a
+/// best-effort join, not a foreign key relationship to any item row.
+model ItemReorderOverride {
+  id        String          @id @default(uuid()) @db.Uuid
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id], onDelete: Cascade)
+
+  itemKey   String
+  /// Human label snapshot (matches the item's `label` at save time) —
+  /// purely for display if the override is ever browsed without
+  /// recomputing the live group, never used for matching.
+  itemLabel String
+
+  /// "بيسهلك كام قطعة في اليوم" — an alternative to the average-gap
+  /// heuristic: predicted date = last order's date + (last order's
+  /// quantity ÷ this rate). Null unless the owner has actually estimated
+  /// a consumption rate for this item/customer.
+  dailyConsumptionRate Float?
+
+  /// "لو قالي تقريباً بيخلص في كذا فا اكتب التاريخ" — a direct manual
+  /// date, wins over both `dailyConsumptionRate` and the automatic
+  /// average-gap calculation when set.
+  manualNextDate DateTime?
+
+  createdBy String  @db.Uuid
+  updatedBy String? @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([partnerId, itemKey])
+  @@index([partnerId])
 }
 
 // ---------------------------------------------------------------------------

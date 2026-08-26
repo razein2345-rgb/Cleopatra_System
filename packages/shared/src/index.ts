@@ -22,6 +22,7 @@ export * from './schemas/orderTemplate.js';
 export * from './schemas/digitalPriceTier.js';
 export * from './schemas/extraServiceOption.js';
 export * from './schemas/partnerNote.js';
+export * from './schemas/itemReorderOverride.js';
 export * from './schemas/partnerCommercialProfile.js';
 export * from './schemas/quotationItem.js';
 export * from './schemas/quotation.js';
