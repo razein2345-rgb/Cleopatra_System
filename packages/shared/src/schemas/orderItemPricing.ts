@@ -137,6 +137,13 @@ export const loosePaperPricingInputSchema = z.object({
 const notebookMaterialOverrideSchema = z.object({
   role: z.string().regex(/^COPY_[1-9]\d*$/),
   inventoryItemId: z.string().uuid(),
+  /**
+   * Owner (2026-08-26, "عايز اغير سعر أفرخ الصور... مفيش غير سعر ورق
+   * الأصل فقط هو اللي اقدر اغيره") — same per-order sheet-price override
+   * as `sheetJobFields.sheetPriceOverride`, but scoped to this one copy's
+   * own paper instead of the original's.
+   */
+  sheetPriceOverride: z.number().nonnegative().optional(),
 });
 
 /**

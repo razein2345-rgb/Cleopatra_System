@@ -332,7 +332,10 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       // falls back to for any copy without an override.
       const inventoryItemIdByRole: Record<string, string> = { ORIGINAL: pricing.inventoryItemId };
       const materialOverrides: NotebookMaterialOverride[] = (pricing.materials ?? []).map((m) => {
-        const overridePrice = ctx.sheetPriceByInventoryItemId.get(m.inventoryItemId);
+        // Owner (2026-08-26, "عايز اغير سعر أفرخ الصور... مفيش غير سعر
+        // ورق الأصل فقط هو اللي اقدر اغيره") — same per-copy override as
+        // the original's own sheetPriceOverride above.
+        const overridePrice = m.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(m.inventoryItemId);
         if (overridePrice === undefined) {
           throw new PricingInputError(`Inventory item "${m.inventoryItemId}" has no linked sheet price`);
         }

@@ -231,6 +231,17 @@ interface DraftItem {
    * see `resizeCopyMaterials` below.
    */
   copyMaterials: string[];
+  /**
+   * Owner (2026-08-26, "طب افرض انا عايز اغير سعر أفرخ الصور مفيش غير سعر
+   * ورق الأصل فقط هو اللي اقدر اغيره") — `sheetPriceOverride` above only
+   * ever reached the ORIGINAL's paper; a copy with its own distinct paper
+   * (`copyMaterials[i]` set) had no way to override ITS price. Same
+   * indexing as `copyMaterials`, empty string = no override for that copy.
+   * Only meaningful (and only shown) when that copy actually has a
+   * distinct paper chosen — a copy using "same as original" is already
+   * covered by the original's own override.
+   */
+  copyMaterialPriceOverrides: string[];
   // ENVELOPE
   readyEnvelopePricePerPiece: string;
   // FOLDER
@@ -375,6 +386,7 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     copies: '0',
     bindingPricePerNotebook: '0',
     copyMaterials: [],
+    copyMaterialPriceOverrides: [],
     readyEnvelopePricePerPiece: '0',
     sellophaneEnabled: false,
     riza: '',
@@ -526,11 +538,14 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
       // one independent picker per copy; an empty picker = "same paper as
       // the original", so it's simply omitted rather than sent as an
       // override (keeps the byte-identical-to-single-material guarantee).
-      const materials: { role: string; inventoryItemId: string }[] = [];
+      const materials: { role: string; inventoryItemId: string; sheetPriceOverride?: number }[] = [];
       if (d.contentType === 'ORIGINAL_PLUS_COPIES') {
         for (let i = 0; i < (copies ?? 0); i++) {
           const paperId = d.copyMaterials[i];
-          if (paperId) materials.push({ role: `COPY_${i + 1}`, inventoryItemId: paperId });
+          if (paperId) {
+            const priceOverride = toOptionalNum(d.copyMaterialPriceOverrides[i] ?? '');
+            materials.push({ role: `COPY_${i + 1}`, inventoryItemId: paperId, ...(priceOverride !== undefined ? { sheetPriceOverride: priceOverride } : {}) });
+          }
         }
       }
       return {
@@ -778,11 +793,16 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       d.bindingPricePerNotebook = String(p.bindingPricePerNotebook);
       const copyCount = p.contentType === 'ORIGINAL_PLUS_COPIES' ? (p.copies ?? 0) : 0;
       const copyMaterials = new Array(copyCount).fill('');
+      const copyMaterialPriceOverrides = new Array(copyCount).fill('');
       for (const m of p.materials ?? []) {
         const idx = Number(m.role.replace('COPY_', '')) - 1;
-        if (idx >= 0 && idx < copyMaterials.length) copyMaterials[idx] = m.inventoryItemId;
+        if (idx >= 0 && idx < copyMaterials.length) {
+          copyMaterials[idx] = m.inventoryItemId;
+          copyMaterialPriceOverrides[idx] = m.sheetPriceOverride !== undefined ? String(m.sheetPriceOverride) : '';
+        }
       }
       d.copyMaterials = copyMaterials;
+      d.copyMaterialPriceOverrides = copyMaterialPriceOverrides;
       const notebookPageOverrides = p as Partial<{ originalPagesOverride: number; copyPagesOverride: number }>;
       d.originalPagesOverrideEnabled = notebookPageOverrides.originalPagesOverride !== undefined;
       d.originalPagesOverrideValue = String(notebookPageOverrides.originalPagesOverride ?? '');
@@ -987,7 +1007,7 @@ function pricingPreviewFromInput(
         // Multi-material (2026-08-17) — same orchestration the server uses,
         // for a live preview that matches what submitting will actually price.
         const materialOverrides = (pricing.materials ?? []).map((m) => {
-          const overridePrice = ctx.sheetPriceByInventoryItemId.get(m.inventoryItemId);
+          const overridePrice = m.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(m.inventoryItemId);
           if (overridePrice === undefined) throw new Error('الورق المختار للصورة غير مرتبط بسعر');
           return { role: m.role, sheetPrice: overridePrice };
         });
@@ -3679,6 +3699,22 @@ function NewOrderForm({
                     placeholder="— زي ورق الأصل —"
                     searchPlaceholder="اكتب أول كام حرف من اسم الورق…"
                   />
+                  {/* Owner (2026-08-26, "عايز اغير سعر أفرخ الصور... مفيش غير سعر ورق الأصل فقط") — only meaningful once this copy actually has its own distinct paper (otherwise it's already covered by the original's own sheetPriceOverride). */}
+                  {draft.copyMaterials[i] && (
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={draft.copyMaterialPriceOverrides[i] ?? ''}
+                      onChange={(e) => {
+                        const next = [...draft.copyMaterialPriceOverrides];
+                        next[i] = e.target.value;
+                        updateDraft({ copyMaterialPriceOverrides: next });
+                      }}
+                      placeholder={`سعر الفرخ (المخزن: ${(ctx.sheetPriceByInventoryItemId.get(draft.copyMaterials[i]) ?? 0).toFixed(2)})`}
+                      className="border-input bg-background w-full rounded-md border px-2 py-1 text-end text-xs"
+                    />
+                  )}
                 </label>
               ))}
             </div>
