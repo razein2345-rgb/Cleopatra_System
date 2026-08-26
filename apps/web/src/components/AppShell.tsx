@@ -19,6 +19,7 @@ import {
   GitBranch,
   UserPlus,
   Truck,
+  FileBarChart,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -75,6 +76,7 @@ const NAV_ITEMS: NavEntry[] = [
         // view of this same page; treasury.view sees the full ledger/balance.
         permission: ['treasury.view', 'treasury.create'],
       },
+      { kind: 'link', to: '/reports', label: 'التقارير', icon: FileBarChart, permission: 'reports.view' },
     ],
   },
   {

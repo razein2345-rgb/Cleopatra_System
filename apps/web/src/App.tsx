@@ -36,6 +36,9 @@ const PartnerProfilePage = lazy(() =>
   import('@/pages/partners/PartnerProfilePage').then((m) => ({ default: m.PartnerProfilePage })),
 );
 const SuppliersPage = lazy(() => import('@/pages/suppliers/SuppliersPage').then((m) => ({ default: m.SuppliersPage })));
+const ReportsOverviewPage = lazy(() =>
+  import('@/pages/reports/ReportsOverviewPage').then((m) => ({ default: m.ReportsOverviewPage })),
+);
 const SupplierDetailPage = lazy(() =>
   import('@/pages/suppliers/SupplierDetailPage').then((m) => ({ default: m.SupplierDetailPage })),
 );
@@ -122,6 +125,10 @@ function App() {
               <Route element={<ProtectedRoute permission="suppliers.view" />}>
                 <Route path="/suppliers" element={<SuppliersPage />} />
                 <Route path="/suppliers/:id" element={<SupplierDetailPage />} />
+              </Route>
+
+              <Route element={<ProtectedRoute permission="reports.view" />}>
+                <Route path="/reports" element={<ReportsOverviewPage />} />
               </Route>
 
               {/* FEATURE-007 — "المستندات": unified Quotations/Orders/WorkOrders list. */}
