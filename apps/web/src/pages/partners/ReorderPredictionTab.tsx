@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Order } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
+import { whatsappLink } from '@/lib/whatsapp';
 
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
@@ -106,7 +107,34 @@ function buildItemGroups(orders: Order[]): ItemGroup[] {
   });
 }
 
-export function ReorderPredictionTab({ partnerId }: { partnerId: string }) {
+/**
+ * Owner (2026-08-26, "رسالة جاهزة بالأصناف اللي قربت تخلص اول ما ادوس على
+ * اللينك تتكتب للعميل وانا ابعتها") — a draft message pre-filled into the
+ * wa.me compose box, listing only the items due-or-overdue (not every
+ * item ever bought). The staff member still reviews and presses send
+ * themselves; nothing here sends automatically.
+ */
+function buildReminderMessage(partnerName: string | undefined, items: ItemGroup[]): string {
+  const lines = items.map((g) => `- ${g.label}`);
+  const greeting = partnerName ? `مرحبًا ${partnerName} 👋` : 'مرحبًا 👋';
+  return [
+    greeting,
+    'حبينا نفكرك إن الأصناف دي قربت تخلص عندك وممكن تحتاج تطلب تاني قريب:',
+    ...lines,
+    '',
+    'لو حابب تطلب، إحنا في الخدمة.',
+  ].join('\n');
+}
+
+export function ReorderPredictionTab({
+  partnerId,
+  partnerName,
+  partnerPhone,
+}: {
+  partnerId: string;
+  partnerName?: string;
+  partnerPhone?: string | null;
+}) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -124,12 +152,26 @@ export function ReorderPredictionTab({ partnerId }: { partnerId: string }) {
   const isSoon = (d: Date) => (d.getTime() - now) / 86_400_000 <= 7;
   const isOverdue = (d: Date) => d.getTime() < now;
 
+  const dueItems = groups.filter((g) => g.predictedNext && (isOverdue(g.predictedNext) || isSoon(g.predictedNext)));
+  const reminderLink =
+    dueItems.length > 0 ? whatsappLink(partnerPhone, buildReminderMessage(partnerName, dueItems)) : null;
+
   return (
     <div className="space-y-3">
       <p className="text-muted-foreground text-xs">
         تقدير تقريبي بناءً على متوسط الفترة بين طلبات العميل السابقة لكل صنف — مش تنبؤ ذكاء اصطناعي، ولسه عرض بس (مفيش
         إرسال تلقائي للعميل حاليًا).
       </p>
+      {reminderLink && (
+        <a
+          href={reminderLink}
+          target="_blank"
+          rel="noreferrer"
+          className="bg-success/10 text-success inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium hover:underline"
+        >
+          📩 ابعت تذكير واتساب للعميل بالأصناف اللي قربت تخلص ({dueItems.length})
+        </a>
+      )}
       <div className="border-border overflow-x-auto rounded-2xl border">
         <table className="w-full text-sm">
           <thead className="bg-muted/40">

@@ -143,7 +143,9 @@ export function PartnerProfilePage() {
 
       {tab === 'orders' && can('orders.view') && <OrdersHistoryTab partnerId={partner.id} />}
 
-      {tab === 'reorder' && can('orders.view') && <ReorderPredictionTab partnerId={partner.id} />}
+      {tab === 'reorder' && can('orders.view') && (
+        <ReorderPredictionTab partnerId={partner.id} partnerName={partner.nameAr} partnerPhone={partner.phone} />
+      )}
 
       {tab === 'contacts' && (
         <ContactsTab partnerId={partner.id} canManage={can('partners.contacts.manage')} />
