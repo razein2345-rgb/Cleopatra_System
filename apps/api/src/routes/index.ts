@@ -39,6 +39,7 @@ import { reorderOverridesRouter } from './reorderOverrides.js';
 import { reportsRouter } from './reports.js';
 import { suppliersRouter } from './suppliers.js';
 import { boardsCatalogItemsRouter } from './boardsCatalogItems.js';
+import { purchaseRequestsRouter } from './purchaseRequests.js';
 
 export const apiRouter = Router();
 
@@ -77,6 +78,7 @@ api.use('/treasury-entries', treasuryEntriesRouter);
 api.use('/treasury-categories', treasuryCategoriesRouter);
 api.use('/document-templates', documentTemplatesRouter);
 api.use('/inventory-items', inventoryItemsRouter);
+api.use('/purchase-requests', purchaseRequestsRouter);
 api.use('/pricing-reference', pricingReferenceRouter);
 api.use('/attachments', attachmentsRouter);
 api.use('/employee-advances', employeeAdvancesRouter);

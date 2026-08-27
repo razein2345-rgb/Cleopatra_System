@@ -14,6 +14,7 @@ import type {
 import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { deductStockForOrderItem, restockForOrderItem } from './inventoryService.js';
+import { maybeCreatePurchaseRequest } from './purchaseRequestService.js';
 import { buildPricingContext, computeItemPricing, type ItemPricingResult } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
 import { createWorkOrderForTrack, softDeleteWorkOrderTx, tryAutoCreateWorkOrders } from './workOrderService.js';
@@ -737,9 +738,12 @@ export async function createOrder(
     // every (material, quantity) pair to deduct for the item, one call per
     // pair; for every non-NOTEBOOK/DIGITAL kind this is still exactly the
     // single old pair, unchanged.
-    for (const result of priced) {
+    for (let index = 0; index < priced.length; index++) {
+      const result = priced[index]!;
+      const orderItemId = createdItemRows[index]!.id;
       for (const m of materialsToDeduct(result)) {
         await deductStockForOrderItem(tx, m.inventoryItemId, input.branchId, m.sheetsNeeded);
+        await maybeCreatePurchaseRequest(tx, m.inventoryItemId, created.id, orderItemId);
       }
     }
 
@@ -1017,9 +1021,12 @@ export async function updateOrder(
 
     // Multi-material pricing (2026-08-17) — same shared helper `createOrder`
     // uses; deducts every material pair for the freshly-created items.
-    for (const result of priced) {
+    for (let index = 0; index < priced.length; index++) {
+      const result = priced[index]!;
+      const orderItemId = newItemRows[index]!.id;
       for (const m of materialsToDeduct(result)) {
         await deductStockForOrderItem(tx, m.inventoryItemId, existing.branchId, m.sheetsNeeded);
+        await maybeCreatePurchaseRequest(tx, m.inventoryItemId, orderId, orderItemId);
       }
     }
 

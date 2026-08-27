@@ -6,7 +6,9 @@ import type {
   InventoryCategory,
   InventoryItem,
   InventoryUnit,
+  MarkPurchaseRequestPurchasedInput,
   MaterialCategory,
+  PurchaseRequest,
   StockMovement,
   StockMovementType,
   UpdateStockMovementInput,
@@ -70,6 +72,8 @@ export function InventoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [showCategoriesManager, setShowCategoriesManager] = useState(false);
+  /** Owner (2026-08-27, "تاب جوة داخل شاشة المخزن الحالية") — "قائمة شراء عاجل" lives as a second tab of this same page, not a standalone route. */
+  const [activeTab, setActiveTab] = useState<'ITEMS' | 'PURCHASE_REQUESTS'>('ITEMS');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<MaterialCategory | 'ALL'>('ALL');
   const [categoryIdFilter, setCategoryIdFilter] = useState('');
@@ -190,26 +194,46 @@ export function InventoryPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">المخزن</h1>
-        <div className="flex gap-2">
-          {can('settings.edit') && (
-            <Button type="button" variant="secondary" onClick={() => setShowCategoriesManager((v) => !v)}>
-              {showCategoriesManager ? 'إخفاء التصنيفات' : 'إدارة التصنيفات'}
-            </Button>
-          )}
-          {can('inventory.create') && (
-            <Button type="button" onClick={() => setShowForm((v) => !v)}>
-              {showForm ? 'إلغاء' : '+ تسجيل بضاعة'}
-            </Button>
-          )}
-        </div>
+        {activeTab === 'ITEMS' && (
+          <div className="flex gap-2">
+            {can('settings.edit') && (
+              <Button type="button" variant="secondary" onClick={() => setShowCategoriesManager((v) => !v)}>
+                {showCategoriesManager ? 'إخفاء التصنيفات' : 'إدارة التصنيفات'}
+              </Button>
+            )}
+            {can('inventory.create') && (
+              <Button type="button" onClick={() => setShowForm((v) => !v)}>
+                {showForm ? 'إلغاء' : '+ تسجيل بضاعة'}
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
-      {showCategoriesManager && (
+      <div className="flex gap-2">
+        <Button type="button" variant={activeTab === 'ITEMS' ? 'default' : 'secondary'} size="sm" onClick={() => setActiveTab('ITEMS')}>
+          الأصناف
+        </Button>
+        <Button
+          type="button"
+          variant={activeTab === 'PURCHASE_REQUESTS' ? 'default' : 'secondary'}
+          size="sm"
+          onClick={() => setActiveTab('PURCHASE_REQUESTS')}
+        >
+          قائمة شراء عاجل
+        </Button>
+      </div>
+
+      {activeTab === 'PURCHASE_REQUESTS' && <PurchaseRequestsTab />}
+
+      {activeTab === 'ITEMS' && showCategoriesManager && (
         <Card className="p-4">
           <InventoryCategoriesManagement onChanged={loadCategories} />
         </Card>
       )}
 
+      {activeTab === 'ITEMS' && (
+      <>
       {/* Owner (2026-08-20, "عايز اول ما ادوس تسجيل بضاعه ينزلني على طول
           للمكان اللي هكتب فيه مش لسه انا هسكرول علشان الاقيها") — this form
           used to render AFTER the "بضاعة ناقصة" warning card below, which
@@ -443,6 +467,8 @@ export function InventoryPage() {
         </div>
       )}
       {items && <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />}
+      </>
+      )}
       {historyItem && <StockMovementHistoryDialog item={historyItem} onClose={() => setHistoryItem(null)} />}
       {movementItem && (
         <RecordMovementDialog
@@ -455,6 +481,134 @@ export function InventoryPage() {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * "قائمة شراء عاجل" (2026-08-27, owner: "الشراء العاجل لما يكون تبع طلب
+ * من الطلبات اللي العملا طلبوها") — every row here was created
+ * server-side the moment a real customer Order's stock deduction took an
+ * `InventoryItem` negative (see `purchaseRequestService.ts`'s
+ * `maybeCreatePurchaseRequest`); there is no manual "add" here on
+ * purpose. "اتشرت" atomically adds the bought quantity back to stock and
+ * books the amount against the supplier (skipped if none was ever
+ * assigned to the item — see `InventoryPage`'s own "المورد" column).
+ */
+function PurchaseRequestsTab() {
+  const { can } = useAuth();
+  const canMarkPurchased = can('inventory.edit');
+  const [requests, setRequests] = useState<PurchaseRequest[] | null>(null);
+  const [purchasingId, setPurchasingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    apiGet<PurchaseRequest[]>('/api/purchase-requests?status=PENDING')
+      .then(setRequests)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل قائمة الشراء العاجل'));
+  };
+  useEffect(load, []);
+
+  if (error) return <div className="text-destructive text-sm">{error}</div>;
+  if (!requests) return <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>;
+
+  return (
+    <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
+      {requests.length === 0 ? (
+        <p className="text-muted-foreground text-sm">مفيش أصناف محتاجة شراء عاجل دلوقتي.</p>
+      ) : (
+        <ul className="divide-border divide-y text-sm">
+          {requests.map((r) =>
+            purchasingId === r.id ? (
+              <li key={r.id} className="py-2">
+                <MarkPurchasedForm request={r} onSaved={() => { setPurchasingId(null); load(); }} onCancel={() => setPurchasingId(null)} />
+              </li>
+            ) : (
+              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <div>
+                  <p className="font-medium">{r.inventoryItemName}</p>
+                  <p className="text-muted-foreground text-xs">
+                    محتاجين {r.quantityNeeded.toLocaleString('en-US')} — تبع فاتورة {r.orderInvoiceNumber}
+                    {r.supplierName ? ` — المورد: ${r.supplierName}` : ' — مفيش مورد مسجّل للصنف ده'}
+                  </p>
+                </div>
+                {canMarkPurchased && (
+                  <Button type="button" size="sm" onClick={() => setPurchasingId(r.id)}>
+                    اتشرت
+                  </Button>
+                )}
+              </li>
+            ),
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function MarkPurchasedForm({
+  request,
+  onSaved,
+  onCancel,
+}: {
+  request: PurchaseRequest;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [quantity, setQuantity] = useState(String(request.quantityNeeded));
+  const [amount, setAmount] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      const input: MarkPurchaseRequestPurchasedInput = { purchasedQuantity: Number(quantity), purchasedAmount: Number(amount) || 0 };
+      await apiPost(`/api/purchase-requests/${request.id}/mark-purchased`, input);
+      onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر الحفظ');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} className="border-border bg-muted/30 flex flex-wrap items-end gap-2 rounded-lg border p-2">
+      {error && <div className="text-destructive w-full text-xs">{error}</div>}
+      <label className="w-32 space-y-1 text-xs">
+        <span className="text-muted-foreground">الكمية اللي اتشترت</span>
+        <input
+          type="number"
+          min={0}
+          step="0.001"
+          required
+          value={quantity}
+          onChange={(e) => setQuantity(e.target.value)}
+          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+        />
+      </label>
+      <label className="w-32 space-y-1 text-xs">
+        <span className="text-muted-foreground">المبلغ المدفوع{request.supplierName ? ` لـ${request.supplierName}` : ''}</span>
+        <input
+          type="number"
+          min={0}
+          step="0.01"
+          required
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+        />
+      </label>
+      <Button type="submit" size="sm" disabled={submitting}>
+        {submitting ? '...' : 'تأكيد'}
+      </Button>
+      <Button type="button" variant="secondary" size="sm" onClick={onCancel}>
+        إلغاء
+      </Button>
+    </form>
   );
 }
 

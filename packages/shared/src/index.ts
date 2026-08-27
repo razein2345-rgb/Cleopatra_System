@@ -43,6 +43,7 @@ export * from './schemas/branchFinancials.js';
 export * from './schemas/supplier.js';
 export * from './schemas/reportsOverview.js';
 export * from './schemas/boardsCatalogItem.js';
+export * from './schemas/purchaseRequest.js';
 export * from './pricing/sizeCalculation.js';
 export * from './pricing/costCalculation.js';
 export * from './pricing/boardsCostCalculation.js';

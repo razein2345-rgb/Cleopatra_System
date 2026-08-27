@@ -546,17 +546,17 @@ model Setting {
   /// a manually-typed number per job. Defaults to 0 so existing rows don't
   /// need a backfill; a real value must be entered before boards items
   /// carry an accurate cost.
-  boardsBannerSupplierCost         Decimal @default(0) @db.Decimal(12, 2)
-  boardsVinylPrintCutSupplierCost  Decimal @default(0) @db.Decimal(12, 2)
-  boardsVinylNormalSupplierCost    Decimal @default(0) @db.Decimal(12, 2)
-  boardsFlexSupplierCost           Decimal @default(0) @db.Decimal(12, 2)
-  boardsSeasroSupplierCost         Decimal @default(0) @db.Decimal(12, 2)
+  boardsBannerSupplierCost        Decimal @default(0) @db.Decimal(12, 2)
+  boardsVinylPrintCutSupplierCost Decimal @default(0) @db.Decimal(12, 2)
+  boardsVinylNormalSupplierCost   Decimal @default(0) @db.Decimal(12, 2)
+  boardsFlexSupplierCost          Decimal @default(0) @db.Decimal(12, 2)
+  boardsSeasroSupplierCost        Decimal @default(0) @db.Decimal(12, 2)
 
   /// system_specifications_v2.md §13.3 — Digital printing Yield-based
   /// costing. Quarter-sheet dimensions are configurable (rule 15) rather
   /// than hardcoded, defaulting to the spec's 50×35cm, in case the feed
   /// size changes with a different machine.
-  digitalPrintPricePerQuarter     Decimal @default(0) @db.Decimal(12, 2)
+  digitalPrintPricePerQuarter      Decimal @default(0) @db.Decimal(12, 2)
   digitalSellophanePricePerQuarter Decimal @default(0) @db.Decimal(12, 2)
   digitalQuarterWidthCm            Decimal @default(50) @db.Decimal(6, 2)
   digitalQuarterHeightCm           Decimal @default(35) @db.Decimal(6, 2)
@@ -917,42 +917,43 @@ model StaffProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  roles                      UserRole[]
-  branchAccess               UserBranchAccess[]
-  departmentAccess           UserDepartmentAccess[]
-  businessPartnersAsSalesRep BusinessPartner[]
-  orders                     Order[]
-  quotations                 Quotation[]
-  treasuryEntries            TreasuryEntry[]
-  attachments                Attachment[]
-  auditLogs                  AuditLog[]
-  assignedStageInstances     StageInstance[]
-  workflowEvents             WorkflowEvent[]
-  advancesReceived           EmployeeAdvance[]          @relation("EmployeeAdvanceStaff")
-  advancesRecorded           EmployeeAdvance[]          @relation("EmployeeAdvanceRecordedBy")
-  advanceRepaymentsRecorded  EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
-  salaryPaymentsReceived     SalaryPayment[]            @relation("SalaryPaymentStaff")
-  salaryPaymentsRecorded     SalaryPayment[]            @relation("SalaryPaymentRecordedBy")
-  leadsAssigned              Lead[]                     @relation("LeadAssignedTo")
-  leadsRecorded              Lead[]                     @relation("LeadRecordedBy")
-  supplierPurchasesRecorded  SupplierPurchase[]         @relation("SupplierPurchaseRecordedBy")
-  supplierPaymentsRecorded   SupplierPayment[]          @relation("SupplierPaymentRecordedBy")
-  attendanceEntries          AttendanceEntry[]          @relation("AttendanceStaff")
-  attendanceEntriesRecorded  AttendanceEntry[]          @relation("AttendanceRecordedBy")
-  fieldAssignments           FieldAssignment[]          @relation("FieldAssignmentStaff")
-  fieldAssignmentsCreated    FieldAssignment[]          @relation("FieldAssignmentCreatedBy")
-  treasuryDayClosuresClosed  TreasuryDayClosure[]       @relation("TreasuryDayClosureClosedBy")
+  roles                       UserRole[]
+  branchAccess                UserBranchAccess[]
+  departmentAccess            UserDepartmentAccess[]
+  businessPartnersAsSalesRep  BusinessPartner[]
+  orders                      Order[]
+  quotations                  Quotation[]
+  treasuryEntries             TreasuryEntry[]
+  attachments                 Attachment[]
+  auditLogs                   AuditLog[]
+  assignedStageInstances      StageInstance[]
+  workflowEvents              WorkflowEvent[]
+  advancesReceived            EmployeeAdvance[]          @relation("EmployeeAdvanceStaff")
+  advancesRecorded            EmployeeAdvance[]          @relation("EmployeeAdvanceRecordedBy")
+  advanceRepaymentsRecorded   EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
+  salaryPaymentsReceived      SalaryPayment[]            @relation("SalaryPaymentStaff")
+  salaryPaymentsRecorded      SalaryPayment[]            @relation("SalaryPaymentRecordedBy")
+  leadsAssigned               Lead[]                     @relation("LeadAssignedTo")
+  leadsRecorded               Lead[]                     @relation("LeadRecordedBy")
+  supplierPurchasesRecorded   SupplierPurchase[]         @relation("SupplierPurchaseRecordedBy")
+  supplierPaymentsRecorded    SupplierPayment[]          @relation("SupplierPaymentRecordedBy")
+  purchaseRequestsPurchased   PurchaseRequest[]          @relation("PurchaseRequestPurchasedBy")
+  attendanceEntries           AttendanceEntry[]          @relation("AttendanceStaff")
+  attendanceEntriesRecorded   AttendanceEntry[]          @relation("AttendanceRecordedBy")
+  fieldAssignments            FieldAssignment[]          @relation("FieldAssignmentStaff")
+  fieldAssignmentsCreated     FieldAssignment[]          @relation("FieldAssignmentCreatedBy")
+  treasuryDayClosuresClosed   TreasuryDayClosure[]       @relation("TreasuryDayClosureClosedBy")
   treasuryDayClosuresReopened TreasuryDayClosure[]       @relation("TreasuryDayClosureReopenedBy")
-  orderTemplatesCreated      OrderTemplate[]
-  orderItemProductionUpdates OrderItem[]                @relation("OrderItemProductionUpdatedBy")
-  orderItemReturnsRecorded   OrderItemReturn[]
+  orderTemplatesCreated       OrderTemplate[]
+  orderItemProductionUpdates  OrderItem[]                @relation("OrderItemProductionUpdatedBy")
+  orderItemReturnsRecorded    OrderItemReturn[]
   /// Device Access Control (2026-08-24, owner: "عايز اقدر احدد الأجهزة
   /// المسموح لها بفتح النظام"). `trustedDevices` is Policy B only (a
   /// device bound to exactly this one staff member) — a Policy A device
   /// (`staffId: null`, usable by any staff) has no owner relation at all.
-  trustedDevices             TrustedDevice[]            @relation("TrustedDeviceOwner")
-  devicesApproved            TrustedDevice[]            @relation("TrustedDeviceApprovedBy")
-  devicesBlocked             TrustedDevice[]            @relation("TrustedDeviceBlockedBy")
+  trustedDevices              TrustedDevice[]            @relation("TrustedDeviceOwner")
+  devicesApproved             TrustedDevice[]            @relation("TrustedDeviceApprovedBy")
+  devicesBlocked              TrustedDevice[]            @relation("TrustedDeviceBlockedBy")
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -1064,14 +1065,14 @@ enum DeviceStatus {
 /// `staffId` null = Policy A (device authorized system-wide, any staff
 /// may use it); set = Policy B (bound to exactly this one staff member).
 model TrustedDevice {
-  id          String       @id @default(uuid()) @db.Uuid
-  deviceToken String       @unique
+  id          String        @id @default(uuid()) @db.Uuid
+  deviceToken String        @unique
   /// Owner-editable display name ("جهاز المكتب"); defaults to a
   /// deviceType/browser-derived guess at first registration.
   label       String?
-  staffId     String?      @db.Uuid
+  staffId     String?       @db.Uuid
   staff       StaffProfile? @relation("TrustedDeviceOwner", fields: [staffId], references: [id], onDelete: Cascade)
-  status      DeviceStatus @default(PENDING)
+  status      DeviceStatus  @default(PENDING)
   /// Parsed server-side from the `User-Agent` header at registration —
   /// never client-reported, never a fingerprinting payload.
   deviceType  String?
@@ -1143,7 +1144,7 @@ model BusinessPartner {
 
   /// PRODUCT_ROADMAP.md §2 — where this lead/customer came from. Set once
   /// at creation typically, editable any time from the Overview tab.
-  leadSource LeadSource?
+  leadSource      LeadSource?
   /// Updated automatically whenever a new PartnerNote is added to this
   /// partner (see partnerNotes.ts's createPartnerNote), and editable by
   /// hand from the Overview tab too — the roadmap's "يدوي أو تلقائي" both
@@ -1152,7 +1153,7 @@ model BusinessPartner {
   /// Optional reminder date — purely informational today (no notification
   /// engine exists yet per CLAUDE.md §10), surfaced on the Overview tab so
   /// staff can see it at a glance without a dedicated task list.
-  nextFollowUpAt DateTime?
+  nextFollowUpAt  DateTime?
 
   // FEATURE-002 M4. Zero-or-one Category (a plain nullable FK — no
   // exclusivity/lock pattern needed, unlike ContactPerson.isPrimary or
@@ -1170,47 +1171,49 @@ model BusinessPartner {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  contacts               ContactPerson[]
-  addresses              PartnerAddress[]
+  contacts                  ContactPerson[]
+  addresses                 PartnerAddress[]
   // FEATURE-002 M5. Named `partnerNotes`, not `notes` — the scalar `notes`
   // field above (M1, a single free-text remarks field edited from the
   // Overview tab) already owns that name. `PartnerNote` is a distinct,
   // unlimited, first-class, pinnable, audited entity; the two are not the
   // same concept and are not merged.
-  partnerNotes           PartnerNote[]
+  partnerNotes              PartnerNote[]
   // FEATURE-002 M6. Optional 1:1 — see PartnerCommercialProfile's own doc
   // comment for why this is a separate model, not inline fields here.
-  commercialProfile      PartnerCommercialProfile?
-  orders                 Order[]
-  quotations             Quotation[]
-  treasuryEntries        TreasuryEntry[]
-  tenders                Tender[]
-  attachments            Attachment[]
-  supplierPurchases      SupplierPurchase[]
-  supplierPayments       SupplierPayment[]
+  commercialProfile         PartnerCommercialProfile?
+  orders                    Order[]
+  quotations                Quotation[]
+  treasuryEntries           TreasuryEntry[]
+  tenders                   Tender[]
+  attachments               Attachment[]
+  supplierPurchases         SupplierPurchase[]
+  supplierPayments          SupplierPayment[]
   // FEATURE-004 M1 — a partner holding the SUPPLIER role may be assigned to
   // an EXTERNAL WorkflowStage's StageInstance (VISION.md's External
   // Supplier Workflow), reusing BusinessPartner rather than a parallel
   // Supplier model, per Reuse Before Create (see SupplierPurchase/
   // SupplierPayment's own identical reuse).
-  assignedStageInstances StageInstance[]
+  assignedStageInstances    StageInstance[]
   // See AuditLog.partnerId's doc comment for why this denormalized
   // back-relation exists (Timeline Preparation / Activity Feed Ready).
-  auditLogs              AuditLog[]
-  orderTemplates         OrderTemplate[]
-  itemReorderOverrides   ItemReorderOverride[]
+  auditLogs                 AuditLog[]
+  orderTemplates            OrderTemplate[]
+  itemReorderOverrides      ItemReorderOverride[]
+  /// Reverse of `Lead.convertedPartnerId` — set only when this partner originated from a converted Lead.
+  convertedFromLead         Lead?
+  /// Reverse of `OrderItem.preferredSupplierId` — every item whose staff picked this partner as the intended external supplier at composition time.
+  preferredSupplierForItems OrderItem[]               @relation("OrderItemPreferredSupplier")
+  /// Reverse of `InventoryItem.supplierId` — every stock item whose usual/default supplier is this partner.
+  suppliedInventoryItems    InventoryItem[]           @relation("InventoryItemSupplier")
+  /// Reverse of `PurchaseRequest.supplierId` — every shortfall event routed to this partner.
+  purchaseRequests          PurchaseRequest[]
 
   @@index([isDeleted])
   @@index([status])
   @@index([branchId])
   @@index([nameAr])
   @@index([categoryId])
-  /// Reverse of `Lead.convertedPartnerId` — set only when this partner originated from a converted Lead.
-  convertedFromLead Lead?
-  /// Reverse of `OrderItem.preferredSupplierId` — every item whose staff picked this partner as the intended external supplier at composition time.
-  preferredSupplierForItems OrderItem[] @relation("OrderItemPreferredSupplier")
-  /// Reverse of `InventoryItem.supplierId` — every stock item whose usual/default supplier is this partner.
-  suppliedInventoryItems InventoryItem[] @relation("InventoryItemSupplier")
 }
 
 /// PRODUCT_ROADMAP.md §2 ("المرحلة الثانية") — a Lead is a separate,
@@ -1248,7 +1251,7 @@ model Lead {
   convertedPartnerId String?          @unique @db.Uuid
   convertedPartner   BusinessPartner? @relation(fields: [convertedPartnerId], references: [id], onDelete: SetNull)
   /// Set only when `stage: REJECTED` — why this lead didn't convert.
-  rejectedReason String?
+  rejectedReason     String?
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -1729,17 +1732,17 @@ model Order {
   id            String @id @default(uuid()) @db.Uuid
   invoiceNumber String @unique // e.g. CLP-INV-2026-000001, see DocumentSequence
 
-  branchId  String          @db.Uuid
-  branch    Branch          @relation(fields: [branchId], references: [id])
+  branchId  String           @db.Uuid
+  branch    Branch           @relation(fields: [branchId], references: [id])
   /// Owner (2026-08-20, "فاتورة بدون إسم العميل") — nullable for walk-in/cash
   /// sales (INVENTORY_RETAIL, MANUAL line items) that don't need a
   /// `BusinessPartner` record at all. Application-level rule (not enforced
   /// at the DB level): required unless every item on the order is one of
   /// those two kinds — see `orderService.ts`'s `createOrder`.
-  partnerId String?         @db.Uuid
+  partnerId String?          @db.Uuid
   partner   BusinessPartner? @relation(fields: [partnerId], references: [id])
-  staffId   String          @db.Uuid
-  staff     StaffProfile    @relation(fields: [staffId], references: [id])
+  staffId   String           @db.Uuid
+  staff     StaffProfile     @relation(fields: [staffId], references: [id])
 
   date            DateTime    @default(now())
   subtotal        Decimal     @db.Decimal(12, 2)
@@ -1764,9 +1767,9 @@ model Order {
   documentOverrides  Json?
   documentSnapshot   Json?
 
-  items           OrderItem[]
-  itemGroups      OrderItemGroup[]
-  payments        Payment[]
+  items            OrderItem[]
+  itemGroups       OrderItemGroup[]
+  payments         Payment[]
   /// FEATURE-016+ (2026-08-16, "أمر شغل مستقل لكل صنف حسب مساره") — was a
   /// singular `WorkOrder?` (one order = one order-level production track).
   /// Now plural: one Work Order per distinct `ProductionTrack` actually
@@ -1774,10 +1777,11 @@ model Order {
   /// `workOrderId`) — a mixed-kind order (e.g. an Offset flyer + a
   /// Sublimation mug) gets two independent Work Orders, each tracking only
   /// its own items through its own workflow.
-  workOrders      WorkOrder[]
-  treasuryEntries TreasuryEntry[]
-  attachments     Attachment[]
-  quotationOrigin Quotation?      @relation("QuotationConversion")
+  workOrders       WorkOrder[]
+  treasuryEntries  TreasuryEntry[]
+  attachments      Attachment[]
+  quotationOrigin  Quotation?        @relation("QuotationConversion")
+  purchaseRequests PurchaseRequest[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -1812,14 +1816,14 @@ model OrderItem {
   /// going forward (`orderService.ts`'s create/update paths); historical
   /// orders created before this column existed keep `null` here and fall
   /// back to best-effort `modelName` matching for reporting purposes.
-  readyProductId String?       @db.Uuid
-  readyProduct   ReadyProduct? @relation(fields: [readyProductId], references: [id])
-  serviceId      String?       @db.Uuid
-  service        Service?      @relation(fields: [serviceId], references: [id])
+  readyProductId      String?            @db.Uuid
+  readyProduct        ReadyProduct?      @relation(fields: [readyProductId], references: [id])
+  serviceId           String?            @db.Uuid
+  service             Service?           @relation(fields: [serviceId], references: [id])
   /// Owner (2026-08-27, "رول أب... محتاجة مورد وسعر تكلفة خاصين بيها") —
   /// real catalog FK for a flat-priced BOARDS accessory (e.g. a Roll-Up
   /// stand), same "reuse the readyProductId/serviceId pattern" as above.
-  boardsCatalogItemId String?             @db.Uuid
+  boardsCatalogItemId String?            @db.Uuid
   boardsCatalogItem   BoardsCatalogItem? @relation(fields: [boardsCatalogItemId], references: [id])
 
   /// FEATURE-007 PE-E — the frozen pricing-engine result for this item
@@ -1854,8 +1858,8 @@ model OrderItem {
   /// `tryAutoCreateWorkOrders`). Stays null for items with no
   /// `productionTrack`, or whose track had no published template at save
   /// time (the order still saves — best-effort, never blocks).
-  workOrderId String?    @db.Uuid
-  workOrder   WorkOrder? @relation(fields: [workOrderId], references: [id])
+  workOrderId     String?          @db.Uuid
+  workOrder       WorkOrder?       @relation(fields: [workOrderId], references: [id])
 
   /// Multi-material pricing (2026-08-17) — NOTEBOOK/DIGITAL items only.
   /// When populated, this is the sole source of truth for stock linkage on
@@ -1882,8 +1886,8 @@ model OrderItem {
   /// `productionStatus` are staff-updated as pieces are physically
   /// finished, independent of any other item sharing this WorkOrder.
   requiredQuantity Int?
-  producedQuantity Int                        @default(0)
-  productionStatus OrderItemProductionStatus  @default(WAITING)
+  producedQuantity Int                       @default(0)
+  productionStatus OrderItemProductionStatus @default(WAITING)
 
   productionUpdatedAt   DateTime?
   productionUpdatedById String?       @db.Uuid
@@ -1892,6 +1896,11 @@ model OrderItem {
   /// Owner (2026-08-23, "مرتجعات: بضاعة من المخزون فقط") — only ever
   /// populated for `breakdown.kind === 'INVENTORY_RETAIL'` items.
   returns OrderItemReturn[]
+
+  /// Owner (2026-08-27, "الشراء العاجل لما يكون تبع طلب من الطلبات")
+  /// — populated only when this item's stock deduction took an
+  /// `InventoryItem` negative (see `PurchaseRequest`'s own doc comment).
+  purchaseRequests PurchaseRequest[]
 
   /// Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة") —
   /// an absolute discount amount applied to this item's own frozen
@@ -2066,14 +2075,14 @@ model Quotation {
   id              String @id @default(uuid()) @db.Uuid
   quotationNumber String @unique // e.g. CLP-QUO-2026-000001
 
-  branchId  String          @db.Uuid
-  branch    Branch          @relation(fields: [branchId], references: [id])
+  branchId  String           @db.Uuid
+  branch    Branch           @relation(fields: [branchId], references: [id])
   /// Owner (2026-08-20, "فاتورة بدون إسم العميل") — see Order.partnerId's
   /// doc comment; same nullable walk-in/cash rule applies here.
-  partnerId String?         @db.Uuid
+  partnerId String?          @db.Uuid
   partner   BusinessPartner? @relation(fields: [partnerId], references: [id])
-  staffId   String          @db.Uuid
-  staff     StaffProfile    @relation(fields: [staffId], references: [id])
+  staffId   String           @db.Uuid
+  staff     StaffProfile     @relation(fields: [staffId], references: [id])
 
   date            DateTime        @default(now())
   /// FEATURE-007 (2026-08-12, owner: "التاريخ على عرض السعر يكون Optional") — not every quotation needs an expiry date.
@@ -2162,14 +2171,14 @@ model QuotationItem {
   notes       String?
   description String?
 
-  readyProductId String?       @db.Uuid
-  readyProduct   ReadyProduct? @relation(fields: [readyProductId], references: [id])
-  serviceId      String?       @db.Uuid
-  service        Service?      @relation(fields: [serviceId], references: [id])
+  readyProductId      String?            @db.Uuid
+  readyProduct        ReadyProduct?      @relation(fields: [readyProductId], references: [id])
+  serviceId           String?            @db.Uuid
+  service             Service?           @relation(fields: [serviceId], references: [id])
   /// Owner (2026-08-27, "رول أب... محتاجة مورد وسعر تكلفة خاصين بيها") —
   /// mirrors `OrderItem.boardsCatalogItemId` exactly (same
   /// readyProductId/serviceId-style top-level FK pattern).
-  boardsCatalogItemId String?             @db.Uuid
+  boardsCatalogItemId String?            @db.Uuid
   boardsCatalogItem   BoardsCatalogItem? @relation(fields: [boardsCatalogItemId], references: [id])
 
   kind      String?
@@ -2194,8 +2203,8 @@ model QuotationItem {
   /// built through the same composer as an Order can group items the same
   /// way, and `convertQuotation` carries the grouping + required quantity
   /// into new `OrderItemGroup`/`OrderItem` rows instead of losing them.
-  groupId          String?              @db.Uuid
-  group            QuotationItemGroup?  @relation(fields: [groupId], references: [id])
+  groupId          String?             @db.Uuid
+  group            QuotationItemGroup? @relation(fields: [groupId], references: [id])
   requiredQuantity Int?
 
   /// Owner (2026-08-23, "تخفيض على صنف محدد") — mirrors
@@ -3117,6 +3126,70 @@ model SupplierPayment {
   @@index([isDeleted])
 }
 
+enum PurchaseRequestStatus {
+  PENDING
+  PURCHASED
+}
+
+/// Owner (2026-08-27, "الشراء العاجل لما يكون تبع طلب من الطلبات اللي
+/// العملا طلبوها") — "قائمة شراء عاجل" (part 2 of the supplier-linkage
+/// initiative): one row per real shortfall event, created automatically
+/// the moment an Order's stock deduction (`deductStockForOrderItem`)
+/// would take an `InventoryItem` negative — never a proactive/manual
+/// "add anything you feel like buying" queue, and never a passive
+/// reorder-level scan like the existing "بضاعة ناقصة" widget (which stays
+/// untouched). `supplierId` is copied from `InventoryItem.supplierId` at
+/// creation time (nullable — an item with no default supplier registered
+/// yet still gets a row, staff assigns one before marking it bought).
+/// Marking `PURCHASED` atomically does two things (owner confirmed both):
+/// records the bought quantity as a real `IN` StockMovement, and books
+/// `purchasedAmount` as a `SupplierPurchase` against `supplierId` (skipped
+/// if no supplier was ever assigned) — same "دورة شراء كاملة" the BOARDS
+/// external-supplier workflow already does for a Work Order, applied here
+/// to a plain stock shortfall instead.
+model PurchaseRequest {
+  id String @id @default(uuid()) @db.Uuid
+
+  inventoryItemId String           @db.Uuid
+  inventoryItem   InventoryItem    @relation(fields: [inventoryItemId], references: [id])
+  supplierId      String?          @db.Uuid
+  supplier        BusinessPartner? @relation(fields: [supplierId], references: [id])
+
+  /// The order whose stock deduction triggered this shortfall — purely
+  /// for staff traceability ("ده طلب مين اللي خلانا نحتاج نشتري ده"),
+  /// never used to gate/replay anything.
+  orderId     String     @db.Uuid
+  order       Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// Nullable + `SetNull` (not `Cascade`) deliberately — editing an
+  /// Order's items hard-deletes and recreates its `OrderItem` rows (see
+  /// `updateOrder`'s "تصميم واحد بمتغيرات إنتاج متعددة" item-replace
+  /// pattern), which would otherwise silently wipe out a real purchase
+  /// task/history just because staff tweaked an unrelated line on the
+  /// same order. `orderId` above stays the durable link.
+  orderItemId String?    @db.Uuid
+  orderItem   OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+
+  /// The exact shortfall at creation time (how far negative the stock
+  /// went) — pre-filled as the default when staff marks it bought, but
+  /// editable there since the real purchased quantity often differs.
+  quantityNeeded Decimal @db.Decimal(12, 3)
+
+  status PurchaseRequestStatus @default(PENDING)
+
+  purchasedQuantity Decimal?      @db.Decimal(12, 3)
+  purchasedAmount   Decimal?      @db.Decimal(12, 2)
+  purchasedAt       DateTime?
+  purchasedById     String?       @db.Uuid
+  purchasedBy       StaffProfile? @relation("PurchaseRequestPurchasedBy", fields: [purchasedById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([inventoryItemId])
+  @@index([supplierId])
+  @@index([orderId])
+  @@index([status])
+}
+
 // ---------------------------------------------------------------------------
 // Tenders (schema only — API/UI in Phase 12). Shared across branches.
 // ---------------------------------------------------------------------------
@@ -3203,6 +3276,7 @@ model InventoryItem {
   stockMovements     StockMovement[]
   orderItems         OrderItem[]
   orderItemMaterials OrderItemMaterial[]
+  purchaseRequests   PurchaseRequest[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
