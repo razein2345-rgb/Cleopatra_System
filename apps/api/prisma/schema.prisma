@@ -761,6 +761,44 @@ model ReadyProduct {
   @@index([isDeleted])
 }
 
+/// Owner (2026-08-27, "المفروض أقدر أضيف خدمات في صنف اللوحات والإعلانات...
+/// زي الروول اب بيتكون من رول أب وبانر بنشتري الرول أب من بره وبنوديه
+/// للمورد علشان يستعمله يركب عليه البانر") — an admin-managed catalog of
+/// named, flat-priced BOARDS accessories (e.g. "روول أب") that don't fit
+/// the existing material+width+height geometry calculation
+/// (`boardsCostCalculation.ts`): a fixed sale price plus an optional real
+/// supplier cost, so profit can be computed the same way as for a
+/// ReadyProduct. Deliberately mirrors ReadyProduct's shape (not a global
+/// Setting-level field) since this is a per-item named catalog, not a
+/// single system-wide number.
+///
+/// `supplierCost` is nullable/variable by design — the owner confirmed the
+/// real cost differs order to order depending on who supplies the
+/// stand-only piece vs. who bundles it with the banner print/mounting
+/// ("ساعات... التكلفه على بعض وساعات... بيحاسبني... لوحده"), so this is
+/// only the *default*; `OrderItemPricing.supplierCostOverride`
+/// (orderItemPricing.ts) lets staff override it per order. Restricted the
+/// same way as ReadyProduct.costPrice — `inventory.costPrice` permission,
+/// not plain `settings.edit` (see costPriceGuard.ts).
+model BoardsCatalogItem {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  price        Decimal  @db.Decimal(12, 2)
+  supplierCost Decimal? @db.Decimal(12, 2)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  quotationItems QuotationItem[]
+  orderItems     OrderItem[]
+
+  @@index([isDeleted])
+}
+
 model Service {
   id       String          @id @default(uuid()) @db.Uuid
   name     String
@@ -1776,6 +1814,11 @@ model OrderItem {
   readyProduct   ReadyProduct? @relation(fields: [readyProductId], references: [id])
   serviceId      String?       @db.Uuid
   service        Service?      @relation(fields: [serviceId], references: [id])
+  /// Owner (2026-08-27, "رول أب... محتاجة مورد وسعر تكلفة خاصين بيها") —
+  /// real catalog FK for a flat-priced BOARDS accessory (e.g. a Roll-Up
+  /// stand), same "reuse the readyProductId/serviceId pattern" as above.
+  boardsCatalogItemId String?             @db.Uuid
+  boardsCatalogItem   BoardsCatalogItem? @relation(fields: [boardsCatalogItemId], references: [id])
 
   /// FEATURE-007 PE-E — the frozen pricing-engine result for this item
   /// (packages/shared/src/pricing/*'s `.total`). Kept as its own queryable/
@@ -1876,6 +1919,7 @@ model OrderItem {
   @@index([groupId])
   @@index([readyProductId])
   @@index([serviceId])
+  @@index([boardsCatalogItemId])
 }
 
 /// Owner (2026-08-23, "مرتجعات" — عمل مرتجع لبضاعة جاهزة بيعت غلط، رجّع
@@ -2120,6 +2164,11 @@ model QuotationItem {
   readyProduct   ReadyProduct? @relation(fields: [readyProductId], references: [id])
   serviceId      String?       @db.Uuid
   service        Service?      @relation(fields: [serviceId], references: [id])
+  /// Owner (2026-08-27, "رول أب... محتاجة مورد وسعر تكلفة خاصين بيها") —
+  /// mirrors `OrderItem.boardsCatalogItemId` exactly (same
+  /// readyProductId/serviceId-style top-level FK pattern).
+  boardsCatalogItemId String?             @db.Uuid
+  boardsCatalogItem   BoardsCatalogItem? @relation(fields: [boardsCatalogItemId], references: [id])
 
   kind      String?
   modelName String?
@@ -2158,6 +2207,7 @@ model QuotationItem {
   @@index([quotationId])
   @@index([readyProductId])
   @@index([serviceId])
+  @@index([boardsCatalogItemId])
   @@index([groupId])
 }
 

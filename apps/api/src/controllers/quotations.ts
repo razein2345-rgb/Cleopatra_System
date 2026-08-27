@@ -236,6 +236,7 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
           const result = priced[index]!;
           const readyProductName = item.readyProductId ? (itemNames.get(item.readyProductId) ?? null) : null;
           const serviceName = item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null;
+          const boardsCatalogItemName = item.boardsCatalogItemId ? (itemNames.get(item.boardsCatalogItemId) ?? null) : null;
           return {
             quotationId: existing.id,
             itemType: item.itemType,
@@ -243,8 +244,9 @@ export async function updateQuotation(req: Request<{ id: string }>, res: Respons
             description: item.description ?? null,
             readyProductId: item.readyProductId ?? null,
             serviceId: item.serviceId ?? null,
+            boardsCatalogItemId: item.boardsCatalogItemId ?? null,
             kind: item.itemType,
-            modelName: readyProductName ?? serviceName,
+            modelName: readyProductName ?? serviceName ?? boardsCatalogItemName,
             breakdown: result.breakdown as Prisma.InputJsonValue,
             itemTotal: result.total,
             sizeFamilyKey: result.sizeFamilyKey,
@@ -511,6 +513,8 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
               readyProductName: item.modelName,
               serviceId: item.serviceId,
               serviceName: item.modelName,
+              boardsCatalogItemId: item.boardsCatalogItemId,
+              boardsCatalogItemName: item.modelName,
               itemTotal: item.itemTotal?.toNumber() ?? null,
               // A converted Order's `OrderItem` has no `description` column
               // (unlike `QuotationItem`, which does) — merge the quotation's

@@ -50,6 +50,8 @@ export interface PricingContext {
   catalogPriceById: Map<string, number>;
   /** `INVENTORY_RETAIL` items only (§ held-stock ready-made merchandise) — `InventoryItem.salePrice`, distinct from `sheetPriceByInventoryItemId` (a paper/sheet cost input, never a direct sale price). */
   salePriceByInventoryItemId: Map<string, number>;
+  /** Owner (2026-08-27, "روول أب... محتاجة مورد وسعر تكلفة خاصين بيها") — `BOARDS` items whose parent `boardsCatalogItemId` is set (a flat-priced admin-managed accessory, bypasses the material/geometry formula entirely). */
+  boardsCatalogById: Map<string, { name: string; price: number; supplierCost: number | null }>;
   /** Owner (2026-08-20) — every `DigitalPriceTier` row, grouped by `digitalTierTableKey`. Always fetched in full (12 small tables, cheap) rather than filtered to just the items being priced, since a caller with zero DIGITAL items simply never looks this map up. */
   digitalPriceTiersByKey: Map<string, DigitalPriceTier[]>;
 }
@@ -129,6 +131,7 @@ export interface PricingLineItem {
   pricing: OrderItemPricingInput;
   readyProductId?: string | null;
   serviceId?: string | null;
+  boardsCatalogItemId?: string | null;
 }
 
 /**
@@ -162,8 +165,16 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
         .filter((id): id is string => Boolean(id)),
     ),
   ];
+  const boardsCatalogIds = [
+    ...new Set(
+      items
+        .filter((i) => i.pricing.kind === 'BOARDS')
+        .map((i) => i.boardsCatalogItemId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
 
-  const [setting, families, inventoryItems, readyProducts, services, digitalPriceTiers] = await Promise.all([
+  const [setting, families, inventoryItems, readyProducts, services, digitalPriceTiers, boardsCatalogItems] = await Promise.all([
     prisma.setting.findFirstOrThrow(),
     needsSizeFamilies
       ? prisma.sizeFamily.findMany({ where: { isDeleted: false }, include: { entries: true } })
@@ -178,6 +189,9 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
       ? prisma.service.findMany({ where: { id: { in: catalogIds } }, select: { id: true, price: true } })
       : Promise.resolve([]),
     needsDigitalTiers ? prisma.digitalPriceTier.findMany() : Promise.resolve([]),
+    boardsCatalogIds.length
+      ? prisma.boardsCatalogItem.findMany({ where: { id: { in: boardsCatalogIds } }, select: { id: true, name: true, price: true, supplierCost: true } })
+      : Promise.resolve([]),
   ]);
 
   const sheetPriceByInventoryItemId = new Map<string, number>();
@@ -192,6 +206,11 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
   const catalogPriceById = new Map<string, number>();
   for (const p of readyProducts) catalogPriceById.set(p.id, p.price.toNumber());
   for (const s of services) catalogPriceById.set(s.id, s.price.toNumber());
+
+  const boardsCatalogById = new Map<string, { name: string; price: number; supplierCost: number | null }>();
+  for (const b of boardsCatalogItems) {
+    boardsCatalogById.set(b.id, { name: b.name, price: b.price.toNumber(), supplierCost: b.supplierCost?.toNumber() ?? null });
+  }
 
   const digitalPriceTiersByKey = new Map<string, DigitalPriceTier[]>();
   for (const tier of digitalPriceTiers) {
@@ -214,6 +233,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
     catalogPriceById,
     salePriceByInventoryItemId,
     digitalPriceTiersByKey,
+    boardsCatalogById,
   };
 }
 
@@ -573,6 +593,39 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       };
     }
     case 'BOARDS': {
+      // Owner (2026-08-27, "روول أب... بيتكون من رول أب وبانر... مش تابعة
+      // للبانر نفسه") — a flat-priced catalog accessory bypasses the
+      // material/geometry formula entirely, same "either/or" dispatch as
+      // PRODUCT/SERVICE's readyProductId/serviceId above.
+      if (item.boardsCatalogItemId) {
+        const catalogItem = ctx.boardsCatalogById.get(item.boardsCatalogItemId);
+        if (!catalogItem) {
+          throw new PricingInputError(`No boards catalog item found for "${item.boardsCatalogItemId}"`);
+        }
+        const extraCosts = sumExtraCosts(pricing);
+        const total = calculateProductOrServiceCost(catalogItem.price, pricing.quantity, extraCosts);
+        const supplierCostPerUnit = pricing.supplierCostOverride ?? catalogItem.supplierCost ?? undefined;
+        return {
+          total,
+          breakdown: {
+            kind: pricing.kind,
+            boardsCatalogItemId: item.boardsCatalogItemId,
+            itemName: catalogItem.name,
+            unitPrice: catalogItem.price,
+            quantity: pricing.quantity,
+            extraCosts,
+            total,
+            ...(supplierCostPerUnit !== undefined ? { supplierCost: supplierCostPerUnit * pricing.quantity } : {}),
+          } as unknown as Prisma.InputJsonValue,
+          sheetsNeeded: null,
+          inventoryItemId: null,
+          sizeFamilyKey: null,
+          realSizeLabel: null,
+        };
+      }
+      if (!pricing.material || pricing.widthCm === undefined || pricing.heightCm === undefined) {
+        throw new PricingInputError('A BOARDS item requires either boardsCatalogItemId or material/widthCm/heightCm');
+      }
       const result = calculateBoardsCost({
         material: pricing.material,
         widthCm: pricing.widthCm,

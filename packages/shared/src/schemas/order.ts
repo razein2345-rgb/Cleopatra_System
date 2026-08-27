@@ -159,6 +159,11 @@ export const orderItemSchema = z.object({
   // reporting falls back to best-effort `modelName` matching for those.
   readyProductId: z.string().uuid().nullable(),
   serviceId: z.string().uuid().nullable(),
+  // Owner (2026-08-27, "رول أب... محتاجة مورد وسعر تكلفة خاصين بيها") —
+  // real catalog FK for a flat-priced BOARDS accessory, same "parent item
+  // schema, not inside `pricing`" convention as readyProductId/serviceId
+  // above.
+  boardsCatalogItemId: z.string().uuid().nullable(),
   createdAt: z.string(),
 });
 
@@ -248,6 +253,7 @@ export const createOrderItemSchema = z.object({
   sellophaneType: z.string().trim().min(1).max(200).optional(),
   readyProductId: z.string().uuid().optional(),
   serviceId: z.string().uuid().optional(),
+  boardsCatalogItemId: z.string().uuid().optional(),
   // FEATURE-007 — id of an already-uploaded Attachment (POST
   // /api/attachments happens before the item is added to the cart); the
   // service resolves it to a real URL and freezes that into the item's

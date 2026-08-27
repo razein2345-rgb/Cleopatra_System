@@ -38,6 +38,7 @@ import { inventoryCategoriesRouter } from './inventoryCategories.js';
 import { reorderOverridesRouter } from './reorderOverrides.js';
 import { reportsRouter } from './reports.js';
 import { suppliersRouter } from './suppliers.js';
+import { boardsCatalogItemsRouter } from './boardsCatalogItems.js';
 
 export const apiRouter = Router();
 
@@ -54,6 +55,7 @@ api.use('/settings', settingsRouter);
 api.use('/sheet-types', sheetTypesRouter);
 api.use('/size-families', sizeFamiliesRouter);
 api.use('/ready-products', readyProductsRouter);
+api.use('/boards-catalog-items', boardsCatalogItemsRouter);
 api.use('/services', servicesRouter);
 api.use('/partners', businessPartnersRouter);
 api.use('/reorder-overrides', reorderOverridesRouter);

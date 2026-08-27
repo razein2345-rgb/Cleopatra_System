@@ -37,3 +37,31 @@ export function rejectCostPriceWrite(input: { costPrice?: unknown }, auth: { per
   }
   return false;
 }
+
+/**
+ * Owner (2026-08-27, "روول أب... محتاجة مورد وسعر تكلفة خاصين بيها") —
+ * `BoardsCatalogItem.supplierCost` gated by the identical `inventory.costPrice`
+ * permission as `costPrice` above (same sensitive-cost-data reasoning, this
+ * catalog is conceptually closer to ReadyProduct than to a Setting-level
+ * field) — same `canSeeCostPrice` check, just a different field name.
+ */
+export function stripSupplierCost<T extends { supplierCost?: number | null }>(dto: T, auth: { permissions: string[] }): T {
+  if (canSeeCostPrice(auth)) return dto;
+  const { supplierCost: _supplierCost, ...rest } = dto;
+  return rest as T;
+}
+
+export function stripSupplierCostList<T extends { supplierCost?: number | null }>(dtos: T[], auth: { permissions: string[] }): T[] {
+  return dtos.map((dto) => stripSupplierCost(dto, auth));
+}
+
+/** Rejects (403) a create/update call that tries to set `supplierCost` from a caller without `inventory.costPrice`. Returns true if it responded (caller should stop). */
+export function rejectSupplierCostWrite(input: { supplierCost?: unknown }, auth: { permissions: string[] }, res: Response): boolean {
+  if (input.supplierCost !== undefined && !canSeeCostPrice(auth)) {
+    res
+      .status(403)
+      .json({ success: false, error: { message: 'تعديل سعر التكلفة محتاج صلاحية "سعر التكلفة"', code: 'COST_PRICE_RESTRICTED' } });
+    return true;
+  }
+  return false;
+}

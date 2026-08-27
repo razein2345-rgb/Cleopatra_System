@@ -35,6 +35,7 @@ export const quotationItemSchema = z.object({
   description: z.string().nullable(),
   readyProductId: z.string().uuid().nullable(),
   serviceId: z.string().uuid().nullable(),
+  boardsCatalogItemId: z.string().uuid().nullable(),
   kind: z.string().nullable(),
   modelName: z.string().nullable(),
   breakdown: z.unknown().nullable(),
@@ -69,6 +70,7 @@ export const createQuotationItemSchema = z.object({
   description: z.string().trim().min(1).max(1000).optional(),
   readyProductId: z.string().uuid().optional(),
   serviceId: z.string().uuid().optional(),
+  boardsCatalogItemId: z.string().uuid().optional(),
   // FEATURE-007 — same attachment-linking pattern as createOrderItemSchema
   // (order.ts) — see its doc comment.
   attachmentId: z.string().uuid().optional(),

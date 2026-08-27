@@ -241,9 +241,18 @@ const unitPriceOverrideFields = {
 
 export const boardsPricingInputSchema = z.object({
   kind: z.literal('BOARDS'),
-  material: boardMaterialSchema,
-  widthCm: z.number().positive(),
-  heightCm: z.number().positive(),
+  // Owner (2026-08-27, "رول أب... حتة واحدة زي الحامل بتاعت الرول أب
+  // محتاجة مورد وسعر تكلفة خاصين بيها، مش تابعة للبانر نفسه") — when the
+  // parent item's `boardsCatalogItemId` is set (a flat-priced admin-managed
+  // accessory, e.g. a Roll-Up stand), `material`/`widthCm`/`heightCm` below
+  // are not used at all — same "either/or, checked at runtime in
+  // pricingEngineService.ts" shape as PRODUCT/SERVICE's `readyProductId`/
+  // `serviceId` on the parent item schema (not inside this pricing input).
+  material: boardMaterialSchema.optional(),
+  widthCm: z.number().positive().optional(),
+  heightCm: z.number().positive().optional(),
+  /** `boardsCatalogItemId` items only — replaces that item's own default `supplierCost` for this order, since the real cost varies by how it was actually sourced that time (owner: "ساعات... التكلفه على بعض وساعات... بيحاسبني... لوحده"). */
+  supplierCostOverride: z.number().nonnegative().optional(),
   quantity: z.number().int().positive(),
   hasDesign: z.boolean().optional(),
   hasSellophane: z.boolean().optional(),

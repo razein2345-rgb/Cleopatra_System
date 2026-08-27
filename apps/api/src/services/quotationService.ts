@@ -36,6 +36,7 @@ export function mapQuotationItemToDto(item: QuotationItemRecord): QuotationItem 
     description: item.description,
     readyProductId: item.readyProductId,
     serviceId: item.serviceId,
+    boardsCatalogItemId: item.boardsCatalogItemId,
     kind: item.kind,
     modelName: item.modelName,
     breakdown: item.breakdown,
@@ -195,6 +196,7 @@ export async function validateQuotationItemRefs(
   items: Array<{
     readyProductId?: string;
     serviceId?: string;
+    boardsCatalogItemId?: string;
     description?: string;
   }>,
 ): Promise<void> {
@@ -216,9 +218,17 @@ export async function validateQuotationItemRefs(
         throw new QuotationItemValidationError('Referenced service not found');
       }
     }
-    if (!item.readyProductId && !item.serviceId && !item.description) {
+    // Owner (2026-08-27, "روول أب... محتاجة مورد وسعر تكلفة خاصين بيها") —
+    // same existence check as readyProductId/serviceId above.
+    if (item.boardsCatalogItemId) {
+      const catalogItem = await prisma.boardsCatalogItem.findUnique({ where: { id: item.boardsCatalogItemId } });
+      if (!catalogItem || catalogItem.isDeleted) {
+        throw new QuotationItemValidationError('Referenced boards catalog item not found');
+      }
+    }
+    if (!item.readyProductId && !item.serviceId && !item.boardsCatalogItemId && !item.description) {
       throw new QuotationItemValidationError(
-        'An item with no product/service reference requires a description',
+        'An item with no product/service/catalog reference requires a description',
       );
     }
   }
@@ -306,14 +316,16 @@ export async function createQuotation(
             const result = priced[index]!;
             const readyProductName = item.readyProductId ? (itemNames.get(item.readyProductId) ?? null) : null;
             const serviceName = item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null;
+            const boardsCatalogItemName = item.boardsCatalogItemId ? (itemNames.get(item.boardsCatalogItemId) ?? null) : null;
             return {
               itemType: item.itemType,
               notes: item.notes ?? null,
               description: item.description ?? null,
               readyProductId: item.readyProductId ?? null,
               serviceId: item.serviceId ?? null,
+              boardsCatalogItemId: item.boardsCatalogItemId ?? null,
               kind: item.itemType,
-              modelName: readyProductName ?? serviceName,
+              modelName: readyProductName ?? serviceName ?? boardsCatalogItemName,
               breakdown: {
                 ...(result.breakdown as Record<string, unknown>),
                 referenceImageUrl: item.attachmentId ? (attachmentUrlById.get(item.attachmentId) ?? null) : null,

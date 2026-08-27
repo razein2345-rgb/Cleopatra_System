@@ -219,6 +219,7 @@ export function mapOrderItemToDto(item: OrderItemRecord, canSeeInternal: boolean
     // created before this column existed.
     readyProductId: item.readyProductId,
     serviceId: item.serviceId,
+    boardsCatalogItemId: item.boardsCatalogItemId,
     createdAt: item.createdAt.toISOString(),
   };
 }
@@ -406,6 +407,10 @@ export function buildOrderItemCreate(item: {
   readyProductName?: string | null;
   serviceId?: string | null;
   serviceName?: string | null;
+  // Owner (2026-08-27, "روول أب... محتاجة مورد وسعر تكلفة خاصين بيها") —
+  // mirrors readyProductId/serviceId exactly, see OrderItem.boardsCatalogItemId's schema doc comment.
+  boardsCatalogItemId?: string | null;
+  boardsCatalogItemName?: string | null;
   // FEATURE-007 PE-E — the frozen pricing-engine result. `breakdownOverride`
   // replaces the ad-hoc snapshot object below entirely when supplied
   // (`createOrder` always supplies it); `convertQuotation` never does yet.
@@ -453,10 +458,11 @@ export function buildOrderItemCreate(item: {
   preferredSupplierId: string | null;
   readyProductId: string | null;
   serviceId: string | null;
+  boardsCatalogItemId: string | null;
 } {
   return {
     kind: item.itemType,
-    modelName: item.readyProductName ?? item.serviceName ?? null,
+    modelName: item.readyProductName ?? item.serviceName ?? item.boardsCatalogItemName ?? null,
     itemTotal: item.itemTotal ?? null,
     sizeFamilyKey: item.sizeFamilyKey ?? null,
     realSizeLabel: item.realSizeLabel ?? null,
@@ -472,6 +478,7 @@ export function buildOrderItemCreate(item: {
     // baked into the ad-hoc breakdown fallback below.
     readyProductId: item.readyProductId ?? null,
     serviceId: item.serviceId ?? null,
+    boardsCatalogItemId: item.boardsCatalogItemId ?? null,
     breakdown:
       item.breakdownOverride ??
       {
@@ -495,23 +502,28 @@ export function buildOrderItemCreate(item: {
  * per item.
  */
 export async function resolveItemCatalogNames(
-  items: Array<{ readyProductId?: string; serviceId?: string }>,
+  items: Array<{ readyProductId?: string; serviceId?: string; boardsCatalogItemId?: string }>,
 ): Promise<Map<string, string>> {
   const readyProductIds = [...new Set(items.map((i) => i.readyProductId).filter((id): id is string => Boolean(id)))];
   const serviceIds = [...new Set(items.map((i) => i.serviceId).filter((id): id is string => Boolean(id)))];
+  const boardsCatalogItemIds = [...new Set(items.map((i) => i.boardsCatalogItemId).filter((id): id is string => Boolean(id)))];
 
-  const [readyProducts, services] = await Promise.all([
+  const [readyProducts, services, boardsCatalogItems] = await Promise.all([
     readyProductIds.length
       ? prisma.readyProduct.findMany({ where: { id: { in: readyProductIds } }, select: { id: true, name: true } })
       : Promise.resolve([]),
     serviceIds.length
       ? prisma.service.findMany({ where: { id: { in: serviceIds } }, select: { id: true, name: true } })
       : Promise.resolve([]),
+    boardsCatalogItemIds.length
+      ? prisma.boardsCatalogItem.findMany({ where: { id: { in: boardsCatalogItemIds } }, select: { id: true, name: true } })
+      : Promise.resolve([]),
   ]);
 
   const names = new Map<string, string>();
   for (const p of readyProducts) names.set(p.id, p.name);
   for (const s of services) names.set(s.id, s.name);
+  for (const b of boardsCatalogItems) names.set(b.id, b.name);
   return names;
 }
 
@@ -645,6 +657,8 @@ export async function createOrder(
             readyProductName: item.readyProductId ? (itemNames.get(item.readyProductId) ?? null) : null,
             serviceId: item.serviceId,
             serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
+            boardsCatalogItemId: item.boardsCatalogItemId,
+            boardsCatalogItemName: item.boardsCatalogItemId ? (itemNames.get(item.boardsCatalogItemId) ?? null) : null,
             itemTotal: result.total,
             groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
             requiredQuantity: resolveRequiredQuantity(item.pricing),
@@ -948,6 +962,8 @@ export async function updateOrder(
             readyProductName: item.readyProductId ? (itemNames.get(item.readyProductId) ?? null) : null,
             serviceId: item.serviceId,
             serviceName: item.serviceId ? (itemNames.get(item.serviceId) ?? null) : null,
+            boardsCatalogItemId: item.boardsCatalogItemId,
+            boardsCatalogItemName: item.boardsCatalogItemId ? (itemNames.get(item.boardsCatalogItemId) ?? null) : null,
             itemTotal: result.total,
             groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
             requiredQuantity: resolveRequiredQuantity(item.pricing),

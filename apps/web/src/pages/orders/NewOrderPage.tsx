@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   Attachment,
   BoardMaterial,
+  BoardsCatalogItem,
   BranchSummary,
   BusinessPartner,
   CreateOrderInput,
@@ -256,6 +257,17 @@ interface DraftItem {
   heightCm: string;
   hasDesign: boolean;
   hasSellophane: boolean;
+  /**
+   * Owner (2026-08-27, "روول أب... بيتكون من رول أب وبانر... مش تابعة
+   * للبانر نفسه") — an alternative to material/widthCm/heightCm above: pick
+   * a flat-priced admin-managed catalog item (e.g. "روول أب") instead of
+   * entering a material/size, same "either/or, one mutually-exclusive mode"
+   * shape as priceOverrideMode below.
+   */
+  boardsUseCatalog: boolean;
+  boardsCatalogItemId: string;
+  boardsSupplierCostOverrideEnabled: boolean;
+  boardsSupplierCostOverrideValue: string;
   // DIGITAL — multi-component (2026-08-17, owner: "الغلاف بتاعها خامة
   // والداخلي خامة تانية"). Always at least one component; each is priced
   // fully independently and summed (see `calculateDigitalMultiComponentCost`).
@@ -400,6 +412,10 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     heightCm: '',
     hasDesign: false,
     hasSellophane: false,
+    boardsUseCatalog: false,
+    boardsCatalogItemId: '',
+    boardsSupplierCostOverrideEnabled: false,
+    boardsSupplierCostOverrideValue: '0',
     digitalComponents: [emptyDigitalComponent()],
     profitPercentEnabled: false,
     profitPercentOverride: '0',
@@ -611,6 +627,15 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...paperCostOverrideFieldOf(d),
       };
     case 'BOARDS':
+      if (d.boardsUseCatalog) {
+        if (!d.boardsCatalogItemId || !d.quantity) return null;
+        return {
+          kind: 'BOARDS',
+          quantity: toNum(d.quantity),
+          ...extra,
+          ...(d.boardsSupplierCostOverrideEnabled ? { supplierCostOverride: toNum(d.boardsSupplierCostOverrideValue) } : {}),
+        };
+      }
       if (!d.widthCm || !d.heightCm || !d.quantity) return null;
       return {
         kind: 'BOARDS',
@@ -711,6 +736,8 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
   d.description = line.description ?? '';
   d.readyProductId = line.readyProductId ?? '';
   d.serviceId = line.serviceId ?? '';
+  d.boardsCatalogItemId = line.boardsCatalogItemId ?? '';
+  d.boardsUseCatalog = Boolean(line.boardsCatalogItemId);
   d.attachmentId = line.attachmentId ?? '';
   d.attachmentUrl = line.attachmentUrl ?? '';
   d.attachmentFileName = line.attachmentUrl ? d.attachmentFileName : '';
@@ -841,12 +868,18 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       d.paperCostOverrideValue = String(p.paperCostOverride ?? 0);
       break;
     case 'BOARDS':
-      d.material = p.material;
-      d.widthCm = String(p.widthCm);
-      d.heightCm = String(p.heightCm);
-      d.hasDesign = p.hasDesign ?? false;
-      d.hasSellophane = p.hasSellophane ?? false;
-      applyPriceOverrideToDraft(d, p.pricePerMeterOverride, p.pricePerMeterMarkupPercent);
+      if (p.material) {
+        d.material = p.material;
+        d.widthCm = String(p.widthCm);
+        d.heightCm = String(p.heightCm);
+        d.hasDesign = p.hasDesign ?? false;
+        d.hasSellophane = p.hasSellophane ?? false;
+        applyPriceOverrideToDraft(d, p.pricePerMeterOverride, p.pricePerMeterMarkupPercent);
+      } else {
+        d.boardsSupplierCostOverrideEnabled = p.supplierCostOverride !== undefined;
+        d.boardsSupplierCostOverrideValue = String(p.supplierCostOverride ?? 0);
+      }
+      d.quantity = String(p.quantity);
       break;
     case 'DIGITAL':
       d.digitalComponents = p.components.map((c) => ({
@@ -889,6 +922,8 @@ interface PricingCtx {
   sheetPriceByInventoryItemId: Map<string, number>;
   catalogPriceById: Map<string, number>;
   salePriceByInventoryItemId: Map<string, number>;
+  /** Owner (2026-08-27, "روول أب... محتاجة مورد وسعر تكلفة خاصين بيها") — mirrors `catalogPriceById` but keyed to `BoardsCatalogItem`, whose flat-priced items bypass the material/geometry BOARDS formula entirely. */
+  boardsCatalogById: Map<string, { name: string; price: number; supplierCost: number | null }>;
   /** Owner (2026-08-20) — every `DigitalPriceTier`, grouped by `digitalTierTableKey` (mirrors the same grouping `pricingEngineService.ts` does server-side, so the live preview matches what submitting will actually charge). */
   digitalPriceTiersByKey: Map<string, DigitalPriceTierDto[]>;
 }
@@ -949,7 +984,7 @@ function previewItemTotal(
 ): { total: number; error: string | null; result: PricingPreviewResult | null } {
   const pricing = buildPricingInput(d);
   if (!pricing) return { total: 0, error: null, result: null };
-  return pricingPreviewFromInput(pricing, d.readyProductId || d.serviceId, ctx);
+  return pricingPreviewFromInput(pricing, d.readyProductId || d.serviceId || d.boardsCatalogItemId, ctx);
 }
 
 /**
@@ -1089,10 +1124,21 @@ function pricingPreviewFromInput(
         return { total: r.total, error: null, result: r };
       }
       case 'BOARDS': {
+        // Owner (2026-08-27, "روول أب... مش تابعة للبانر نفسه") — a
+        // flat-priced catalog item (no material set) bypasses the
+        // geometry formula entirely, same "either/or" shape as PRODUCT/
+        // SERVICE above.
+        if (!pricing.material) {
+          if (!catalogId) return { total: 0, error: null, result: null };
+          const catalogItem = ctx.boardsCatalogById.get(catalogId);
+          if (!catalogItem) return { total: 0, error: 'لا يوجد سعر لهذا الصنف', result: null };
+          const total = calculateProductOrServiceCost(catalogItem.price, pricing.quantity, extraCosts);
+          return { total, error: null, result: { unitPrice: catalogItem.price, extraCosts, total } };
+        }
         const r = calculateBoardsCost({
           material: pricing.material,
-          widthCm: pricing.widthCm,
-          heightCm: pricing.heightCm,
+          widthCm: pricing.widthCm!,
+          heightCm: pricing.heightCm!,
           quantity: pricing.quantity,
           hasDesign: pricing.hasDesign,
           hasSellophane: pricing.hasSellophane,
@@ -1165,7 +1211,7 @@ function pricingPreviewFromInput(
 }
 
 /** Short human line shown on the cart row — not the frozen breakdown, just enough for the staff member to recognize which item is which. */
-function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Service[]): string {
+function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Service[], boardsCatalogItems: BoardsCatalogItem[] = []): string {
   switch (d.kind) {
     case 'LOOSE_PAPER':
       return `${d.itemType || KIND_LABELS.LOOSE_PAPER} — ${d.realSizeLabel} — الكمية ${d.quantity} — ${d.colorCount} لون`;
@@ -1176,6 +1222,9 @@ function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Se
     case 'FOLDER':
       return `${d.itemType || KIND_LABELS.FOLDER} — ${d.realSizeLabel} — ${d.quantity} قطعة`;
     case 'BOARDS':
+      if (d.boardsUseCatalog) {
+        return `${d.itemType || boardsCatalogItems.find((b) => b.id === d.boardsCatalogItemId)?.name || KIND_LABELS.BOARDS} — ${d.quantity} قطعة`;
+      }
       return `${d.itemType || BOARD_MATERIAL_LABELS[d.material]} — ${d.widthCm}×${d.heightCm} سم — ${d.quantity} قطعة`;
     case 'DIGITAL':
       return `${d.itemType || KIND_LABELS.DIGITAL} — ${d.digitalComponents
@@ -1208,6 +1257,8 @@ function describeFromPricingInput(
   serviceId: string | undefined,
   readyProducts: ReadyProduct[],
   services: Service[],
+  boardsCatalogItemId?: string,
+  boardsCatalogItems: BoardsCatalogItem[] = [],
 ): string {
   switch (pricing.kind) {
     case 'LOOSE_PAPER':
@@ -1219,6 +1270,9 @@ function describeFromPricingInput(
     case 'FOLDER':
       return `${itemType || KIND_LABELS.FOLDER} — ${pricing.realSizeLabel} — ${pricing.quantity} قطعة`;
     case 'BOARDS':
+      if (!pricing.material) {
+        return `${itemType || boardsCatalogItems.find((b) => b.id === boardsCatalogItemId)?.name || KIND_LABELS.BOARDS} — ${pricing.quantity} قطعة`;
+      }
       return `${itemType || BOARD_MATERIAL_LABELS[pricing.material]} — ${pricing.widthCm}×${pricing.heightCm} سم — ${pricing.quantity} قطعة`;
     case 'DIGITAL':
       return `${itemType || KIND_LABELS.DIGITAL} — ${pricing.components
@@ -1272,8 +1326,14 @@ function cartLineBreakdownRows(line: CartLine): { costRows: { label: string; val
 
 /** Loosely-typed shape of everything `computeItemPricing` might have merged into a frozen `breakdown` — used only when reconstructing an existing item for editing (see `reconstructPricingInput` below). */
 interface StoredBreakdown {
-  kind?: 'PRODUCT' | 'SERVICE' | 'INVENTORY_RETAIL' | 'MANUAL';
+  kind?: 'PRODUCT' | 'SERVICE' | 'INVENTORY_RETAIL' | 'MANUAL' | 'BOARDS';
   quantity?: number;
+  // Owner (2026-08-27, "روول أب... مش تابعة للبانر نفسه") — a flat-priced
+  // BOARDS catalog item's frozen id, only ever set together with `kind: 'BOARDS'`
+  // (the material/geometry BOARDS path never sets `kind` at all — see
+  // `inferStoredKind`'s own doc comment for how the two are told apart).
+  boardsCatalogItemId?: string;
+  supplierCost?: number;
   // MANUAL only — unlike PRODUCT/SERVICE/INVENTORY_RETAIL (which re-price
   // from the live catalog on edit, see reconstructPricingInput's own doc
   // comment), a manual line's price has no live source to recompute from,
@@ -1359,7 +1419,13 @@ interface StoredBreakdown {
  * catalog option(s) they were originally split across doesn't.
  */
 function inferStoredKind(sizeFamilyKey: string | null, breakdown: StoredBreakdown): PricingKind | null {
-  if (breakdown.kind === 'PRODUCT' || breakdown.kind === 'SERVICE' || breakdown.kind === 'INVENTORY_RETAIL' || breakdown.kind === 'MANUAL')
+  if (
+    breakdown.kind === 'PRODUCT' ||
+    breakdown.kind === 'SERVICE' ||
+    breakdown.kind === 'INVENTORY_RETAIL' ||
+    breakdown.kind === 'MANUAL' ||
+    breakdown.kind === 'BOARDS'
+  )
     return breakdown.kind;
   if ('material' in breakdown) return 'BOARDS';
   // Checked before FOLDER — both freeze `sellophaneEnabled`, but only
@@ -1443,6 +1509,14 @@ function reconstructPricingInput(
         ...extra,
       };
     case 'BOARDS':
+      if (b.boardsCatalogItemId) {
+        return {
+          kind: 'BOARDS',
+          quantity: b.quantity ?? 1,
+          ...extra,
+          ...(b.supplierCost !== undefined && b.quantity ? { supplierCostOverride: b.supplierCost / b.quantity } : {}),
+        };
+      }
       return {
         kind: 'BOARDS',
         material: b.material ?? 'BANNER',
@@ -1518,10 +1592,11 @@ interface ReconstructedLine {
 
 /** Shared by both edit-Order and edit-Quotation modes — the two item shapes carry the same fields relevant here. */
 function reconstructCartLine(
-  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; productionTrack?: ProductionTrack | null; groupId?: string | null },
+  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; boardsCatalogItemId?: string | null; productionTrack?: ProductionTrack | null; groupId?: string | null },
   readyProducts: ReadyProduct[],
   services: Service[],
   inventoryItems: InventoryItem[],
+  boardsCatalogItems: BoardsCatalogItem[] = [],
 ): ReconstructedLine {
   const b = (item.breakdown as StoredBreakdown | null) ?? {};
   const inventoryItemId = item.inventoryItemId ?? matchInventoryItemIdByName(b.paperName, inventoryItems);
@@ -1532,12 +1607,19 @@ function reconstructCartLine(
 
   let readyProductId = item.readyProductId ?? undefined;
   let serviceId = item.serviceId ?? undefined;
+  const boardsCatalogItemId = item.boardsCatalogItemId ?? undefined;
   if (kind === 'PRODUCT' && !readyProductId) readyProductId = matchCatalogIdByName('PRODUCT', item.modelName, readyProducts, services);
   if (kind === 'SERVICE' && !serviceId) serviceId = matchCatalogIdByName('SERVICE', item.modelName, readyProducts, services);
   if ((kind === 'PRODUCT' && !readyProductId) || (kind === 'SERVICE' && !serviceId)) {
     return {
       line: null,
       warning: `الصنف "${item.modelName ?? ''}" لم يعد موجودًا في الكتالوج — احذف البند وأضف بديلاً له`,
+    };
+  }
+  if (boardsCatalogItemId && !boardsCatalogItems.some((b) => b.id === boardsCatalogItemId)) {
+    return {
+      line: null,
+      warning: `الصنف "${item.modelName ?? ''}" لم يعد موجودًا في كتالوج اللوحات والإعلانات — احذف البند وأضف بديلاً له`,
     };
   }
 
@@ -1558,6 +1640,7 @@ function reconstructCartLine(
       sellophaneType: b.sellophaneType ?? undefined,
       readyProductId,
       serviceId,
+      boardsCatalogItemId,
       attachmentUrl: b.referenceImageUrl ?? undefined,
       pricing,
       total: item.itemTotal ?? 0,
@@ -1594,8 +1677,9 @@ function buildCartLineFromTemplateItem(
   readyProducts: ReadyProduct[],
   services: Service[],
   newGroupKey: string | undefined,
+  boardsCatalogItems: BoardsCatalogItem[] = [],
 ): { line: CartLine | null; warning: string | null } {
-  const catalogId = item.readyProductId || item.serviceId;
+  const catalogId = item.readyProductId || item.serviceId || item.boardsCatalogItemId;
   const preview = pricingPreviewFromInput(item.pricing, catalogId, ctx);
   if (preview.error) {
     return { line: null, warning: `"${item.itemType}": ${preview.error}` };
@@ -1605,7 +1689,16 @@ function buildCartLineFromTemplateItem(
     line: {
       key: `item-${draftKeySeq}`,
       itemType: item.itemType,
-      summary: describeFromPricingInput(item.pricing, item.itemType, item.readyProductId, item.serviceId, readyProducts, services),
+      summary: describeFromPricingInput(
+        item.pricing,
+        item.itemType,
+        item.readyProductId,
+        item.serviceId,
+        readyProducts,
+        services,
+        item.boardsCatalogItemId,
+        boardsCatalogItems,
+      ),
       notes: item.notes,
       description: item.description,
       inkColor: item.inkColor,
@@ -1613,6 +1706,7 @@ function buildCartLineFromTemplateItem(
       sellophaneType: item.sellophaneType,
       readyProductId: item.readyProductId,
       serviceId: item.serviceId,
+      boardsCatalogItemId: item.boardsCatalogItemId,
       pricing: item.pricing,
       total: preview.total,
       productionTrack: item.productionTrack ?? null,
@@ -1661,6 +1755,7 @@ export function NewOrderPage() {
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [readyProducts, setReadyProducts] = useState<ReadyProduct[]>([]);
   const [services, setServices] = useState<Service[]>([]);
+  const [boardsCatalogItems, setBoardsCatalogItems] = useState<BoardsCatalogItem[]>([]);
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [pricingReference, setPricingReference] = useState<PricingReference | null>(null);
   const [extraServiceOptions, setExtraServiceOptions] = useState<ExtraServiceOption[]>([]);
@@ -1677,6 +1772,7 @@ export function NewOrderPage() {
       apiGet<BranchSummary[]>('/api/branches'),
       apiGet<ReadyProduct[]>('/api/ready-products').catch(() => []),
       apiGet<Service[]>('/api/services').catch(() => []),
+      apiGet<BoardsCatalogItem[]>('/api/boards-catalog-items').catch(() => []),
       apiGet<InventoryItem[]>('/api/inventory-items').catch(() => []),
       apiGet<PricingReference>('/api/pricing-reference'),
       apiGet<ExtraServiceOption[]>('/api/extra-service-options').catch(() => []),
@@ -1684,11 +1780,12 @@ export function NewOrderPage() {
       editOrderId ? apiGet<Order>(`/api/orders/${editOrderId}`) : Promise.resolve(null),
       editQuotationId ? apiGet<Quotation>(`/api/quotations/${editQuotationId}`) : Promise.resolve(null),
     ])
-      .then(([p, b, rp, s, inv, pricing, extraServices, categories, order, quotation]) => {
+      .then(([p, b, rp, s, bci, inv, pricing, extraServices, categories, order, quotation]) => {
         setPartners(p);
         setBranches(b);
         setReadyProducts(rp);
         setServices(s);
+        setBoardsCatalogItems(bci);
         setInventoryItems(inv);
         setPricingReference(pricing);
         setExtraServiceOptions(extraServices.filter((o) => o.isActive));
@@ -1775,6 +1872,7 @@ export function NewOrderPage() {
       branches={branches}
       readyProducts={readyProducts}
       services={services}
+      boardsCatalogItems={boardsCatalogItems}
       inventoryItems={inventoryItems}
       pricingReference={pricingReference}
       extraServiceOptions={extraServiceOptions}
@@ -1984,6 +2082,7 @@ interface CartLine {
   sellophaneType?: string;
   readyProductId?: string;
   serviceId?: string;
+  boardsCatalogItemId?: string;
   attachmentId?: string;
   attachmentUrl?: string;
   pricing: OrderItemPricingInput;
@@ -2026,6 +2125,7 @@ function NewOrderForm({
   branches,
   readyProducts,
   services,
+  boardsCatalogItems,
   inventoryItems,
   pricingReference,
   extraServiceOptions,
@@ -2040,6 +2140,7 @@ function NewOrderForm({
   branches: BranchSummary[];
   readyProducts: ReadyProduct[];
   services: Service[];
+  boardsCatalogItems: BoardsCatalogItem[];
   inventoryItems: InventoryItem[];
   pricingReference: PricingReference;
   extraServiceOptions: ExtraServiceOption[];
@@ -2101,13 +2202,13 @@ function NewOrderForm({
   const [cart, setCart] = useState<CartLine[]>(() => {
     if (!editingItems) return [];
     return editingItems
-      .map((item) => reconstructCartLine(item, readyProducts, services, inventoryItems).line)
+      .map((item) => reconstructCartLine(item, readyProducts, services, inventoryItems, boardsCatalogItems).line)
       .filter((line): line is CartLine => line !== null);
   });
   const [reconstructWarnings] = useState<string[]>(() => {
     if (!editingItems) return [];
     return editingItems
-      .map((item) => reconstructCartLine(item, readyProducts, services, inventoryItems).warning)
+      .map((item) => reconstructCartLine(item, readyProducts, services, inventoryItems, boardsCatalogItems).warning)
       .filter((w): w is string => w !== null);
   });
   // النموذج على اليمين — بند واحد بيتصمم في المرة (نمط الفيديو)
@@ -2186,8 +2287,9 @@ function NewOrderForm({
         else map.set(key, [tier]);
         return map;
       }, new Map<string, DigitalPriceTierDto[]>()),
+      boardsCatalogById: new Map(boardsCatalogItems.map((b) => [b.id, { name: b.name, price: b.price, supplierCost: b.supplierCost ?? null }])),
     }),
-    [pricingReference, inventoryItems, readyProducts, services],
+    [pricingReference, inventoryItems, readyProducts, services, boardsCatalogItems],
   );
 
   // "بعد ما الاوردر يتحفظ يسألني هل احفظه كقالب دوري" (owner, 2026-08-17)
@@ -2227,7 +2329,7 @@ function NewOrderForm({
         }
         newGroupKey = groupKeyMap.get(item.groupKey);
       }
-      return buildCartLineFromTemplateItem(item, ctx, readyProducts, services, newGroupKey);
+      return buildCartLineFromTemplateItem(item, ctx, readyProducts, services, newGroupKey, boardsCatalogItems);
     });
     setCart(results.map((r) => r.line).filter((l): l is CartLine => l !== null));
     setTemplateLoadWarnings(results.map((r) => r.warning).filter((w): w is string => w !== null));
@@ -2339,7 +2441,7 @@ function NewOrderForm({
     const line: CartLine = {
       key: draft.key,
       itemType: label,
-      summary: describeDraft(draft, readyProducts, services),
+      summary: describeDraft(draft, readyProducts, services, boardsCatalogItems),
       notes: draft.notes || undefined,
       description: draft.kind === 'SERVICE' ? draft.description || undefined : undefined,
       inkColor: draft.inkColor || undefined,
@@ -2347,6 +2449,7 @@ function NewOrderForm({
       sellophaneType: draft.sellophaneType || undefined,
       readyProductId: draft.kind === 'PRODUCT' ? draft.readyProductId || undefined : undefined,
       serviceId: draft.kind === 'SERVICE' ? draft.serviceId || undefined : undefined,
+      boardsCatalogItemId: draft.kind === 'BOARDS' && draft.boardsUseCatalog ? draft.boardsCatalogItemId || undefined : undefined,
       attachmentId: draft.attachmentId || undefined,
       attachmentUrl: draft.attachmentUrl || undefined,
       pricing,
@@ -2517,13 +2620,16 @@ function NewOrderForm({
       bindingType: line.bindingType,
       sellophaneType: line.sellophaneType,
       // `validateQuotationItemRefs` requires a description on any item
-      // with no readyProductId/serviceId — reuse the same label the
-      // user already typed (or the kind's default) rather than adding
-      // a second, redundant free-text field to the form. SERVICE items
-      // prefer the staff's own "نطاق العمل" text when they entered one.
-      description: line.description ?? (line.readyProductId || line.serviceId ? undefined : line.itemType),
+      // with no readyProductId/serviceId/boardsCatalogItemId — reuse the
+      // same label the user already typed (or the kind's default) rather
+      // than adding a second, redundant free-text field to the form.
+      // SERVICE items prefer the staff's own "نطاق العمل" text when they
+      // entered one.
+      description:
+        line.description ?? (line.readyProductId || line.serviceId || line.boardsCatalogItemId ? undefined : line.itemType),
       readyProductId: line.readyProductId,
       serviceId: line.serviceId,
+      boardsCatalogItemId: line.boardsCatalogItemId,
       attachmentId: line.attachmentId,
       pricing: line.pricing,
       productionTrack: line.productionTrack,
@@ -2626,7 +2732,10 @@ function NewOrderForm({
    * apply a profit-margin multiplier the way LOOSE_PAPER/NOTEBOOK/etc. do).
    */
   const hasUnitPriceOverrideSection =
-    draft.kind === 'BOARDS' || draft.kind === 'PRODUCT' || draft.kind === 'SERVICE' || draft.kind === 'INVENTORY_RETAIL';
+    (draft.kind === 'BOARDS' && !draft.boardsUseCatalog) ||
+    draft.kind === 'PRODUCT' ||
+    draft.kind === 'SERVICE' ||
+    draft.kind === 'INVENTORY_RETAIL';
 
   return (
     <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 lg:grid-cols-[1fr_320px]">
@@ -3864,87 +3973,171 @@ function NewOrderForm({
           )}
 
           {draft.kind === 'BOARDS' && (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">الخامة</span>
-                <select
-                  value={draft.material}
-                  onChange={(e) => updateDraft({ material: e.target.value as BoardMaterial })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            <div className="space-y-3">
+              {/* Owner (2026-08-27, "روول أب... محتاجة مورد وسعر تكلفة خاصين
+                  بيها، مش تابعة للبانر نفسه") — an alternative to خامة/مقاس
+                  below: a flat-priced admin-managed catalog item (e.g.
+                  "روول أب") that doesn't fit the material/geometry formula. */}
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={draft.boardsUseCatalog ? 'secondary' : 'default'}
+                  size="sm"
+                  onClick={() => updateDraft({ boardsUseCatalog: false })}
                 >
-                  {BOARD_MATERIAL_OPTIONS.map((m) => (
-                    <option key={m} value={m}>
-                      {BOARD_MATERIAL_LABELS[m]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">العرض (سم)</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.widthCm}
-                  onChange={(e) => updateDraft({ widthCm: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">الارتفاع (سم)</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.heightCm}
-                  onChange={(e) => updateDraft({ heightCm: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
-              <label className="space-y-1 text-sm">
-                <span className="text-muted-foreground">الكمية</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.quantity}
-                  onChange={(e) => updateDraft({ quantity: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                />
-              </label>
-              {draft.material === 'BANNER' && (
-                <label className="flex items-center gap-2 self-end text-sm">
-                  <input type="checkbox" checked={draft.hasDesign} onChange={(e) => updateDraft({ hasDesign: e.target.checked })} />
-                  تصميم
-                </label>
+                  خامة ومقاس
+                </Button>
+                <Button
+                  type="button"
+                  variant={draft.boardsUseCatalog ? 'default' : 'secondary'}
+                  size="sm"
+                  onClick={() => updateDraft({ boardsUseCatalog: true })}
+                >
+                  من الكتالوج (زي روول أب)
+                </Button>
+              </div>
+
+              {draft.boardsUseCatalog ? (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <label className="space-y-1 text-sm sm:col-span-2">
+                    <span className="text-muted-foreground">الصنف</span>
+                    <Combobox
+                      items={boardsCatalogItems}
+                      value={draft.boardsCatalogItemId}
+                      getKey={(b) => b.id}
+                      getLabel={(b) => b.name}
+                      onChange={(b) => updateDraft({ boardsCatalogItemId: b.id })}
+                      searchPlaceholder="اكتب أول كام حرف من اسم الصنف…"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="text-muted-foreground">الكمية</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.quantity}
+                      onChange={(e) => updateDraft({ quantity: e.target.value })}
+                      className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                    />
+                  </label>
+                  {can('inventory.costPrice') && (
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">تعديل تكلفة المورد لهذا الطلب (اختياري)</span>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={draft.boardsSupplierCostOverrideEnabled}
+                          onChange={(e) => updateDraft({ boardsSupplierCostOverrideEnabled: e.target.checked })}
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          disabled={!draft.boardsSupplierCostOverrideEnabled}
+                          value={draft.boardsSupplierCostOverrideValue}
+                          onChange={(e) => updateDraft({ boardsSupplierCostOverrideValue: e.target.value })}
+                          placeholder="واقف عليك بكام المرة دي"
+                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-50"
+                        />
+                      </div>
+                    </label>
+                  )}
+                  {/* Owner (2026-08-26, "هيتصمم ويتبعت للمورد") — البند ده هياخد
+                      Workflow الموردين زي المنتجات الجاهزة بالظبط، نفس الحقل. */}
+                  <label className="space-y-1 text-sm sm:col-span-2">
+                    <span className="text-muted-foreground">المورد (اختياري — لو هيتحضر من مورد خارجي)</span>
+                    <PartnerCombobox
+                      partners={partners}
+                      value={draft.preferredSupplierId}
+                      onChange={(id) => updateDraft({ preferredSupplierId: id })}
+                      placeholder="— بدون —"
+                    />
+                  </label>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <label className="space-y-1 text-sm">
+                    <span className="text-muted-foreground">الخامة</span>
+                    <select
+                      value={draft.material}
+                      onChange={(e) => updateDraft({ material: e.target.value as BoardMaterial })}
+                      className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                    >
+                      {BOARD_MATERIAL_OPTIONS.map((m) => (
+                        <option key={m} value={m}>
+                          {BOARD_MATERIAL_LABELS[m]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="text-muted-foreground">العرض (سم)</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.widthCm}
+                      onChange={(e) => updateDraft({ widthCm: e.target.value })}
+                      className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="text-muted-foreground">الارتفاع (سم)</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.heightCm}
+                      onChange={(e) => updateDraft({ heightCm: e.target.value })}
+                      className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm">
+                    <span className="text-muted-foreground">الكمية</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.quantity}
+                      onChange={(e) => updateDraft({ quantity: e.target.value })}
+                      className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                    />
+                  </label>
+                  {draft.material === 'BANNER' && (
+                    <label className="flex items-center gap-2 self-end text-sm">
+                      <input type="checkbox" checked={draft.hasDesign} onChange={(e) => updateDraft({ hasDesign: e.target.checked })} />
+                      تصميم
+                    </label>
+                  )}
+                  {(draft.material === 'VINYL_NORMAL' || draft.material === 'VINYL_PRINT_CUT') && (
+                    <label className="flex items-center gap-2 self-end text-sm">
+                      <input
+                        type="checkbox"
+                        checked={draft.hasSellophane}
+                        onChange={(e) => updateDraft({ hasSellophane: e.target.checked })}
+                      />
+                      سلوفان
+                    </label>
+                  )}
+                  {/* owner: "لما اكتب مقاس الحتة الصغيرة عايز اعرف عددها كام في المتر" — calculateBoardsCost already computes this (piece-packing per square meter, gap from Settings), just wasn't shown here before. No formula change, purely display. */}
+                  {draft.material === 'VINYL_PRINT_CUT' && draftPreview.result?.piecesPerMeter !== undefined && (
+                    <p className="text-muted-foreground col-span-2 text-sm sm:col-span-4">
+                      بيدخل <span className="text-foreground font-semibold">{draftPreview.result.piecesPerMeter}</span> قطعة
+                      في المتر المربع الواحد — محتاج{' '}
+                      <span className="text-foreground font-semibold">{draftPreview.result.metersNeeded}</span> متر عشان{' '}
+                      {draft.quantity || 0} قطعة
+                    </p>
+                  )}
+                  {/* Owner (2026-08-26, "هيتصمم ويتبعت للمورد") — البند ده هياخد
+                      Workflow الموردين زي المنتجات الجاهزة بالظبط، نفس الحقل. */}
+                  <label className="space-y-1 text-sm sm:col-span-2">
+                    <span className="text-muted-foreground">المورد (اختياري — لو هيتحضر من مورد خارجي)</span>
+                    <PartnerCombobox
+                      partners={partners}
+                      value={draft.preferredSupplierId}
+                      onChange={(id) => updateDraft({ preferredSupplierId: id })}
+                      placeholder="— بدون —"
+                    />
+                  </label>
+                </div>
               )}
-              {(draft.material === 'VINYL_NORMAL' || draft.material === 'VINYL_PRINT_CUT') && (
-                <label className="flex items-center gap-2 self-end text-sm">
-                  <input
-                    type="checkbox"
-                    checked={draft.hasSellophane}
-                    onChange={(e) => updateDraft({ hasSellophane: e.target.checked })}
-                  />
-                  سلوفان
-                </label>
-              )}
-              {/* owner: "لما اكتب مقاس الحتة الصغيرة عايز اعرف عددها كام في المتر" — calculateBoardsCost already computes this (piece-packing per square meter, gap from Settings), just wasn't shown here before. No formula change, purely display. */}
-              {draft.material === 'VINYL_PRINT_CUT' && draftPreview.result?.piecesPerMeter !== undefined && (
-                <p className="text-muted-foreground col-span-2 text-sm sm:col-span-4">
-                  بيدخل <span className="text-foreground font-semibold">{draftPreview.result.piecesPerMeter}</span> قطعة
-                  في المتر المربع الواحد — محتاج{' '}
-                  <span className="text-foreground font-semibold">{draftPreview.result.metersNeeded}</span> متر عشان{' '}
-                  {draft.quantity || 0} قطعة
-                </p>
-              )}
-              {/* Owner (2026-08-26, "هيتصمم ويتبعت للمورد") — البند ده هياخد
-                  Workflow الموردين زي المنتجات الجاهزة بالظبط، نفس الحقل. */}
-              <label className="space-y-1 text-sm sm:col-span-2">
-                <span className="text-muted-foreground">المورد (اختياري — لو هيتحضر من مورد خارجي)</span>
-                <PartnerCombobox
-                  partners={partners}
-                  value={draft.preferredSupplierId}
-                  onChange={(id) => updateDraft({ preferredSupplierId: id })}
-                  placeholder="— بدون —"
-                />
-              </label>
             </div>
           )}
 
