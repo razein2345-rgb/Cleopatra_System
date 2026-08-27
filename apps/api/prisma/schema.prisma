@@ -1209,6 +1209,8 @@ model BusinessPartner {
   convertedFromLead Lead?
   /// Reverse of `OrderItem.preferredSupplierId` — every item whose staff picked this partner as the intended external supplier at composition time.
   preferredSupplierForItems OrderItem[] @relation("OrderItemPreferredSupplier")
+  /// Reverse of `InventoryItem.supplierId` — every stock item whose usual/default supplier is this partner.
+  suppliedInventoryItems InventoryItem[] @relation("InventoryItemSupplier")
 }
 
 /// PRODUCT_ROADMAP.md §2 ("المرحلة الثانية") — a Lead is a separate,
@@ -3188,6 +3190,15 @@ model InventoryItem {
   categoryId       String?            @db.Uuid
   browsingCategory InventoryCategory? @relation(fields: [categoryId], references: [id])
 
+  /// Owner (2026-08-27, "لازم المنتجات اللي في المخزن أقدر اربطها بالمورد")
+  /// — the item's usual/default supplier, distinct from
+  /// `OrderItem.preferredSupplierId` (a per-order, ad-hoc choice made at
+  /// composition time). Optional — most existing items have none set yet.
+  /// Feeds the "قائمة شراء عاجل" screen (part 2 of this initiative), which
+  /// routes a low-stock item to a real supplier.
+  supplierId String?          @db.Uuid
+  supplier   BusinessPartner? @relation("InventoryItemSupplier", fields: [supplierId], references: [id])
+
   stockLevels        StockLevel[]
   stockMovements     StockMovement[]
   orderItems         OrderItem[]
@@ -3203,6 +3214,7 @@ model InventoryItem {
   @@index([isDeleted])
   @@index([category])
   @@index([categoryId])
+  @@index([supplierId])
 }
 
 /// Owner (2026-08-25) — free-form, admin-manageable inventory browsing

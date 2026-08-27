@@ -43,6 +43,16 @@ export const inventoryItemSchema = z.object({
    * not merely null, for a non-SUPER_ADMIN caller.
    */
   costPrice: z.number().nullable().optional(),
+  /**
+   * Owner (2026-08-27, "لازم المنتجات اللي في المخزن أقدر اربطها بالمورد")
+   * — the item's usual/default supplier (a `BusinessPartner` with the
+   * `SUPPLIER` role), distinct from `OrderItem.preferredSupplierId` (a
+   * per-order, ad-hoc choice). Optional — most existing items have none
+   * set yet. Feeds the "قائمة شراء عاجل" screen (part 2 of this
+   * initiative), which needs a real supplier to route a low-stock item to.
+   */
+  supplierId: z.string().uuid().nullable(),
+  supplierName: z.string().nullable(),
   reorderLevel: z.number().nonnegative().nullable(),
   quantityOnHand: z.number(),
   isLowStock: z.boolean(),
@@ -66,6 +76,7 @@ export const createInventoryItemSchema = z.object({
   barcode: z.string().trim().min(1).max(100).optional(),
   salePrice: z.number().nonnegative().optional(),
   costPrice: z.number().nonnegative().optional(),
+  supplierId: z.string().uuid().optional(),
 });
 
 export const updateInventoryItemSchema = z.object({
@@ -80,6 +91,7 @@ export const updateInventoryItemSchema = z.object({
   barcode: z.string().trim().min(1).max(100).nullable().optional(),
   salePrice: z.number().nonnegative().nullable().optional(),
   costPrice: z.number().nonnegative().nullable().optional(),
+  supplierId: z.string().uuid().nullable().optional(),
 });
 
 export const createStockMovementSchema = z.object({

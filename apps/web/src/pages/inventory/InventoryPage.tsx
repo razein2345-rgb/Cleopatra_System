@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type {
+  BusinessPartner,
   CreateInventoryItemInput,
   CreateStockMovementInput,
   InventoryCategory,
@@ -14,7 +15,7 @@ import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Combobox, StatusBadge, EditableTextCell, paginate, Pagination, useConfirm } from '@/components/cleopatra';
+import { Combobox, PartnerCombobox, StatusBadge, EditableTextCell, paginate, Pagination, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { InventoryCategoriesManagement } from './InventoryCategoriesManagement';
 
@@ -65,6 +66,7 @@ export function InventoryPage() {
   const canSeeCostPrice = can('inventory.costPrice');
   const [items, setItems] = useState<InventoryItem[] | null>(null);
   const [needsSupplier, setNeedsSupplier] = useState<InventoryItem[]>([]);
+  const [suppliers, setSuppliers] = useState<BusinessPartner[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [showCategoriesManager, setShowCategoriesManager] = useState(false);
@@ -107,6 +109,17 @@ export function InventoryPage() {
   };
 
   useEffect(load, []);
+  useEffect(() => {
+    apiGet<BusinessPartner[]>('/api/partners')
+      .then((all) => setSuppliers(all.filter((p) => p.roles.includes('SUPPLIER'))))
+      .catch(() => undefined);
+  }, []);
+
+  /** Owner (2026-08-27, "لازم المنتجات اللي في المخزن أقدر اربطها بالمورد") — the item's usual/default supplier, distinct from `OrderItem.preferredSupplierId` (a per-order choice). */
+  const saveSupplierId = async (item: InventoryItem, supplierId: string) => {
+    await apiPut(`/api/inventory-items/${item.id}`, { supplierId: supplierId || null });
+    load();
+  };
 
   /** FEATURE-007 (2026-08-12, owner: "عايز اقدر اتحكم في ليميت عدد الأفرخ") — `reorderLevel` was only settable at creation time; the endpoint already existed (`PUT /api/inventory-items/:id`), just no UI to reach it for an already-created item. */
   const saveReorderLevel = async (item: InventoryItem, next: string) => {
@@ -208,6 +221,7 @@ export function InventoryPage() {
         <NewInventoryItemForm
           existingItems={items ?? []}
           inventoryCategories={inventoryCategories}
+          suppliers={suppliers}
           onCreated={() => {
             setShowForm(false);
             load();
@@ -271,6 +285,7 @@ export function InventoryPage() {
                 <th className="p-3">حد التنبيه</th>
                 <th className="p-3">سعر البيع</th>
                 {canSeeCostPrice && <th className="p-3">سعر التكلفة</th>}
+                <th className="p-3">المورد</th>
                 <th className="p-3">الحالة</th>
                 <th className="p-3" />
               </tr>
@@ -280,7 +295,7 @@ export function InventoryPage() {
                 if (filteredItems.length === 0) {
                   return (
                     <tr>
-                      <td className="text-muted-foreground p-3 text-center" colSpan={canSeeCostPrice ? 10 : 9}>
+                      <td className="text-muted-foreground p-3 text-center" colSpan={canSeeCostPrice ? 11 : 10}>
                         {items.length === 0 ? 'لا توجد بضاعة مسجلة بعد.' : 'لا توجد أصناف مطابقة.'}
                       </td>
                     </tr>
@@ -372,6 +387,18 @@ export function InventoryPage() {
                         />
                       </td>
                     )}
+                    <td className="text-muted-foreground min-w-[160px] p-3">
+                      {can('inventory.edit') ? (
+                        <PartnerCombobox
+                          partners={suppliers}
+                          value={item.supplierId ?? ''}
+                          onChange={(supplierId) => void saveSupplierId(item, supplierId)}
+                          placeholder="— بدون —"
+                        />
+                      ) : (
+                        (item.supplierName ?? '—')
+                      )}
+                    </td>
                     <td className="p-3">
                       {item.isLowStock ? (
                         <StatusBadge tone="danger">ناقصة</StatusBadge>
@@ -828,10 +855,12 @@ function NewInventoryItemForm({
   onCreated,
   existingItems,
   inventoryCategories,
+  suppliers,
 }: {
   onCreated: () => void;
   existingItems: InventoryItem[];
   inventoryCategories: InventoryCategory[];
+  suppliers: BusinessPartner[];
 }) {
   const [category, setCategory] = useState<MaterialCategory>('PAPER');
   const [categoryId, setCategoryId] = useState('');
@@ -845,6 +874,7 @@ function NewInventoryItemForm({
   const [barcode, setBarcode] = useState('');
   const [salePrice, setSalePrice] = useState('');
   const [costPrice, setCostPrice] = useState('');
+  const [supplierId, setSupplierId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const { can } = useAuth();
@@ -871,6 +901,7 @@ function NewInventoryItemForm({
         barcode: barcode.trim() || undefined,
         salePrice: salePrice ? Number(salePrice) : undefined,
         costPrice: canSeeCostPrice && costPrice ? Number(costPrice) : undefined,
+        supplierId: supplierId || undefined,
       };
       await apiPost('/api/inventory-items', input);
       onCreated();
@@ -998,6 +1029,10 @@ function NewInventoryItemForm({
             />
           </label>
         )}
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">المورد المعتاد (اختياري)</span>
+          <PartnerCombobox partners={suppliers} value={supplierId} onChange={setSupplierId} placeholder="— بدون —" />
+        </label>
       </div>
       <Button type="submit" disabled={submitting}>
         {submitting ? 'جارٍ الحفظ…' : 'حفظ'}

@@ -13,10 +13,15 @@ import { prisma } from '../lib/prisma.js';
 import { assertBranchDayNotClosed, mapTreasuryEntryToDto } from './treasuryService.js';
 
 type InventoryItemRecord = Prisma.InventoryItemGetPayload<{
-  include: { stockLevels: true; sheetType: true; browsingCategory: true };
+  include: { stockLevels: true; sheetType: true; browsingCategory: true; supplier: true };
 }>;
 
-const INCLUDE = { stockLevels: true, sheetType: true, browsingCategory: true } satisfies Prisma.InventoryItemInclude;
+const INCLUDE = {
+  stockLevels: true,
+  sheetType: true,
+  browsingCategory: true,
+  supplier: true,
+} satisfies Prisma.InventoryItemInclude;
 
 /**
  * Owner (2026-08-20, "سجلنا في المخزون من جهاز محمد إن في أقلام روتو احمر
@@ -51,6 +56,8 @@ function mapInventoryItemToDto(record: InventoryItemRecord): InventoryItem {
     // mapper); inventoryItems.ts's controller strips it from the response
     // for anyone else, and rejects a write attempt that includes it.
     costPrice: record.costPrice?.toNumber() ?? null,
+    supplierId: record.supplierId,
+    supplierName: record.supplier?.nameAr ?? null,
     reorderLevel,
     quantityOnHand,
     // Owner (2026-08-20, "ازاي مكتوب متوفر والعدد صفر لكل الأفرخ اللي
@@ -163,6 +170,7 @@ export async function createInventoryItem(
           barcode: input.barcode ?? null,
           salePrice: input.salePrice ?? null,
           costPrice: input.costPrice ?? null,
+          supplierId: input.supplierId ?? null,
         },
       });
     } catch (err) {
@@ -209,6 +217,7 @@ export async function updateInventoryItem(id: string, input: UpdateInventoryItem
           barcode: input.barcode,
           salePrice: input.salePrice,
           costPrice: input.costPrice,
+          supplierId: input.supplierId,
         },
         include: INCLUDE,
       });
