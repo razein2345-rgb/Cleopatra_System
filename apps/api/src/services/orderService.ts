@@ -14,7 +14,7 @@ import type {
 import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { deductStockForOrderItem, restockForOrderItem } from './inventoryService.js';
-import { maybeCreatePurchaseRequest } from './purchaseRequestService.js';
+import { createBoardsCatalogPurchaseRequests, maybeCreatePurchaseRequest } from './purchaseRequestService.js';
 import { buildPricingContext, computeItemPricing, type ItemPricingResult } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
 import { createWorkOrderForTrack, softDeleteWorkOrderTx, tryAutoCreateWorkOrders } from './workOrderService.js';
@@ -714,6 +714,15 @@ export async function createOrder(
       }
 
       createdItemRows.push(createdItem);
+
+      // Part 3 of the supplier-linkage initiative (owner, 2026-08-27,
+      // "الروول أب... لما نطلب الاوردر يتحط في قائمة شراء عاجل... دائمًا
+      // بالطلب") — a flat-priced BOARDS catalog item has no stock concept
+      // at all, so every single order for one needs a fresh purchase +
+      // assembly booking, unconditionally (never a shortage check).
+      if (item.boardsCatalogItemId) {
+        await createBoardsCatalogPurchaseRequests(tx, item.boardsCatalogItemId, created.id, createdItem.id);
+      }
     }
 
     // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16, owner: "لما اعمل
@@ -1013,6 +1022,12 @@ export async function updateOrder(
       }
 
       newItemRows.push(createdItem);
+
+      // Part 3 of the supplier-linkage initiative — same unconditional
+      // "دائمًا بالطلب" booking `createOrder` does above.
+      if (item.boardsCatalogItemId) {
+        await createBoardsCatalogPurchaseRequests(tx, item.boardsCatalogItemId, orderId, createdItem.id);
+      }
     }
 
     if (attachmentIds.length) {

@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import type { BoardsCatalogItem } from '@cleopatra/shared';
+import type { BoardsCatalogItem, BusinessPartner } from '@cleopatra/shared';
 import { apiDelete, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { useConfirm } from '@/components/cleopatra';
+import { PartnerCombobox, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /**
@@ -12,12 +12,19 @@ import { useAuth } from '@/state/AuthContext';
  * geometry formula. Mirrors ReadyProductsEditor.tsx exactly (same
  * grantable `inventory.costPrice` gating on the cost field), just with
  * `supplierCost` in place of `costPrice`.
+ *
+ * `purchaseSupplierId`/`assemblySupplierId` (part 3, same day, "الرول
+ * بيتجاب من مورد مختلف... وبيتحط عليه البانر عند Smart... حقلين
+ * منفصلين") — feed a fresh "قائمة شراء عاجل" pair every time this item is
+ * ordered (see InventoryPage.tsx's own PurchaseRequestsTab).
  */
 export function BoardsCatalogItemsEditor({
   items,
+  suppliers,
   onChanged,
 }: {
   items: BoardsCatalogItem[];
+  suppliers: BusinessPartner[];
   onChanged: () => void;
 }) {
   const { can } = useAuth();
@@ -53,7 +60,8 @@ export function BoardsCatalogItemsEditor({
       {showCreate && (
         <BoardsCatalogItemForm
           canSeeCostPrice={canSeeCostPrice}
-          onSubmit={(name, price, supplierCost) => apiPost('/api/boards-catalog-items', { name, price, supplierCost })}
+          suppliers={suppliers}
+          onSubmit={(input) => apiPost('/api/boards-catalog-items', input)}
           onSaved={() => {
             setShowCreate(false);
             onChanged();
@@ -67,10 +75,13 @@ export function BoardsCatalogItemsEditor({
             <li key={item.id} className="border-border border-b py-1.5">
               <BoardsCatalogItemForm
                 canSeeCostPrice={canSeeCostPrice}
+                suppliers={suppliers}
                 initialName={item.name}
                 initialPrice={item.price}
                 initialSupplierCost={item.supplierCost ?? null}
-                onSubmit={(name, price, supplierCost) => apiPut(`/api/boards-catalog-items/${item.id}`, { name, price, supplierCost })}
+                initialPurchaseSupplierId={item.purchaseSupplierId}
+                initialAssemblySupplierId={item.assemblySupplierId}
+                onSubmit={(input) => apiPut(`/api/boards-catalog-items/${item.id}`, input)}
                 onSaved={() => {
                   setEditing(null);
                   onChanged();
@@ -79,15 +90,18 @@ export function BoardsCatalogItemsEditor({
               />
             </li>
           ) : (
-            <li key={item.id} className="border-border flex items-center justify-between border-b py-1.5">
+            <li key={item.id} className="border-border flex flex-wrap items-center justify-between gap-2 border-b py-1.5">
               <span>{item.name}</span>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <span>{item.price.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج</span>
                 {canSeeCostPrice && (
                   <span className="text-muted-foreground text-xs">
                     (تكلفة من المورد: {item.supplierCost != null ? item.supplierCost.toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'})
                   </span>
                 )}
+                <span className="text-muted-foreground text-xs">
+                  مورد الشراء: {item.purchaseSupplierName ?? '—'} — التركيب: {item.assemblySupplierName ?? '—'}
+                </span>
                 {canManage && (
                   <div className="flex gap-1">
                     <Button variant="ghost" size="sm" onClick={() => setEditing(item)}>
@@ -108,11 +122,22 @@ export function BoardsCatalogItemsEditor({
   );
 }
 
+interface BoardsCatalogItemFormInput {
+  name: string;
+  price: number;
+  supplierCost?: number;
+  purchaseSupplierId?: string | null;
+  assemblySupplierId?: string | null;
+}
+
 function BoardsCatalogItemForm({
   initialName = '',
   initialPrice = 0,
   initialSupplierCost = null,
+  initialPurchaseSupplierId = null,
+  initialAssemblySupplierId = null,
   canSeeCostPrice,
+  suppliers,
   onSubmit,
   onSaved,
   onCancel,
@@ -120,14 +145,19 @@ function BoardsCatalogItemForm({
   initialName?: string;
   initialPrice?: number;
   initialSupplierCost?: number | null;
+  initialPurchaseSupplierId?: string | null;
+  initialAssemblySupplierId?: string | null;
   canSeeCostPrice: boolean;
-  onSubmit: (name: string, price: number, supplierCost: number | undefined) => Promise<unknown>;
+  suppliers: BusinessPartner[];
+  onSubmit: (input: BoardsCatalogItemFormInput) => Promise<unknown>;
   onSaved: () => void;
   onCancel: () => void;
 }) {
   const [name, setName] = useState(initialName);
   const [price, setPrice] = useState(initialPrice);
   const [supplierCost, setSupplierCost] = useState(initialSupplierCost != null ? String(initialSupplierCost) : '');
+  const [purchaseSupplierId, setPurchaseSupplierId] = useState(initialPurchaseSupplierId ?? '');
+  const [assemblySupplierId, setAssemblySupplierId] = useState(initialAssemblySupplierId ?? '');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -137,7 +167,13 @@ function BoardsCatalogItemForm({
     setError(null);
     setSubmitting(true);
     try {
-      await onSubmit(name, price, canSeeCostPrice && supplierCost ? Number(supplierCost) : undefined);
+      await onSubmit({
+        name,
+        price,
+        supplierCost: canSeeCostPrice && supplierCost ? Number(supplierCost) : undefined,
+        purchaseSupplierId: purchaseSupplierId || null,
+        assemblySupplierId: assemblySupplierId || null,
+      });
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر الحفظ');
@@ -185,6 +221,17 @@ function BoardsCatalogItemForm({
           />
         </label>
       )}
+      {/* Owner (2026-08-27, "الرول بيتجاب من مورد مختلف... وبيتحط عليه
+          البانر عند Smart") — two separate suppliers, each feeding its own
+          "قائمة شراء عاجل" row every time this item is ordered. */}
+      <label className="w-44 space-y-1 text-xs">
+        <span className="text-muted-foreground">مورد شراء الصنف (اختياري)</span>
+        <PartnerCombobox partners={suppliers} value={purchaseSupplierId} onChange={setPurchaseSupplierId} placeholder="— بدون —" />
+      </label>
+      <label className="w-44 space-y-1 text-xs">
+        <span className="text-muted-foreground">جهة التركيب/التجميع (اختياري)</span>
+        <PartnerCombobox partners={suppliers} value={assemblySupplierId} onChange={setAssemblySupplierId} placeholder="— بدون —" />
+      </label>
       <Button type="submit" size="sm" disabled={submitting}>
         {submitting ? '...' : 'حفظ'}
       </Button>

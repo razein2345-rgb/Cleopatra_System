@@ -525,10 +525,13 @@ function PurchaseRequestsTab() {
             ) : (
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
                 <div>
-                  <p className="font-medium">{r.inventoryItemName}</p>
+                  <p className="font-medium">
+                    {PURCHASE_REQUEST_KIND_LABELS[r.kind]}: {r.inventoryItemName ?? r.boardsCatalogItemName}
+                  </p>
                   <p className="text-muted-foreground text-xs">
-                    محتاجين {r.quantityNeeded.toLocaleString('en-US')} — تبع فاتورة {r.orderInvoiceNumber}
-                    {r.supplierName ? ` — المورد: ${r.supplierName}` : ' — مفيش مورد مسجّل للصنف ده'}
+                    {r.quantityNeeded != null && `محتاجين ${r.quantityNeeded.toLocaleString('en-US')} — `}
+                    تبع فاتورة {r.orderInvoiceNumber}
+                    {r.supplierName ? ` — المورد: ${r.supplierName}` : ' — مفيش مورد مسجّل'}
                   </p>
                 </div>
                 {canMarkPurchased && (
@@ -545,6 +548,12 @@ function PurchaseRequestsTab() {
   );
 }
 
+const PURCHASE_REQUEST_KIND_LABELS: Record<PurchaseRequest['kind'], string> = {
+  STOCK_SHORTFALL: 'نقص مخزون',
+  BOARDS_PURCHASE: 'شراء',
+  BOARDS_ASSEMBLY: 'تركيب/تجميع',
+};
+
 function MarkPurchasedForm({
   request,
   onSaved,
@@ -554,7 +563,8 @@ function MarkPurchasedForm({
   onSaved: () => void;
   onCancel: () => void;
 }) {
-  const [quantity, setQuantity] = useState(String(request.quantityNeeded));
+  const needsQuantity = request.kind === 'STOCK_SHORTFALL';
+  const [quantity, setQuantity] = useState(String(request.quantityNeeded ?? ''));
   const [amount, setAmount] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -565,7 +575,10 @@ function MarkPurchasedForm({
     setError(null);
     setSubmitting(true);
     try {
-      const input: MarkPurchaseRequestPurchasedInput = { purchasedQuantity: Number(quantity), purchasedAmount: Number(amount) || 0 };
+      const input: MarkPurchaseRequestPurchasedInput = {
+        purchasedAmount: Number(amount) || 0,
+        ...(needsQuantity ? { purchasedQuantity: Number(quantity) } : {}),
+      };
       await apiPost(`/api/purchase-requests/${request.id}/mark-purchased`, input);
       onSaved();
     } catch (err) {
@@ -578,18 +591,20 @@ function MarkPurchasedForm({
   return (
     <form onSubmit={submit} className="border-border bg-muted/30 flex flex-wrap items-end gap-2 rounded-lg border p-2">
       {error && <div className="text-destructive w-full text-xs">{error}</div>}
-      <label className="w-32 space-y-1 text-xs">
-        <span className="text-muted-foreground">الكمية اللي اتشترت</span>
-        <input
-          type="number"
-          min={0}
-          step="0.001"
-          required
-          value={quantity}
-          onChange={(e) => setQuantity(e.target.value)}
-          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
-        />
-      </label>
+      {needsQuantity && (
+        <label className="w-32 space-y-1 text-xs">
+          <span className="text-muted-foreground">الكمية اللي اتشترت</span>
+          <input
+            type="number"
+            min={0}
+            step="0.001"
+            required
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+          />
+        </label>
+      )}
       <label className="w-32 space-y-1 text-xs">
         <span className="text-muted-foreground">المبلغ المدفوع{request.supplierName ? ` لـ${request.supplierName}` : ''}</span>
         <input

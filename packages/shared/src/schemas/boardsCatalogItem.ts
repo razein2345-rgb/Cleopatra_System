@@ -26,10 +26,27 @@ export const boardsCatalogItemSchema = z.object({
    * Omitted (not merely null) for a caller without that permission.
    */
   supplierCost: z.number().nonnegative().nullable().optional(),
+  /**
+   * Owner (2026-08-27, "الرول بيتجاب من مورد مختلف هسجله وبيتحط عليه
+   * البانر عند Smart... حقلين منفصلين") — part 3 of the supplier-linkage
+   * initiative: unlike `supplierCost` above (a single total used only for
+   * the profit-report breakdown), these two feed a real "قائمة شراء عاجل"
+   * row EACH time this item is ordered (no stock concept — "دائمًا
+   * بالطلب"). `purchaseSupplierId` = who the physical item is bought
+   * from; `assemblySupplierId` = who mounts/assembles it. Both optional.
+   */
+  purchaseSupplierId: z.string().uuid().nullable(),
+  purchaseSupplierName: z.string().nullable(),
+  assemblySupplierId: z.string().uuid().nullable(),
+  assemblySupplierName: z.string().nullable(),
 });
 
-export const createBoardsCatalogItemSchema = boardsCatalogItemSchema.omit({ id: true }).partial({ supplierCost: true });
-export const updateBoardsCatalogItemSchema = boardsCatalogItemSchema.omit({ id: true }).partial();
+export const createBoardsCatalogItemSchema = boardsCatalogItemSchema
+  .omit({ id: true, purchaseSupplierName: true, assemblySupplierName: true })
+  .partial({ supplierCost: true, purchaseSupplierId: true, assemblySupplierId: true });
+export const updateBoardsCatalogItemSchema = boardsCatalogItemSchema
+  .omit({ id: true, purchaseSupplierName: true, assemblySupplierName: true })
+  .partial();
 
 export type BoardsCatalogItem = z.infer<typeof boardsCatalogItemSchema>;
 export type CreateBoardsCatalogItemInput = z.infer<typeof createBoardsCatalogItemSchema>;

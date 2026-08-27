@@ -786,6 +786,21 @@ model BoardsCatalogItem {
   price        Decimal  @db.Decimal(12, 2)
   supplierCost Decimal? @db.Decimal(12, 2)
 
+  /// Owner (2026-08-27, "الرول بيتجاب من مورد مختلف هسجله وبيتحط عليه
+  /// البانر عند Smart... حقلين منفصلين") — part 3: unlike `supplierCost`
+  /// above (a single total used only for the profit-report breakdown,
+  /// unaffected), these two feed a real "قائمة شراء عاجل" row EACH time
+  /// this item is ordered (owner: "دائمًا بالطلب" — no stock concept, so
+  /// every order needs a fresh purchase + a fresh assembly booking).
+  /// `purchaseSupplierId` = who the physical item (e.g. the Roll-Up
+  /// stand) is bought from; `assemblySupplierId` = who mounts/assembles
+  /// it (e.g. the banner printer). Both optional — an item with neither
+  /// set still gets its two rows, just with no supplier assigned yet.
+  purchaseSupplierId String?          @db.Uuid
+  purchaseSupplier   BusinessPartner? @relation("BoardsCatalogItemPurchaseSupplier", fields: [purchaseSupplierId], references: [id])
+  assemblySupplierId String?          @db.Uuid
+  assemblySupplier   BusinessPartner? @relation("BoardsCatalogItemAssemblySupplier", fields: [assemblySupplierId], references: [id])
+
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
@@ -793,10 +808,13 @@ model BoardsCatalogItem {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  quotationItems QuotationItem[]
-  orderItems     OrderItem[]
+  quotationItems   QuotationItem[]
+  orderItems       OrderItem[]
+  purchaseRequests PurchaseRequest[]
 
   @@index([isDeleted])
+  @@index([purchaseSupplierId])
+  @@index([assemblySupplierId])
 }
 
 model Service {
@@ -1171,43 +1189,46 @@ model BusinessPartner {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  contacts                  ContactPerson[]
-  addresses                 PartnerAddress[]
+  contacts                             ContactPerson[]
+  addresses                            PartnerAddress[]
   // FEATURE-002 M5. Named `partnerNotes`, not `notes` — the scalar `notes`
   // field above (M1, a single free-text remarks field edited from the
   // Overview tab) already owns that name. `PartnerNote` is a distinct,
   // unlimited, first-class, pinnable, audited entity; the two are not the
   // same concept and are not merged.
-  partnerNotes              PartnerNote[]
+  partnerNotes                         PartnerNote[]
   // FEATURE-002 M6. Optional 1:1 — see PartnerCommercialProfile's own doc
   // comment for why this is a separate model, not inline fields here.
-  commercialProfile         PartnerCommercialProfile?
-  orders                    Order[]
-  quotations                Quotation[]
-  treasuryEntries           TreasuryEntry[]
-  tenders                   Tender[]
-  attachments               Attachment[]
-  supplierPurchases         SupplierPurchase[]
-  supplierPayments          SupplierPayment[]
+  commercialProfile                    PartnerCommercialProfile?
+  orders                               Order[]
+  quotations                           Quotation[]
+  treasuryEntries                      TreasuryEntry[]
+  tenders                              Tender[]
+  attachments                          Attachment[]
+  supplierPurchases                    SupplierPurchase[]
+  supplierPayments                     SupplierPayment[]
   // FEATURE-004 M1 — a partner holding the SUPPLIER role may be assigned to
   // an EXTERNAL WorkflowStage's StageInstance (VISION.md's External
   // Supplier Workflow), reusing BusinessPartner rather than a parallel
   // Supplier model, per Reuse Before Create (see SupplierPurchase/
   // SupplierPayment's own identical reuse).
-  assignedStageInstances    StageInstance[]
+  assignedStageInstances               StageInstance[]
   // See AuditLog.partnerId's doc comment for why this denormalized
   // back-relation exists (Timeline Preparation / Activity Feed Ready).
-  auditLogs                 AuditLog[]
-  orderTemplates            OrderTemplate[]
-  itemReorderOverrides      ItemReorderOverride[]
+  auditLogs                            AuditLog[]
+  orderTemplates                       OrderTemplate[]
+  itemReorderOverrides                 ItemReorderOverride[]
   /// Reverse of `Lead.convertedPartnerId` — set only when this partner originated from a converted Lead.
-  convertedFromLead         Lead?
+  convertedFromLead                    Lead?
   /// Reverse of `OrderItem.preferredSupplierId` — every item whose staff picked this partner as the intended external supplier at composition time.
-  preferredSupplierForItems OrderItem[]               @relation("OrderItemPreferredSupplier")
+  preferredSupplierForItems            OrderItem[]               @relation("OrderItemPreferredSupplier")
   /// Reverse of `InventoryItem.supplierId` — every stock item whose usual/default supplier is this partner.
-  suppliedInventoryItems    InventoryItem[]           @relation("InventoryItemSupplier")
+  suppliedInventoryItems               InventoryItem[]           @relation("InventoryItemSupplier")
   /// Reverse of `PurchaseRequest.supplierId` — every shortfall event routed to this partner.
-  purchaseRequests          PurchaseRequest[]
+  purchaseRequests                     PurchaseRequest[]
+  /// Reverse of `BoardsCatalogItem.purchaseSupplierId`/`assemblySupplierId` — part 3 of the supplier-linkage initiative.
+  boardsCatalogItemsAsPurchaseSupplier BoardsCatalogItem[]       @relation("BoardsCatalogItemPurchaseSupplier")
+  boardsCatalogItemsAsAssemblySupplier BoardsCatalogItem[]       @relation("BoardsCatalogItemAssemblySupplier")
 
   @@index([isDeleted])
   @@index([status])
@@ -3131,29 +3152,46 @@ enum PurchaseRequestStatus {
   PURCHASED
 }
 
-/// Owner (2026-08-27, "الشراء العاجل لما يكون تبع طلب من الطلبات اللي
-/// العملا طلبوها") — "قائمة شراء عاجل" (part 2 of the supplier-linkage
-/// initiative): one row per real shortfall event, created automatically
-/// the moment an Order's stock deduction (`deductStockForOrderItem`)
-/// would take an `InventoryItem` negative — never a proactive/manual
-/// "add anything you feel like buying" queue, and never a passive
-/// reorder-level scan like the existing "بضاعة ناقصة" widget (which stays
-/// untouched). `supplierId` is copied from `InventoryItem.supplierId` at
-/// creation time (nullable — an item with no default supplier registered
-/// yet still gets a row, staff assigns one before marking it bought).
-/// Marking `PURCHASED` atomically does two things (owner confirmed both):
-/// records the bought quantity as a real `IN` StockMovement, and books
-/// `purchasedAmount` as a `SupplierPurchase` against `supplierId` (skipped
-/// if no supplier was ever assigned) — same "دورة شراء كاملة" the BOARDS
-/// external-supplier workflow already does for a Work Order, applied here
-/// to a plain stock shortfall instead.
-model PurchaseRequest {
-  id String @id @default(uuid()) @db.Uuid
+/// Owner (2026-08-27, "الروول أب... لما نطلب الاوردر يتحط في قائمة شراء
+/// عاجل... ويروح للمورد اللي بيطبع البانر ويركبه") — a `PurchaseRequest`
+/// has two distinct origins sharing the same queue/"اتشرت" flow:
+/// `STOCK_SHORTFALL` (an `InventoryItem` went negative — part 2) has a
+/// real quantity/stock effect; `BOARDS_PURCHASE`/`BOARDS_ASSEMBLY` (a
+/// `BoardsCatalogItem` order — part 3, e.g. a Roll-Up) has NO stock
+/// concept at all (owner: "هو بالطلب... لما حد بيطلب بروح اشتريه"), just
+/// a supplier obligation to book — one row per step since the roll/stand
+/// purchase and the banner mounting are genuinely two different suppliers
+/// with two different amounts, confirmed separately.
+enum PurchaseRequestKind {
+  STOCK_SHORTFALL
+  BOARDS_PURCHASE
+  BOARDS_ASSEMBLY
+}
 
-  inventoryItemId String           @db.Uuid
-  inventoryItem   InventoryItem    @relation(fields: [inventoryItemId], references: [id])
-  supplierId      String?          @db.Uuid
-  supplier        BusinessPartner? @relation(fields: [supplierId], references: [id])
+/// "قائمة شراء عاجل" (part 2 + part 3 of the supplier-linkage
+/// initiative). `supplierId` is copied from the source item's own default
+/// supplier at creation time (nullable — an item/step with no default
+/// supplier registered yet still gets a row, staff assigns one before
+/// marking it bought). Marking `PURCHASED` books `purchasedAmount` as a
+/// `SupplierPurchase` against `supplierId` (skipped if none was ever
+/// assigned) always; it ALSO records a real `IN` StockMovement, but only
+/// for `STOCK_SHORTFALL` rows — a `BOARDS_*` row has no `InventoryItem`
+/// to restock at all.
+model PurchaseRequest {
+  id   String              @id @default(uuid()) @db.Uuid
+  kind PurchaseRequestKind @default(STOCK_SHORTFALL)
+
+  /// Exactly one of these two is ever set, matching the
+  /// readyProductId/serviceId "either/or" convention used elsewhere —
+  /// `STOCK_SHORTFALL` rows set `inventoryItemId`, `BOARDS_*` rows set
+  /// `boardsCatalogItemId`.
+  inventoryItemId     String?            @db.Uuid
+  inventoryItem       InventoryItem?     @relation(fields: [inventoryItemId], references: [id])
+  boardsCatalogItemId String?            @db.Uuid
+  boardsCatalogItem   BoardsCatalogItem? @relation(fields: [boardsCatalogItemId], references: [id])
+
+  supplierId String?          @db.Uuid
+  supplier   BusinessPartner? @relation(fields: [supplierId], references: [id])
 
   /// The order whose stock deduction triggered this shortfall — purely
   /// for staff traceability ("ده طلب مين اللي خلانا نحتاج نشتري ده"),
@@ -3169,13 +3207,14 @@ model PurchaseRequest {
   orderItemId String?    @db.Uuid
   orderItem   OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
 
-  /// The exact shortfall at creation time (how far negative the stock
-  /// went) — pre-filled as the default when staff marks it bought, but
-  /// editable there since the real purchased quantity often differs.
-  quantityNeeded Decimal @db.Decimal(12, 3)
+  /// `STOCK_SHORTFALL` only — the exact shortfall at creation time (how
+  /// far negative the stock went), pre-filled as the default when staff
+  /// marks it bought. Null for `BOARDS_*` rows (no quantity concept).
+  quantityNeeded Decimal? @db.Decimal(12, 3)
 
   status PurchaseRequestStatus @default(PENDING)
 
+  /// Null for `BOARDS_*` rows — nothing gets restocked, only booked.
   purchasedQuantity Decimal?      @db.Decimal(12, 3)
   purchasedAmount   Decimal?      @db.Decimal(12, 2)
   purchasedAt       DateTime?
@@ -3185,6 +3224,7 @@ model PurchaseRequest {
   createdAt DateTime @default(now())
 
   @@index([inventoryItemId])
+  @@index([boardsCatalogItemId])
   @@index([supplierId])
   @@index([orderId])
   @@index([status])

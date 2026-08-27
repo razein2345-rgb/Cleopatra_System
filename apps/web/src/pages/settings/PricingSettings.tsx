@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { BoardsCatalogItem, Setting } from '@cleopatra/shared';
+import type { BoardsCatalogItem, BusinessPartner, Setting } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Section } from './Section';
 import { FixedPricesForm } from './FixedPricesForm';
@@ -9,6 +9,7 @@ import { BoardsCatalogItemsEditor } from './BoardsCatalogItemsEditor';
 export function PricingSettings() {
   const [setting, setSetting] = useState<Setting | null>(null);
   const [boardsCatalogItems, setBoardsCatalogItems] = useState<BoardsCatalogItem[] | null>(null);
+  const [suppliers, setSuppliers] = useState<BusinessPartner[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const load = () => {
@@ -24,6 +25,11 @@ export function PricingSettings() {
 
   useEffect(load, []);
   useEffect(loadBoardsCatalogItems, []);
+  useEffect(() => {
+    apiGet<BusinessPartner[]>('/api/partners')
+      .then((all) => setSuppliers(all.filter((p) => p.roles.includes('SUPPLIER'))))
+      .catch(() => undefined);
+  }, []);
 
   if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (!setting) return <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>;
@@ -39,7 +45,7 @@ export function PricingSettings() {
         subtitle="أصناف بسعر ثابت لا تتبع معادلة المادة/المقاس — مثل روول أب (حامل + بانر)"
       >
         {boardsCatalogItems ? (
-          <BoardsCatalogItemsEditor items={boardsCatalogItems} onChanged={loadBoardsCatalogItems} />
+          <BoardsCatalogItemsEditor items={boardsCatalogItems} suppliers={suppliers} onChanged={loadBoardsCatalogItems} />
         ) : (
           <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>
         )}
