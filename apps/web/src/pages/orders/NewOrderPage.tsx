@@ -199,6 +199,16 @@ interface DraftItem {
   isNewDesign: boolean;
   numberingStartNumber: string;
   sides: '1' | '2';
+  /**
+   * Owner (2026-09-01, "لما اختار وجهين في احتمالين إما يكونوا نفس الشكل او
+   * مختلفين لو مختلفين هيبقى في سعر للتصميم التاني وسعر للزنكاية التانية")
+   * — only meaningful when `sides === '2'`. When true, the second side gets
+   * its own color count and its own "تصميم جديد" toggle instead of sharing
+   * the first side's.
+   */
+  differentSides: boolean;
+  secondSideColorCount: string;
+  secondSideIsNewDesign: boolean;
   quantity: string;
   /**
    * Owner (2026-08-26, "عايز اقدر اعدل على سعر الفرخ من شاشة الطلبات...
@@ -390,6 +400,9 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     isNewDesign: false,
     numberingStartNumber: '',
     sides: '1',
+    differentSides: false,
+    secondSideColorCount: '1',
+    secondSideIsNewDesign: false,
     quantity: '1',
     sheetPriceOverrideEnabled: false,
     sheetPriceOverrideValue: '0',
@@ -470,6 +483,15 @@ function paperCostOverrideFieldOf(d: DraftItem) {
   return d.paperCostOverrideEnabled ? { paperCostOverride: toNum(d.paperCostOverrideValue) } : {};
 }
 
+/** Owner (2026-09-01, "لما اختار وجهين... مختلفين هيبقى في سعر للتصميم التاني وسعر للزنكاية التانية") — only sent when the second side is actually distinguished from the first. */
+function differentSidesFieldsOf(d: DraftItem) {
+  if (d.sides !== '2' || !d.differentSides) return {};
+  return {
+    secondSideColorCount: toOptionalNum(d.secondSideColorCount),
+    secondSideIsNewDesign: d.secondSideIsNewDesign,
+  };
+}
+
 /**
  * Owner (2026-08-26) — BOARDS/PRODUCT/SERVICE/INVENTORY_RETAIL's manual
  * price adjustment, `FLAT` (flatKey) or `PERCENT` (percentKey) mode. Named
@@ -540,6 +562,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         numberingStartNumber: toOptionalNum(d.numberingStartNumber),
         quantity: toNum(d.quantity),
         sides: d.sides === '2' ? 2 : 1,
+        ...differentSidesFieldsOf(d),
         ...extra,
         ...margin,
         ...zpd,
@@ -580,6 +603,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         copies,
         bindingPricePerNotebook: toNum(d.bindingPricePerNotebook),
         materials: materials.length ? materials : undefined,
+        ...differentSidesFieldsOf(d),
         ...extra,
         ...margin,
         ...zpd,
@@ -619,6 +643,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         jarab: toOptionalNum(d.jarab),
         forma: toOptionalNum(d.forma),
         taksir: toOptionalNum(d.taksir),
+        ...differentSidesFieldsOf(d),
         ...extra,
         ...margin,
         ...zpd,
@@ -792,6 +817,11 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
   const sizeOverrides = p as Partial<{ calcSizeOverride: string; numberingSizeOverride: string }>;
   d.calcSizeOverrideEnabled = sizeOverrides.calcSizeOverride !== undefined;
   d.calcSizeOverrideValue = sizeOverrides.calcSizeOverride ?? '';
+
+  const differentSides = p as Partial<{ secondSideColorCount: number; secondSideIsNewDesign: boolean }>;
+  d.differentSides = differentSides.secondSideColorCount !== undefined;
+  d.secondSideColorCount = String(differentSides.secondSideColorCount ?? 1);
+  d.secondSideIsNewDesign = differentSides.secondSideIsNewDesign ?? false;
   d.numberingSizeOverrideEnabled = sizeOverrides.numberingSizeOverride !== undefined;
   d.numberingSizeOverrideValue = sizeOverrides.numberingSizeOverride ?? '';
 
@@ -1022,6 +1052,8 @@ function pricingPreviewFromInput(
           quantity: pricing.quantity,
           colorCount: pricing.colorCount,
           sides: pricing.sides,
+          secondSideColorCount: pricing.secondSideColorCount,
+          secondSideIsNewDesign: pricing.secondSideIsNewDesign,
           isNewDesign: pricing.isNewDesign,
           numbering: pricing.numberingStartNumber ? { startNumber: pricing.numberingStartNumber } : undefined,
           sheetPrice,
@@ -1059,6 +1091,8 @@ function pricingPreviewFromInput(
             copies: pricing.copies,
             colorCount: pricing.colorCount,
             sides: pricing.sides,
+            secondSideColorCount: pricing.secondSideColorCount,
+            secondSideIsNewDesign: pricing.secondSideIsNewDesign,
             isNewDesign: pricing.isNewDesign,
             numbering: pricing.numberingStartNumber ? { startNumber: pricing.numberingStartNumber } : undefined,
             bindingPricePerNotebook: pricing.bindingPricePerNotebook,
@@ -1106,6 +1140,8 @@ function pricingPreviewFromInput(
           quantity: pricing.quantity,
           colorCount: pricing.colorCount,
           sides: pricing.sides,
+          secondSideColorCount: pricing.secondSideColorCount,
+          secondSideIsNewDesign: pricing.secondSideIsNewDesign,
           isNewDesign: pricing.isNewDesign,
           sheetPrice,
           sellophaneEnabled: pricing.sellophaneEnabled,
@@ -1344,6 +1380,8 @@ interface StoredBreakdown {
   unitPrice?: number;
   colorCount?: number;
   sides?: 1 | 2;
+  secondSideColorCount?: number | null;
+  secondSideIsNewDesign?: boolean | null;
   isNewDesign?: boolean;
   numberingStartNumber?: number | null;
   contentType?: 'ORIGINAL_ONLY' | 'ORIGINAL_PLUS_COPIES';
@@ -1463,6 +1501,8 @@ function reconstructPricingInput(
         numberingStartNumber: b.numberingStartNumber ?? undefined,
         quantity: b.quantity ?? 1,
         sides: b.sides === 2 ? 2 : 1,
+        secondSideColorCount: b.secondSideColorCount ?? undefined,
+        secondSideIsNewDesign: b.secondSideIsNewDesign ?? undefined,
         ...extra,
       };
     case 'NOTEBOOK': {
@@ -1479,6 +1519,8 @@ function reconstructPricingInput(
         inventoryItemId,
         colorCount: b.colorCount ?? 1,
         sides: b.sides === 2 ? 2 : 1,
+        secondSideColorCount: b.secondSideColorCount ?? undefined,
+        secondSideIsNewDesign: b.secondSideIsNewDesign ?? undefined,
         isNewDesign: b.isNewDesign ?? false,
         numberingStartNumber: b.numberingStartNumber ?? undefined,
         notebookQuantity: b.quantity ?? 1,
@@ -1508,6 +1550,8 @@ function reconstructPricingInput(
         quantity: b.quantity ?? 1,
         colorCount: b.colorCount ?? 1,
         sides: b.sides === 2 ? 2 : 1,
+        secondSideColorCount: b.secondSideColorCount ?? undefined,
+        secondSideIsNewDesign: b.secondSideIsNewDesign ?? undefined,
         isNewDesign: b.isNewDesign ?? false,
         sellophaneEnabled: b.sellophaneEnabled ?? false,
         ...extra,
@@ -2727,6 +2771,21 @@ function NewOrderForm({
   const navigate = useNavigate();
   const entries = familyEntries(draft.sizeFamilyKey);
   const selectedEntry = entries.find((e) => e.label === draft.realSizeLabel);
+  /**
+   * Owner (2026-09-01, "عايز مجموعة المقاس دي تتحدد تلقائي لما انا اكتب
+   * المقاس علشان بقعد ادور في كل مجموعة هو المقاس فيها ولا لا... اختار
+   * المقاس اللي انا عايزة يحدد هو المجموعة اللي بينتمي ليها دايركت") —
+   * flatten every family's sizes into one searchable list so typing a size
+   * (e.g. "23") finds it wherever it lives, instead of having to guess the
+   * family first. Still filtered to the currently chosen family when one is
+   * already selected, so the old family-first flow keeps working unchanged.
+   */
+  const allSizeEntries = pricingReference.sizeFamilies.flatMap((f) =>
+    f.entries.map((en) => ({ familyKey: f.key, familyLabel: f.label, label: en.label })),
+  );
+  const sizeSearchItems = draft.sizeFamilyKey
+    ? allSizeEntries.filter((en) => en.familyKey === draft.sizeFamilyKey)
+    : allSizeEntries;
   const result = draftPreview.result;
   const isSheetKind = draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK' || draft.kind === 'FOLDER';
   const hasPrintSection = draft.kind === 'LOOSE_PAPER' || draft.kind === 'NOTEBOOK' || draft.kind === 'ENVELOPE' || draft.kind === 'FOLDER';
@@ -3469,18 +3528,16 @@ function NewOrderForm({
               </label>
               <label className="space-y-1 text-sm">
                 <span className="text-muted-foreground">المقاس</span>
-                <select
-                  value={draft.realSizeLabel}
-                  onChange={(e) => updateDraft({ realSizeLabel: e.target.value })}
-                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                >
-                  <option value="">— المقاس —</option>
-                  {entries.map((en) => (
-                    <option key={en.label} value={en.label}>
-                      {en.label}
-                    </option>
-                  ))}
-                </select>
+                <Combobox
+                  items={sizeSearchItems}
+                  value={draft.realSizeLabel ? `${draft.sizeFamilyKey}::${draft.realSizeLabel}` : ''}
+                  getKey={(en) => `${en.familyKey}::${en.label}`}
+                  getLabel={(en) => en.label}
+                  getSubLabel={(en) => en.familyLabel}
+                  onChange={(en) => updateDraft({ sizeFamilyKey: en.familyKey, realSizeLabel: en.label })}
+                  placeholder="— اكتب المقاس، مثال: 23 —"
+                  searchPlaceholder="اكتب المقاس للبحث…"
+                />
               </label>
               <label className="space-y-1 text-sm sm:col-span-2">
                 <span className="text-muted-foreground">نوع الورق (يُسحب من المخزن)</span>
@@ -3597,7 +3654,12 @@ function NewOrderForm({
                   <span className="text-muted-foreground">عدد الوجوه</span>
                   <select
                     value={draft.sides}
-                    onChange={(e) => updateDraft({ sides: e.target.value as '1' | '2' })}
+                    onChange={(e) =>
+                      updateDraft({
+                        sides: e.target.value as '1' | '2',
+                        differentSides: e.target.value === '1' ? false : draft.differentSides,
+                      })
+                    }
                     className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                   >
                     <option value="1">وجه واحد</option>
@@ -3605,10 +3667,52 @@ function NewOrderForm({
                   </select>
                 </label>
               )}
+              {/* Owner (2026-09-01, "لما اختار وجهين في احتمالين إما يكونوا
+                  نفس الشكل او مختلفين لو مختلفين هيبقى في سعر للتصميم
+                  التاني وسعر للزنكاية التانية") — only shown once "وجهين"
+                  is chosen; switches the second side to its own color count
+                  + design toggle instead of sharing the first side's. */}
+              {(draft.kind === 'LOOSE_PAPER' || draft.kind === 'FOLDER' || draft.kind === 'NOTEBOOK') && draft.sides === '2' && (
+                <label className="space-y-1 text-sm">
+                  <span className="text-muted-foreground">شكل الوجهين</span>
+                  <select
+                    value={draft.differentSides ? 'different' : 'same'}
+                    onChange={(e) => updateDraft({ differentSides: e.target.value === 'different' })}
+                    className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  >
+                    <option value="same">نفس الشكل</option>
+                    <option value="different">شكل مختلف لكل وجه</option>
+                  </select>
+                </label>
+              )}
               <label className="flex items-center gap-2 self-end text-sm">
                 <input type="checkbox" checked={draft.isNewDesign} onChange={(e) => updateDraft({ isNewDesign: e.target.checked })} />
-                تصميم جديد
+                {draft.differentSides && draft.sides === '2' ? 'تصميم جديد (الوجه الأول)' : 'تصميم جديد'}
               </label>
+              {(draft.kind === 'LOOSE_PAPER' || draft.kind === 'FOLDER' || draft.kind === 'NOTEBOOK') &&
+                draft.sides === '2' &&
+                draft.differentSides && (
+                  <>
+                    <label className="space-y-1 text-sm">
+                      <span className="text-muted-foreground">عدد ألوان الوجه الثاني</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={draft.secondSideColorCount}
+                        onChange={(e) => updateDraft({ secondSideColorCount: e.target.value })}
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 self-end text-sm">
+                      <input
+                        type="checkbox"
+                        checked={draft.secondSideIsNewDesign}
+                        onChange={(e) => updateDraft({ secondSideIsNewDesign: e.target.checked })}
+                      />
+                      تصميم جديد (الوجه الثاني)
+                    </label>
+                  </>
+                )}
               <label className="space-y-1 text-sm">
                 <span className="text-muted-foreground">بداية الترقيم (اختياري)</span>
                 <input

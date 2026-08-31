@@ -109,11 +109,29 @@ const extraServiceFields = {
   extraServices: z.array(z.object({ label: z.string().min(1), amount: z.number().nonnegative() })).optional(),
 };
 
+/**
+ * Owner (2026-09-01, "لما اختار وجهين في احتمالين إما يكونوا نفس الشكل
+ * او مختلفين... لو مختلفين هيبقى في سعر للتصميم التاني وسعر للزنكاية
+ * التانية") — shared by LOOSE_PAPER/NOTEBOOK/FOLDER (the only three
+ * kinds with a `sides` concept at all). Both fields stay `undefined` for
+ * the existing "same shape on both sides" case — `colorCount`/
+ * `isNewDesign` above already fully describe that; these only activate
+ * once staff explicitly says the second side differs (owner: "كل وجه
+ * ليه عدد ألوان مستقل" / "خانتين منفصلتين... واحدة لكل وجه"). See
+ * `resolveTotalColorCount`/`resolveDesignCost` (costCalculation.ts) for
+ * the formula these feed.
+ */
+const differentSidesFields = {
+  secondSideColorCount: z.number().int().positive().optional(),
+  secondSideIsNewDesign: z.boolean().optional(),
+};
+
 export const loosePaperPricingInputSchema = z.object({
   kind: z.literal('LOOSE_PAPER'),
   ...sheetJobFields,
   quantity: z.number().int().positive(),
   sides: z.union([z.literal(1), z.literal(2)]),
+  ...differentSidesFields,
   ...marginOverrideFields,
   ...zincPrintOverrideFields,
   ...numberingOverrideFields,
@@ -171,6 +189,7 @@ export const notebookPricingInputSchema = z.object({
    * a per-copy setting.
    */
   sides: z.union([z.literal(1), z.literal(2)]),
+  ...differentSidesFields,
   contentType: z.enum(['ORIGINAL_ONLY', 'ORIGINAL_PLUS_COPIES']),
   copies: z.number().int().nonnegative().optional(),
   bindingPricePerNotebook: z.number().nonnegative(),
@@ -205,6 +224,7 @@ export const folderPricingInputSchema = z.object({
   quantity: z.number().int().positive(),
   colorCount: z.number().int().positive(),
   sides: z.union([z.literal(1), z.literal(2)]),
+  ...differentSidesFields,
   isNewDesign: z.boolean(),
   sellophaneEnabled: z.boolean(),
   riza: z.number().nonnegative().optional(),

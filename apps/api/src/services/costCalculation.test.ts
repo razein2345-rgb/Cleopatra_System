@@ -212,6 +212,40 @@ describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPE
     expect(twoSided.sheetsNeeded).toBe(oneSided.sheetsNeeded);
     expect(twoSided.paperCost).toBe(oneSided.paperCost);
   });
+
+  it('different sides (owner, 2026-09-01) — notebook applies the same sum-of-colors formula as loose paper', () => {
+    const sameSides = calculateNotebookCost({
+      familyKey: 'extra2',
+      realLabel: '10×15',
+      notebookQuantity: 100,
+      contentType: 'ORIGINAL_ONLY',
+      colorCount: 2,
+      sides: 2,
+      isNewDesign: false,
+      bindingPricePerNotebook: 2.5,
+      sheetPrice: 3,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    const genuinelyDifferent = calculateNotebookCost({
+      familyKey: 'extra2',
+      realLabel: '10×15',
+      notebookQuantity: 100,
+      contentType: 'ORIGINAL_ONLY',
+      colorCount: 2,
+      sides: 2,
+      secondSideColorCount: 1,
+      isNewDesign: false,
+      bindingPricePerNotebook: 2.5,
+      sheetPrice: 3,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    // colorCount 2 + secondSideColorCount 1 = 3 total, not colorCount*sides = 4.
+    expect(genuinelyDifferent.zincCost).toBe(75 * 3);
+    expect(genuinelyDifferent.zincCost).toBeLessThan(sameSides.zincCost);
+    expect(genuinelyDifferent.sheetsNeeded).toBe(sameSides.sheetsNeeded); // sides never touch sheet count
+  });
 });
 
 describe('calculateLoosePaperCost — gayer sheets never tier (§3.4)', () => {
@@ -262,6 +296,72 @@ describe('calculateLoosePaperCost — gayer sheets never tier (§3.4)', () => {
     });
     expect(twoSided.printRuns).toBe(oneSided.printRuns * 2);
     expect(twoSided.sheetsNeeded).toBe(oneSided.sheetsNeeded);
+  });
+
+  it('different sides (owner, 2026-09-01, "لما اختار وجهين... مختلفين هيبقى في سعر للتصميم التاني وسعر للزنكاية التانية") — each side its own color count, summed for zinc/print runs; sheet count and paper cost stay untouched', () => {
+    const sameSides = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 2,
+      sides: 2,
+      isNewDesign: false,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    // Same sides with colorCount 2 → total color count 4 (2*2), identical
+    // to "different sides" with side1=2 + side2=2 — confirms the two
+    // formulas agree exactly when both sides happen to match.
+    const differentSidesButEqual = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 2,
+      sides: 2,
+      secondSideColorCount: 2,
+      isNewDesign: false,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    expect(differentSidesButEqual.printRuns).toBe(sameSides.printRuns);
+    expect(differentSidesButEqual.zincCost).toBe(sameSides.zincCost);
+    expect(differentSidesButEqual.paperCost).toBe(sameSides.paperCost);
+
+    // Genuinely different color counts: side 1 = 2 colors, side 2 = 1 color.
+    const genuinelyDifferent = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 2,
+      sides: 2,
+      secondSideColorCount: 1,
+      isNewDesign: false,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    // Total color count = 2 + 1 = 3 (not colorCount * sides = 4).
+    expect(genuinelyDifferent.zincCost).toBe(75 * 3);
+    expect(genuinelyDifferent.printRuns).toBe(Math.ceil(100 / 1000) * 3);
+    expect(genuinelyDifferent.paperCost).toBe(sameSides.paperCost); // sheet count never affected by sides
+
+    // Design cost: each side's own "تصميم جديد" billed independently once distinguished.
+    const bothNewDesigns = calculateLoosePaperCost({
+      familyKey: 'koshiaGayer',
+      realLabel: '22×33',
+      quantity: 100,
+      colorCount: 2,
+      sides: 2,
+      secondSideColorCount: 1,
+      isNewDesign: true,
+      secondSideIsNewDesign: true,
+      sheetPrice: 5,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    expect(bothNewDesigns.designCost).toBe(75 * 2); // designPrice charged twice, once per side
   });
 });
 

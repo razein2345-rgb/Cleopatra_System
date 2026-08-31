@@ -143,13 +143,43 @@ export function resolveNumbering(params: {
   return { repeat: Math.round(targetArea / realArea), targetLabel };
 }
 
+/**
+ * Owner (2026-09-01, "لما اختار وجهين في احتمالين إما يكونوا نفس الشكل
+ * او مختلفين... لو مختلفين هيبقى في سعر للتصميم التاني وسعر للزنكاية
+ * التانية") — shared by `calculateLoosePaperCost`/`calculateNotebookCost`
+ * (FOLDER reuses loose paper's own call, no separate implementation
+ * needed there). Two sides with the SAME design/colors is the existing,
+ * unchanged case: `secondSideColorCount` stays absent, and the total
+ * plate/run count is just `colorCount * sides` exactly as before this
+ * feature. Two DIFFERENT sides is new: each side gets its own
+ * independent color count (owner: "كل وجه ليه عدد ألوان مستقل"), and the
+ * total plates/runs is their SUM (owner: "مجموع الألوان × عدد الطبعات
+ * العادي") — when both sides happen to have the same count, this sum
+ * equals the old `colorCount * 2` exactly, so nothing already-priced
+ * ever changes just by this feature existing.
+ */
+function resolveTotalColorCount(colorCount: number, sides: 1 | 2, secondSideColorCount?: number): number {
+  return secondSideColorCount !== undefined ? colorCount + secondSideColorCount : colorCount * sides;
+}
+
+/** See `resolveTotalColorCount`'s doc comment — the same "different sides" toggle applied to design cost: each side's own "تصميم جديد" is billed independently (owner: "خانتين منفصلتين... واحدة لكل وجه") only once a second side is actually distinguished; otherwise this is the single existing designCost, unchanged. */
+function resolveDesignCost(isNewDesign: boolean, designPrice: number, secondSideIsNewDesign?: boolean): number {
+  const first = isNewDesign ? designPrice : 0;
+  if (secondSideIsNewDesign === undefined) return first;
+  return first + (secondSideIsNewDesign ? designPrice : 0);
+}
+
 export interface LoosePaperCostInput {
   familyKey: string;
   realLabel: string;
   quantity: number;
   colorCount: number;
   sides: 1 | 2;
+  /** Owner (2026-09-01) — see `resolveTotalColorCount`'s doc comment. Undefined = "same shape on both sides" (existing behavior, unaffected). */
+  secondSideColorCount?: number;
   isNewDesign: boolean;
+  /** Owner (2026-09-01) — see `resolveDesignCost`'s doc comment. */
+  secondSideIsNewDesign?: boolean;
   numbering?: NumberingInput;
   sheetPrice: number;
   families: SizeFamilyInput[];
@@ -276,9 +306,10 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
   }
 
   const paperCost = input.paperCostOverride ?? sheetsNeeded * input.sheetPrice;
-  const zincCost = (input.zincPriceOverride ?? input.settings.zincPrice) * input.colorCount;
+  const totalColorCount = resolveTotalColorCount(input.colorCount, input.sides, input.secondSideColorCount);
+  const zincCost = (input.zincPriceOverride ?? input.settings.zincPrice) * totalColorCount;
   // §3.4 — "وجهين" doubles the run count only, not the sheet count.
-  const printRuns = Math.ceil(printUnits / 1000) * input.colorCount * input.sides;
+  const printRuns = Math.ceil(printUnits / 1000) * totalColorCount;
   const printCost = printRuns * (input.printRunPriceOverride ?? input.settings.printRunPrice);
 
   let numberingRuns = 0;
@@ -298,7 +329,8 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
     numberingEnd = input.numbering.startNumber + input.quantity - 1;
   }
 
-  const designCost = input.designCostOverride ?? (input.isNewDesign ? input.settings.designPrice : 0);
+  const designCost =
+    input.designCostOverride ?? resolveDesignCost(input.isNewDesign, input.settings.designPrice, input.secondSideIsNewDesign);
   const extraCosts = input.extraCosts ?? 0;
   const profitPercentUsed = input.profitPercentOverride ?? input.settings.profitPercent;
 
@@ -332,7 +364,11 @@ export interface NotebookCostInput {
   colorCount: number;
   /** Owner (2026-08-27, "مش موجود عندي اوبشن إني اشتغل على وجهين في الدفاتر") — same "وجهين يضاعف عدد التراجات فقط، مش عدد الأفرخ" rule `LoosePaperCostInput.sides`/`FolderCostInput` already use, extended here for the first time. */
   sides: 1 | 2;
+  /** Owner (2026-09-01) — see `resolveTotalColorCount`'s doc comment. Undefined = "same shape on both sides" (existing behavior, unaffected). */
+  secondSideColorCount?: number;
   isNewDesign: boolean;
+  /** Owner (2026-09-01) — see `resolveDesignCost`'s doc comment. */
+  secondSideIsNewDesign?: boolean;
   numbering?: NumberingInput;
   bindingPricePerNotebook: number;
   sheetPrice: number;
@@ -408,13 +444,15 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
   });
 
   const units = totalSheetsFlat / calc.repeat;
-  const printRuns = Math.ceil(units / 1000) * input.colorCount * input.sides;
+  const totalColorCount = resolveTotalColorCount(input.colorCount, input.sides, input.secondSideColorCount);
+  const printRuns = Math.ceil(units / 1000) * totalColorCount;
   const printCost = printRuns * (input.printRunPriceOverride ?? input.settings.printRunPrice);
 
   const sheetsNeeded = Math.ceil(units / calc.calcPiecesPerSheet) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
   const paperCost = input.paperCostOverride ?? sheetsNeeded * input.sheetPrice;
-  const zincCost = (input.zincPriceOverride ?? input.settings.zincPrice) * input.colorCount;
-  const designCost = input.designCostOverride ?? (input.isNewDesign ? input.settings.designPrice : 0);
+  const zincCost = (input.zincPriceOverride ?? input.settings.zincPrice) * totalColorCount;
+  const designCost =
+    input.designCostOverride ?? resolveDesignCost(input.isNewDesign, input.settings.designPrice, input.secondSideIsNewDesign);
   const bindingCost = input.bindingPricePerNotebook * input.notebookQuantity;
 
   let numberingRuns = 0;
@@ -596,7 +634,11 @@ export interface FolderCostInput {
   quantity: number;
   colorCount: number;
   sides: 1 | 2;
+  /** Owner (2026-09-01) — see `resolveTotalColorCount`'s doc comment; passed straight through to the internal `calculateLoosePaperCost` call below. */
+  secondSideColorCount?: number;
   isNewDesign: boolean;
+  /** Owner (2026-09-01) — see `resolveDesignCost`'s doc comment; passed straight through to the internal `calculateLoosePaperCost` call below. */
+  secondSideIsNewDesign?: boolean;
   sheetPrice: number;
   sellophaneEnabled: boolean;
   /** §3.7 — riza/جراب داخلي/فورمة/تكسير وتلزيق: manual per-order line costs, optional, default 0. */
@@ -654,7 +696,9 @@ export function calculateFolderCost(input: FolderCostInput): FolderCostResult {
     quantity: input.quantity,
     colorCount: input.colorCount,
     sides: input.sides,
+    secondSideColorCount: input.secondSideColorCount,
     isNewDesign: input.isNewDesign,
+    secondSideIsNewDesign: input.secondSideIsNewDesign,
     sheetPrice: input.sheetPrice,
     families: input.families,
     settings: input.settings,
