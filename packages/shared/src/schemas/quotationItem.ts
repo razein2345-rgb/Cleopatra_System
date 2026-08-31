@@ -65,7 +65,9 @@ export const quotationItemSchema = z.object({
  * pricing kind carries its own quantity field already).
  */
 export const createQuotationItemSchema = z.object({
-  itemType: z.string().trim().min(1).max(50),
+  // Owner (2026-09-01, "عايز يبقى معايا مساحة اكتب اللي انا عايزة التفاصيل
+  // تبان في العرض براحتي") — raised from 50, same as createOrderItemSchema.
+  itemType: z.string().trim().min(1).max(300),
   notes: z.string().trim().min(1).max(1000).optional(),
   description: z.string().trim().min(1).max(1000).optional(),
   readyProductId: z.string().uuid().optional(),

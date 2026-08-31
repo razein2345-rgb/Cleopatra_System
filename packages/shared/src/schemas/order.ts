@@ -240,7 +240,10 @@ export const orderSchema = z.object({
  * pricing reads its unit price from.
  */
 export const createOrderItemSchema = z.object({
-  itemType: z.string().trim().min(1).max(50),
+  // Owner (2026-09-01, "عايز يبقى معايا مساحة اكتب اللي انا عايزة التفاصيل
+  // تبان في العرض براحتي") — raised from 50; still a single line-item name,
+  // not free-form prose (that's `description`/`notes` at 1000 below).
+  itemType: z.string().trim().min(1).max(300),
   notes: z.string().trim().min(1).max(1000).optional(),
   description: z.string().trim().min(1).max(1000).optional(),
   // FEATURE-009 (2026-08-13, owner: "لون الحبر / نوع التجليد / نوع
