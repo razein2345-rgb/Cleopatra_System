@@ -572,6 +572,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         realSizeLabel: d.realSizeLabel,
         inventoryItemId: d.inventoryItemId,
         colorCount: toNum(d.colorCount),
+        sides: d.sides === '2' ? 2 : 1,
         isNewDesign: d.isNewDesign,
         numberingStartNumber: toOptionalNum(d.numberingStartNumber),
         notebookQuantity: toNum(d.notebookQuantity),
@@ -814,6 +815,7 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       d.realSizeLabel = p.realSizeLabel;
       d.inventoryItemId = p.inventoryItemId;
       d.colorCount = String(p.colorCount);
+      d.sides = p.sides === 2 ? '2' : '1';
       d.isNewDesign = p.isNewDesign;
       d.numberingStartNumber = p.numberingStartNumber !== undefined ? String(p.numberingStartNumber) : '';
       d.notebookQuantity = String(p.notebookQuantity);
@@ -1056,6 +1058,7 @@ function pricingPreviewFromInput(
             contentType: pricing.contentType,
             copies: pricing.copies,
             colorCount: pricing.colorCount,
+            sides: pricing.sides,
             isNewDesign: pricing.isNewDesign,
             numbering: pricing.numberingStartNumber ? { startNumber: pricing.numberingStartNumber } : undefined,
             bindingPricePerNotebook: pricing.bindingPricePerNotebook,
@@ -1475,6 +1478,7 @@ function reconstructPricingInput(
         realSizeLabel,
         inventoryItemId,
         colorCount: b.colorCount ?? 1,
+        sides: b.sides === 2 ? 2 : 1,
         isNewDesign: b.isNewDesign ?? false,
         numberingStartNumber: b.numberingStartNumber ?? undefined,
         notebookQuantity: b.quantity ?? 1,
@@ -3588,7 +3592,7 @@ function NewOrderForm({
                   className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 />
               </label>
-              {(draft.kind === 'LOOSE_PAPER' || draft.kind === 'FOLDER') && (
+              {(draft.kind === 'LOOSE_PAPER' || draft.kind === 'FOLDER' || draft.kind === 'NOTEBOOK') && (
                 <label className="space-y-1 text-sm">
                   <span className="text-muted-foreground">عدد الوجوه</span>
                   <select

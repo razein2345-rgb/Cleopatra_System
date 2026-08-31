@@ -330,6 +330,8 @@ export interface NotebookCostInput {
   contentType: NotebookContentType;
   copies?: number;
   colorCount: number;
+  /** Owner (2026-08-27, "مش موجود عندي اوبشن إني اشتغل على وجهين في الدفاتر") — same "وجهين يضاعف عدد التراجات فقط، مش عدد الأفرخ" rule `LoosePaperCostInput.sides`/`FolderCostInput` already use, extended here for the first time. */
+  sides: 1 | 2;
   isNewDesign: boolean;
   numbering?: NumberingInput;
   bindingPricePerNotebook: number;
@@ -406,7 +408,7 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
   });
 
   const units = totalSheetsFlat / calc.repeat;
-  const printRuns = Math.ceil(units / 1000) * input.colorCount;
+  const printRuns = Math.ceil(units / 1000) * input.colorCount * input.sides;
   const printCost = printRuns * (input.printRunPriceOverride ?? input.settings.printRunPrice);
 
   const sheetsNeeded = Math.ceil(units / calc.calcPiecesPerSheet) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);

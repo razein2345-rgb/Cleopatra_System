@@ -161,6 +161,16 @@ export const notebookPricingInputSchema = z.object({
   kind: z.literal('NOTEBOOK'),
   ...sheetJobFields,
   notebookQuantity: z.number().int().positive(),
+  /**
+   * Owner (2026-08-27, "مش موجود عندي اوبشن إني اشتغل على وجهين في
+   * الدفاتر") — same "وجهين يضاعف عدد التراجات فقط" rule
+   * `loosePaperPricingInputSchema`/`folderPricingInputSchema` already use
+   * (see `calculateNotebookCost`'s own doc comment), just never extended
+   * to NOTEBOOK before now. One shared value for the whole notebook
+   * (original + every copy), same discipline as `colorCount` above — not
+   * a per-copy setting.
+   */
+  sides: z.union([z.literal(1), z.literal(2)]),
   contentType: z.enum(['ORIGINAL_ONLY', 'ORIGINAL_PLUS_COPIES']),
   copies: z.number().int().nonnegative().optional(),
   bindingPricePerNotebook: z.number().nonnegative(),

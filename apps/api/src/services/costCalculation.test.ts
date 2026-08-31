@@ -83,6 +83,7 @@ describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPE
       contentType: 'ORIGINAL_PLUS_COPIES',
       copies: 3,
       colorCount: 1,
+      sides: 1,
       isNewDesign: true,
       numbering: { startNumber: 1 },
       bindingPricePerNotebook: 2.5,
@@ -127,6 +128,7 @@ describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPE
       contentType: 'ORIGINAL_PLUS_COPIES',
       copies: 3,
       colorCount: 1,
+      sides: 1,
       isNewDesign: true,
       numbering: { startNumber: 1 },
       bindingPricePerNotebook: 2.5,
@@ -149,6 +151,7 @@ describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPE
       contentType: 'ORIGINAL_PLUS_COPIES',
       copies: 3,
       colorCount: 1,
+      sides: 1,
       isNewDesign: true,
       bindingPricePerNotebook: 2.5,
       sheetPrice: 3,
@@ -164,6 +167,7 @@ describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPE
       contentType: 'ORIGINAL_PLUS_COPIES',
       copies: 3,
       colorCount: 1,
+      sides: 1,
       isNewDesign: true,
       bindingPricePerNotebook: 2.5,
       sheetPrice: 3,
@@ -173,6 +177,40 @@ describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPE
     });
     expect(withOverride.paperCost).toBe(1000); // flat override, not 502*3
     expect(withOverride.sheetsNeeded).toBe(502); // sheet count itself is unaffected — only the price changes
+  });
+
+  it('double-sided printing doubles run count, not sheet count (owner, 2026-08-27, "مش موجود عندي اوبشن إني اشتغل على وجهين في الدفاتر")', () => {
+    const oneSided = calculateNotebookCost({
+      familyKey: 'extra2',
+      realLabel: '10×15',
+      notebookQuantity: 100,
+      contentType: 'ORIGINAL_PLUS_COPIES',
+      copies: 3,
+      colorCount: 1,
+      sides: 1,
+      isNewDesign: true,
+      bindingPricePerNotebook: 2.5,
+      sheetPrice: 3,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    const twoSided = calculateNotebookCost({
+      familyKey: 'extra2',
+      realLabel: '10×15',
+      notebookQuantity: 100,
+      contentType: 'ORIGINAL_PLUS_COPIES',
+      copies: 3,
+      colorCount: 1,
+      sides: 2,
+      isNewDesign: true,
+      bindingPricePerNotebook: 2.5,
+      sheetPrice: 3,
+      families: FAMILIES,
+      settings: SETTINGS,
+    });
+    expect(twoSided.printRuns).toBe(oneSided.printRuns * 2);
+    expect(twoSided.sheetsNeeded).toBe(oneSided.sheetsNeeded);
+    expect(twoSided.paperCost).toBe(oneSided.paperCost);
   });
 });
 
