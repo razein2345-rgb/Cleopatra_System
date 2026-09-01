@@ -287,10 +287,18 @@ export function DocumentRenderer({
         {totals && (
           <section className="mb-6 flex justify-end">
             <div className="w-64 space-y-1 text-xs">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">الإجمالي قبل الخصم</span>
-                <span dir="ltr">{money(totals.subtotal)}</span>
-              </div>
+              {/* Owner (2026-09-01, "بيكتب كمان الإجمالي قبل الخصم وبيكتب
+                  الرقم قبل ما يعمله تقريب فا ده كده مش خصم... لو مفيش خصم
+                  يكتب الإجمالي المتقرب على طول") — this line only makes
+                  sense next to an actual discount; with none, `subtotal`
+                  differs from the rounded `finalTotal` by rounding alone,
+                  which read as a phantom discount. */}
+              {(!!totals.itemDiscountsTotal || totals.discountPercent > 0) && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">الإجمالي قبل الخصم</span>
+                  <span dir="ltr">{money(totals.subtotal)}</span>
+                </div>
+              )}
               {!!totals.itemDiscountsTotal && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">خصومات الأصناف</span>

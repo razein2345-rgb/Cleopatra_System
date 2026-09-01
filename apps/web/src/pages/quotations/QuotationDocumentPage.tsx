@@ -93,7 +93,8 @@ export function QuotationDocumentPage() {
     setExportingPdf(true);
     try {
       // Owner (2026-08-26, "عايز عرض السعر او الفاتورة لما تتسيف تنزل بإسم العميل") — the downloaded filename, not just the number.
-      await downloadDocumentAsPdf(`عرض سعر ${quotation.quotationNumber} - ${partner ? partner.nameAr : 'عميل نقدي'}`);
+      // Owner (2026-09-01, "مش عايزه ينزل برقمه... عايز اسم الشركة") — dropped the number, name only.
+      await downloadDocumentAsPdf(`عرض سعر ${partner ? partner.nameAr : 'عميل نقدي'}`);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'تعذر تصدير عرض السعر كملف PDF');
     } finally {

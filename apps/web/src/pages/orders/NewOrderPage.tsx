@@ -3327,20 +3327,29 @@ function NewOrderForm({
         </label>
 
         <div className="space-y-1 border-t pt-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">الإجمالي قبل الخصم</span>
-            <span>{money(subtotal)} ج.م</span>
-          </div>
+          {/* Owner (2026-09-01, "بيكتب كمان الإجمالي قبل الخصم وبيكتب الرقم
+              قبل ما يعمله تقريب فا ده كده مش خصم... لو مفيش خصم يكتب
+              الإجمالي المتقرب على طول") — same fix as the printed document
+              (DocumentRenderer.tsx): only show "قبل الخصم" next to an
+              actual discount, not unconditionally. */}
+          {(itemDiscountsTotal > 0 || discountNum > 0) && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">الإجمالي قبل الخصم</span>
+              <span>{money(subtotal)} ج.م</span>
+            </div>
+          )}
           {itemDiscountsTotal > 0 && (
             <div className="flex justify-between">
               <span className="text-muted-foreground">خصومات الأصناف</span>
               <span>-{money(itemDiscountsTotal)} ج.م</span>
             </div>
           )}
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">الخصم ({discountNum}%)</span>
-            <span>-{money(subtotal - itemDiscountsTotal - afterDiscount)} ج.م</span>
-          </div>
+          {discountNum > 0 && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">الخصم ({discountNum}%)</span>
+              <span>-{money(subtotal - itemDiscountsTotal - afterDiscount)} ج.م</span>
+            </div>
+          )}
           {vatOn && (
             <div className="flex justify-between">
               <span className="text-muted-foreground">ضريبة القيمة المضافة</span>
