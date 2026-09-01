@@ -791,7 +791,10 @@ export function WorkOrderDocumentPage() {
         {order.customerNotes && (
           <section className="mb-3">
             <div className="text-muted-foreground text-xs">ملاحظات العميل</div>
-            <div className="text-xs">{order.customerNotes}</div>
+            {/* Owner (2026-09-01, "لما بكتب ملاحظات بتطلع كلها في سطر
+                واحد... محتاجين فعلاً نخلي الفونت bold") — same fix as
+                DocumentRenderer.tsx's own customerNotes block. */}
+            <div className="whitespace-pre-line text-xs font-bold">{order.customerNotes}</div>
           </section>
         )}
         {order.internalNotes && (

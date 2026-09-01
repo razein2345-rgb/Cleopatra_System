@@ -177,7 +177,12 @@ export function DocumentRenderer({
 
       <div className="relative">
         {showBranding && (
-          <header className="mb-6 flex items-start justify-between">
+          // Owner (2026-09-01, "الصفحة التانية... يشيل بقى كلمة عرض سعر
+          // والسادة... بحيث يبان إنها تكملة للصفحة الأولى") — `exportPdf.ts`
+          // repeats only this identity block (logo/business name) at the
+          // top of continuation pages, skipping the customer/title/
+          // salutation block below it, which only makes sense once.
+          <header data-pdf-light-header className="mb-6 flex items-start justify-between">
             {/* عايز اللوجو يظهر شمال والإسم يظهر يمين (owner, 2026-08-12) — الاسم أول عنصر في DOM (يمين في RTL)، اللوجو تاني عنصر (شمال). */}
             <div className="text-end">
               <div className="text-[var(--doc-accent)] text-2xl font-extrabold">{business.nameAr || '—'}</div>
@@ -285,7 +290,7 @@ export function DocumentRenderer({
         </table>
 
         {totals && (
-          <section className="mb-6 flex justify-end">
+          <section data-pdf-atomic className="mb-6 flex justify-end">
             <div className="w-64 space-y-1 text-xs">
               {/* Owner (2026-09-01, "بيكتب كمان الإجمالي قبل الخصم وبيكتب
                   الرقم قبل ما يعمله تقريب فا ده كده مش خصم... لو مفيش خصم
@@ -338,28 +343,41 @@ export function DocumentRenderer({
         )}
 
         {paymentTerms && (
-          <section className="mb-4">
+          <section data-pdf-atomic className="mb-4">
             <div className="text-muted-foreground text-xs">شروط الدفع</div>
-            <div className="text-xs">{paymentTerms}</div>
+            {/* Owner (2026-09-01, "لما بكتب ملاحظات بتطلع كلها في سطر واحد...
+                لما ادوس انتر... هيظهر سطر تحت السطر الأولاني") — plain text
+                collapses newlines by default in HTML; `whitespace-pre-line`
+                (already used for `config.termsText` below) preserves them. */}
+            <div className="whitespace-pre-line text-xs">{paymentTerms}</div>
           </section>
         )}
 
         {customerNotes && (
-          <section className="mb-4">
+          <section data-pdf-atomic className="mb-4">
             <div className="text-muted-foreground text-xs">ملاحظات</div>
-            <div className="text-xs">{customerNotes}</div>
+            {/* Owner (2026-09-01, "محتاجين فعلاً نخلي الفونت bold علشان
+                الكلام يبان ككل ويبقى واضح") — bold, on top of the
+                whitespace-pre-line fix above. */}
+            <div className="whitespace-pre-line text-xs font-bold">{customerNotes}</div>
           </section>
         )}
 
         {typeof config.termsText === 'string' && config.termsText && (
-          <section className="mb-4">
+          <section data-pdf-atomic className="mb-4">
             <div className="text-muted-foreground text-xs">الشروط والأحكام</div>
             <div className="whitespace-pre-line text-xs">{config.termsText}</div>
           </section>
         )}
 
-        {/* owner (2026-08-12, invoice): "تفضلوا بقبول وافر الأحترام عايزها على الشمال والختم فوقيها" — stamp + closing line moved to the end (left, in this RTL layout) and the stamp no longer waits on `showBranding` (the invoice omits the logo/business-name/watermark but still wants its own stamp). */}
-        <div className="mb-2 flex flex-col items-end text-end">
+        {/* owner (2026-08-12, invoice): "تفضلوا بقبول وافر الأحترام عايزها على الشمال والختم فوقيها" — stamp + closing line moved to the end (left, in this RTL layout) and the stamp no longer waits on `showBranding` (the invoice omits the logo/business-name/watermark but still wants its own stamp).
+            Owner (2026-09-01, "الختم والجملة اللي تحتها... في آخر كل صفحة")
+            — confirmed explicitly: the stamp + closing line repeat at the
+            bottom of EVERY page of a multi-page document, not just wherever
+            they naturally land once. `data-pdf-repeat-footer` (exportPdf.ts)
+            excises this block from the normal flow entirely and redraws a
+            fresh copy at the bottom of each page instead. */}
+        <div data-pdf-repeat-footer className="mb-2 flex flex-col items-end text-end">
           {showStamp && business.stampUrl && (
             // Owner, 2026-08-13: "عايز مقاس الختم يكون عرض 5.5 * طول 2.07" — the stamp's real physical print size, not an arbitrary Tailwind height.
             <img src={business.stampUrl} alt="" className="mb-3 object-contain" style={{ width: '5.5cm', height: '2.07cm' }} />
@@ -368,18 +386,23 @@ export function DocumentRenderer({
         </div>
 
         {Boolean(config.showSignatureArea) && (
-          <section className={`mt-10 grid gap-8 text-xs ${hideCustomerSignature ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          <section data-pdf-atomic className={`mt-10 grid gap-8 text-xs ${hideCustomerSignature ? 'grid-cols-1' : 'grid-cols-2'}`}>
             {!hideCustomerSignature && <div className="border-border border-t pt-2">توقيع العميل</div>}
             <div className="border-border border-t pt-2">{hideCustomerSignature ? 'توقيع المستلم' : 'توقيع المسؤول'}</div>
           </section>
         )}
 
         {typeof config.footerText === 'string' && config.footerText && (
-          <p className="text-muted-foreground mt-6 text-center text-xs">{config.footerText}</p>
+          <p data-pdf-atomic className="text-muted-foreground mt-6 text-center text-xs">{config.footerText}</p>
         )}
 
         {hasContactFooter && (
-          <footer className="border-border mt-8 flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs">
+          // Owner (2026-09-01, "كل الصفحات لازم يكون فيها... العنوان،
+          // والإيميل، وأرقام التليفونات، وصفحة الفيس... يتكرر مع الختم
+          // تحت") — repeats on every page alongside the stamp/closing
+          // line (`[data-pdf-repeat-footer]`, exportPdf.ts composes both
+          // into one repeated bottom block), not just once at the end.
+          <footer data-pdf-repeat-footer className="border-border mt-8 flex flex-wrap items-center justify-between gap-2 border-t pt-3 text-xs">
             <div className="flex flex-wrap items-center gap-3">
               {Boolean(config.showBusinessAddress) && business.address && (
                 <span className="flex items-center gap-1">

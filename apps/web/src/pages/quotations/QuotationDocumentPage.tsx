@@ -94,7 +94,10 @@ export function QuotationDocumentPage() {
     try {
       // Owner (2026-08-26, "عايز عرض السعر او الفاتورة لما تتسيف تنزل بإسم العميل") — the downloaded filename, not just the number.
       // Owner (2026-09-01, "مش عايزه ينزل برقمه... عايز اسم الشركة") — dropped the number, name only.
-      await downloadDocumentAsPdf(`عرض سعر ${partner ? partner.nameAr : 'عميل نقدي'}`);
+      // Owner (2026-09-01, "بس انا مطلبتش تعدل ده في الفاتورة طلبت ده يحصل في عرض السعر") — the fuller
+      // letterhead treatment (margins, repeated stamp/contact footer, light continuation header,
+      // ≥1-item last page) is opt-in and Quotation-only; every other document keeps the plain export.
+      await downloadDocumentAsPdf(`عرض سعر ${partner ? partner.nameAr : 'عميل نقدي'}`, { enhanced: true });
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'تعذر تصدير عرض السعر كملف PDF');
     } finally {
