@@ -162,6 +162,23 @@ const notebookMaterialOverrideSchema = z.object({
    * own paper instead of the original's.
    */
   sheetPriceOverride: z.number().nonnegative().optional(),
+  /**
+   * Owner (2026-09-01, "الأصل مكون من ورقتين مش ورقة واحدة... كل ورقة
+   * فيهم وجهين وفي ورقة فيهم الوجهين شبه بعض والورقة التانية الوجهين
+   * مختلفين") — a copy with a genuinely different print job from the
+   * notebook's shared settings above (`colorCount`/`sides`/
+   * `secondSideColorCount`/`isNewDesign`/`secondSideIsNewDesign`), not just
+   * a different paper. Any field left undefined falls back to that shared
+   * notebook-level setting for this copy specifically. A copy with none of
+   * these set (the common case, just a different paper price) is priced
+   * exactly as before — see `calculateNotebookMultiMaterialCost`'s own doc
+   * comment for how this stays byte-identical when unused.
+   */
+  colorCount: z.number().int().positive().optional(),
+  sides: z.union([z.literal(1), z.literal(2)]).optional(),
+  secondSideColorCount: z.number().int().positive().optional(),
+  isNewDesign: z.boolean().optional(),
+  secondSideIsNewDesign: z.boolean().optional(),
 });
 
 /**

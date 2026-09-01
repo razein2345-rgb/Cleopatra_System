@@ -523,6 +523,20 @@ export interface NotebookMaterialOverride {
   /** `COPY_${n}`, 1-indexed (`COPY_1` is the first copy after the original, ..., `COPY_${copies}` the last). */
   role: NotebookMaterialRole;
   sheetPrice: number;
+  /**
+   * Owner (2026-09-01, "الأصل مكون من ورقتين... كل ورقة فيهم وجهين وفي
+   * ورقة فيهم الوجهين شبه بعض والورقة التانية الوجهين مختلفين") — an
+   * independent print job for this copy, distinct from the notebook-wide
+   * `colorCount`/`sides`/`secondSideColorCount`/`isNewDesign`/
+   * `secondSideIsNewDesign` on `NotebookCostInput`. Any field left
+   * undefined falls back to that shared setting for this copy. See
+   * `calculateNotebookMultiMaterialCost`'s own doc comment for the formula.
+   */
+  colorCount?: number;
+  sides?: 1 | 2;
+  secondSideColorCount?: number;
+  isNewDesign?: boolean;
+  secondSideIsNewDesign?: boolean;
 }
 
 export interface NotebookMaterialBreakdown {
@@ -543,6 +557,32 @@ export interface NotebookMultiMaterialCostResult extends NotebookCostResult {
  * (the common case today — one paper for the whole notebook) returns `base`
  * untouched, wrapped in a single-role `materials` array — byte-identical to
  * calling `calculateNotebookCost` directly.
+ *
+ * Owner (2026-09-01, "الأصل مكون من ورقتين... ورقة فيهم الوجهين شبه بعض
+ * والورقة التانية الوجهين مختلفين") — a copy can ALSO override its own
+ * `colorCount`/`sides`/`secondSideColorCount`/`isNewDesign`/
+ * `secondSideIsNewDesign`, making it a genuinely independent print job
+ * (separate zinc plate, separate press runs) rather than just a different
+ * paper. `calculateNotebookCost` itself is still never touched — when NO
+ * copy overrides any print field (the common case, including every
+ * pre-existing multi-material notebook that only ever overrode paper
+ * price), `base`'s notebook-wide zinc/print/design numbers are used exactly
+ * as before, byte-identical.
+ *
+ * When at least one role DOES override a print field, that role's zinc/
+ * print/design cost is carved out and computed independently from its own
+ * page share (`notebookQuantity × originalPages` for ORIGINAL, `×
+ * copyPages` for any COPY), using the same run-size-tiering formula
+ * `calculateNotebookCost` uses. Every remaining role without a print
+ * override stays pooled together and priced with the notebook-wide shared
+ * settings, exactly as `base` already computed for the combined sheet
+ * count — carving a role out only ever adds a new, previously-impossible
+ * combination, it never changes the arithmetic for a role that keeps using
+ * the shared settings. This carve-out is necessary (not just "sum every
+ * role independently") because `ceil(a/1000) + ceil(b/1000)` is not always
+ * `ceil((a+b)/1000)` — always aggregating everything as one shared pool
+ * (today's behavior) or always splitting every role apart would each
+ * silently change run counts for jobs that never asked for that.
  */
 export function calculateNotebookMultiMaterialCost(
   input: NotebookCostInput,
@@ -565,6 +605,9 @@ export function calculateNotebookMultiMaterialCost(
   // slot, so they all carry equal weight — no role is bigger than another.
   const totalWeight = roles.length;
 
+  const overrideByRole = new Map<NotebookMaterialRole, NotebookMaterialOverride>();
+  for (const override of materialOverrides) overrideByRole.set(override.role, override);
+
   const priceByRole = new Map<NotebookMaterialRole, number>();
   priceByRole.set('ORIGINAL', input.sheetPrice);
   for (const override of materialOverrides) priceByRole.set(override.role, override.sheetPrice);
@@ -579,10 +622,75 @@ export function calculateNotebookMultiMaterialCost(
   });
 
   const paperCost = input.paperCostOverride ?? materials.reduce((sum, m) => sum + m.paperCost, 0);
-  const subtotal = base.designCost + base.zincCost + base.printCost + base.numberingCost + paperCost + base.bindingCost + base.extraCosts;
+
+  const hasPrintOverride = (o: NotebookMaterialOverride | undefined): o is NotebookMaterialOverride =>
+    o !== undefined &&
+    (o.colorCount !== undefined || o.sides !== undefined || o.secondSideColorCount !== undefined || o.isNewDesign !== undefined || o.secondSideIsNewDesign !== undefined);
+
+  const anyPrintOverride = roles.some((role) => hasPrintOverride(overrideByRole.get(role)));
+
+  let zincCost = base.zincCost;
+  let printRuns = base.printRuns;
+  let printCost = base.printCost;
+  let designCost = base.designCost;
+
+  if (anyPrintOverride) {
+    const { repeat } = resolveCalcSize({
+      familyKey: input.familyKey,
+      realLabel: input.realLabel,
+      quantity: input.notebookQuantity,
+      jobKind: 'NOTEBOOK',
+      families: input.families,
+      settings: input.settings,
+      calcLabelOverride: input.calcSizeOverride,
+    });
+    const originalPages = input.originalPagesOverride ?? (input.contentType === 'ORIGINAL_ONLY' ? 100 : 50);
+    const copyPages = input.copyPagesOverride ?? 50;
+    const zincPrice = input.zincPriceOverride ?? input.settings.zincPrice;
+    const printRunPrice = input.printRunPriceOverride ?? input.settings.printRunPrice;
+
+    zincCost = 0;
+    printRuns = 0;
+    printCost = 0;
+    let designCostSum = 0;
+    let pooledFlatSheets = base.totalSheetsFlat;
+
+    for (const role of roles) {
+      const override = overrideByRole.get(role);
+      if (!hasPrintOverride(override)) continue;
+      const flatSheets = input.notebookQuantity * (role === 'ORIGINAL' ? originalPages : copyPages);
+      pooledFlatSheets -= flatSheets;
+      const totalColorCount = resolveTotalColorCount(
+        override.colorCount ?? input.colorCount,
+        override.sides ?? input.sides,
+        override.secondSideColorCount,
+      );
+      const runs = Math.ceil(flatSheets / repeat / 1000) * totalColorCount;
+      zincCost += zincPrice * totalColorCount;
+      printRuns += runs;
+      printCost += runs * printRunPrice;
+      designCostSum += resolveDesignCost(override.isNewDesign ?? input.isNewDesign, input.settings.designPrice, override.secondSideIsNewDesign);
+    }
+
+    if (pooledFlatSheets > 0) {
+      const pooledTotalColorCount = resolveTotalColorCount(input.colorCount, input.sides, input.secondSideColorCount);
+      const pooledRuns = Math.ceil(pooledFlatSheets / repeat / 1000) * pooledTotalColorCount;
+      zincCost += zincPrice * pooledTotalColorCount;
+      printRuns += pooledRuns;
+      printCost += pooledRuns * printRunPrice;
+      designCostSum += resolveDesignCost(input.isNewDesign, input.settings.designPrice, input.secondSideIsNewDesign);
+    }
+
+    // A flat `designCostOverride` replaces the whole notebook's design cost
+    // once (same as `calculateNotebookCost`'s own rule) — it never sums per
+    // role, unlike zinc/print which are inherently per-plate quantities.
+    designCost = input.designCostOverride ?? designCostSum;
+  }
+
+  const subtotal = designCost + zincCost + printCost + base.numberingCost + paperCost + base.bindingCost + base.extraCosts;
   const total = subtotal * (1 + base.profitPercentUsed / 100);
 
-  return { ...base, paperCost, subtotal, total, materials };
+  return { ...base, zincCost, printRuns, printCost, designCost, paperCost, subtotal, total, materials };
 }
 
 export interface EnvelopeCostInput {

@@ -253,6 +253,23 @@ interface DraftItem {
    * covered by the original's own override.
    */
   copyMaterialPriceOverrides: string[];
+  /**
+   * Owner (2026-09-01, "الأصل مكون من ورقتين مش ورقة واحدة... كل ورقة
+   * فيهم وجهين وفي ورقة فيهم الوجهين شبه بعض والورقة التانية الوجهين
+   * مختلفين") — a copy can be its own independent print job (own color
+   * count, own وجه واحد/وجهين, own تصميم جديد), not just a different
+   * paper. Same per-copy indexing as `copyMaterials` above; a copy with
+   * `copyPrintOverrideEnabled[i]` false shares the notebook-wide print
+   * settings exactly as before (byte-identical, see
+   * `calculateNotebookMultiMaterialCost`'s own doc comment).
+   */
+  copyPrintOverrideEnabled: boolean[];
+  copyColorCount: string[];
+  copySides: ('1' | '2')[];
+  copyDifferentSides: boolean[];
+  copySecondSideColorCount: string[];
+  copyIsNewDesign: boolean[];
+  copySecondSideIsNewDesign: boolean[];
   // ENVELOPE
   readyEnvelopePricePerPiece: string;
   // FOLDER
@@ -414,6 +431,13 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     bindingPricePerNotebook: '0',
     copyMaterials: [],
     copyMaterialPriceOverrides: [],
+    copyPrintOverrideEnabled: [],
+    copyColorCount: [],
+    copySides: [],
+    copyDifferentSides: [],
+    copySecondSideColorCount: [],
+    copyIsNewDesign: [],
+    copySecondSideIsNewDesign: [],
     readyEnvelopePricePerPiece: '0',
     sellophaneEnabled: false,
     riza: '',
@@ -579,14 +603,48 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
       // one independent picker per copy; an empty picker = "same paper as
       // the original", so it's simply omitted rather than sent as an
       // override (keeps the byte-identical-to-single-material guarantee).
-      const materials: { role: string; inventoryItemId: string; sheetPriceOverride?: number }[] = [];
+      // Owner (2026-09-01, "الأصل مكون من ورقتين... ورقة فيهم الوجهين شبه
+      // بعض والورقة التانية الوجهين مختلفين") — a copy can also need its
+      // own independent print job (`copyPrintOverrideEnabled[i]`) even when
+      // it shares the SAME paper as the original (their real job: both
+      // sheets are 80gsm, only the print treatment differs) — so a
+      // materials entry is now pushed if EITHER a distinct paper OR a
+      // print override is set, not just the paper.
+      const materials: {
+        role: string;
+        inventoryItemId: string;
+        sheetPriceOverride?: number;
+        colorCount?: number;
+        sides?: 1 | 2;
+        secondSideColorCount?: number;
+        isNewDesign?: boolean;
+        secondSideIsNewDesign?: boolean;
+      }[] = [];
       if (d.contentType === 'ORIGINAL_PLUS_COPIES') {
         for (let i = 0; i < (copies ?? 0); i++) {
           const paperId = d.copyMaterials[i];
-          if (paperId) {
-            const priceOverride = toOptionalNum(d.copyMaterialPriceOverrides[i] ?? '');
-            materials.push({ role: `COPY_${i + 1}`, inventoryItemId: paperId, ...(priceOverride !== undefined ? { sheetPriceOverride: priceOverride } : {}) });
-          }
+          const printOverrideEnabled = d.copyPrintOverrideEnabled[i] ?? false;
+          if (!paperId && !printOverrideEnabled) continue;
+          const priceOverride = toOptionalNum(d.copyMaterialPriceOverrides[i] ?? '');
+          const printFields = printOverrideEnabled
+            ? {
+                colorCount: toOptionalNum(d.copyColorCount[i] ?? ''),
+                sides: (d.copySides[i] ?? '1') === '2' ? (2 as const) : (1 as const),
+                secondSideColorCount:
+                  (d.copySides[i] ?? '1') === '2' && d.copyDifferentSides[i]
+                    ? toOptionalNum(d.copySecondSideColorCount[i] ?? '')
+                    : undefined,
+                isNewDesign: d.copyIsNewDesign[i] ?? false,
+                secondSideIsNewDesign:
+                  (d.copySides[i] ?? '1') === '2' && d.copyDifferentSides[i] ? (d.copySecondSideIsNewDesign[i] ?? false) : undefined,
+              }
+            : {};
+          materials.push({
+            role: `COPY_${i + 1}`,
+            inventoryItemId: paperId || d.inventoryItemId,
+            ...(priceOverride !== undefined ? { sheetPriceOverride: priceOverride } : {}),
+            ...printFields,
+          });
         }
       }
       return {
@@ -855,15 +913,41 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
       const copyCount = p.contentType === 'ORIGINAL_PLUS_COPIES' ? (p.copies ?? 0) : 0;
       const copyMaterials = new Array(copyCount).fill('');
       const copyMaterialPriceOverrides = new Array(copyCount).fill('');
+      const copyPrintOverrideEnabled = new Array(copyCount).fill(false);
+      const copyColorCount = new Array(copyCount).fill('');
+      const copySides: ('1' | '2')[] = new Array(copyCount).fill('1');
+      const copyDifferentSides = new Array(copyCount).fill(false);
+      const copySecondSideColorCount = new Array(copyCount).fill('');
+      const copyIsNewDesign = new Array(copyCount).fill(false);
+      const copySecondSideIsNewDesign = new Array(copyCount).fill(false);
       for (const m of p.materials ?? []) {
         const idx = Number(m.role.replace('COPY_', '')) - 1;
         if (idx >= 0 && idx < copyMaterials.length) {
-          copyMaterials[idx] = m.inventoryItemId;
+          // Owner (2026-09-01) — a copy pushed only for its own print job
+          // (same paper as the original) shouldn't show as "a different
+          // paper chosen" when re-opened for edit.
+          copyMaterials[idx] = m.inventoryItemId !== p.inventoryItemId ? m.inventoryItemId : '';
           copyMaterialPriceOverrides[idx] = m.sheetPriceOverride !== undefined ? String(m.sheetPriceOverride) : '';
+          if (m.colorCount !== undefined || m.sides !== undefined || m.isNewDesign !== undefined) {
+            copyPrintOverrideEnabled[idx] = true;
+            copyColorCount[idx] = m.colorCount !== undefined ? String(m.colorCount) : '';
+            copySides[idx] = m.sides === 2 ? '2' : '1';
+            copyDifferentSides[idx] = m.secondSideColorCount !== undefined;
+            copySecondSideColorCount[idx] = m.secondSideColorCount !== undefined ? String(m.secondSideColorCount) : '';
+            copyIsNewDesign[idx] = m.isNewDesign ?? false;
+            copySecondSideIsNewDesign[idx] = m.secondSideIsNewDesign ?? false;
+          }
         }
       }
       d.copyMaterials = copyMaterials;
       d.copyMaterialPriceOverrides = copyMaterialPriceOverrides;
+      d.copyPrintOverrideEnabled = copyPrintOverrideEnabled;
+      d.copyColorCount = copyColorCount;
+      d.copySides = copySides;
+      d.copyDifferentSides = copyDifferentSides;
+      d.copySecondSideColorCount = copySecondSideColorCount;
+      d.copyIsNewDesign = copyIsNewDesign;
+      d.copySecondSideIsNewDesign = copySecondSideIsNewDesign;
       const notebookPageOverrides = p as Partial<{ originalPagesOverride: number; copyPagesOverride: number }>;
       d.originalPagesOverrideEnabled = notebookPageOverrides.originalPagesOverride !== undefined;
       d.originalPagesOverrideValue = String(notebookPageOverrides.originalPagesOverride ?? '');
@@ -1080,7 +1164,15 @@ function pricingPreviewFromInput(
         const materialOverrides = (pricing.materials ?? []).map((m) => {
           const overridePrice = m.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(m.inventoryItemId);
           if (overridePrice === undefined) throw new Error('الورق المختار للصورة غير مرتبط بسعر');
-          return { role: m.role, sheetPrice: overridePrice };
+          return {
+            role: m.role,
+            sheetPrice: overridePrice,
+            colorCount: m.colorCount,
+            sides: m.sides,
+            secondSideColorCount: m.secondSideColorCount,
+            isNewDesign: m.isNewDesign,
+            secondSideIsNewDesign: m.secondSideIsNewDesign,
+          };
         });
         const r = calculateNotebookMultiMaterialCost(
           {
@@ -1439,6 +1531,35 @@ interface StoredBreakdown {
   sellophaneType?: string | null;
   /** FEATURE-007 (2026-08-12, owner: "المفروض أقدر أعدل في عرض السعر إني أضيف مثلا بند") — `QuotationItem` has no top-level `inventoryItemId` column (a Quotation never draws down stock) and the pricing engine never freezes the raw id into `breakdown` either (only `orderService`'s own `OrderItem.inventoryItemId` column gets it, from the pricing result's sibling field, not from `breakdown` itself). `paperName`, however, IS frozen into `breakdown` for LOOSE_PAPER/NOTEBOOK/FOLDER (see `pricingEngineService.ts`'s per-kind breakdown merge) — matched back to a live `InventoryItem` by name below, the same "match by name" fallback `matchCatalogIdByName` already uses for PRODUCT/SERVICE catalog references. */
   paperName?: string | null;
+  /**
+   * Owner (2026-09-01, "لما بروح اعدل بند واحد فقط في عرض السعر كل البنود
+   * بيتضاف عليها النسبة المثبتة تاني وبيلغي النسبة اللي انا كنت عاملها")
+   * — every manual pricing override, now frozen by `pricingEngineService.ts`
+   * (previously only the override's *effect* survived, e.g.
+   * `profitPercentUsed`, never the override itself — so re-opening for
+   * edit silently reset every item to current defaults). `undefined`/`null`
+   * for any item that never had that override — no change for those.
+   */
+  zincPriceOverride?: number | null;
+  printRunPriceOverride?: number | null;
+  numberingRunPriceOverride?: number | null;
+  designCostOverride?: number | null;
+  wasteSheetsOverride?: number | null;
+  calcSizeOverride?: string | null;
+  numberingSizeOverride?: string | null;
+  profitPercentOverride?: number | null;
+  sheetPriceOverride?: number | null;
+  paperCostOverride?: number | null;
+  originalPagesOverride?: number | null;
+  copyPagesOverride?: number | null;
+  riza?: number | null;
+  jarab?: number | null;
+  forma?: number | null;
+  taksir?: number | null;
+  unitPriceOverride?: number | null;
+  unitPriceMarkupPercent?: number | null;
+  pricePerMeterOverride?: number | null;
+  pricePerMeterMarkupPercent?: number | null;
 }
 
 /**
@@ -1480,6 +1601,31 @@ function inferStoredKind(sizeFamilyKey: string | null, breakdown: StoredBreakdow
   return null;
 }
 
+/**
+ * Owner (2026-09-01, "بيتضاف عليها النسبة المثبتة تاني وبيلغي النسبة اللي
+ * انا كنت عاملها") — the other half of `frozenOverridesOf` (pricingEngineService.ts):
+ * reads the same override fields back out of the frozen breakdown so
+ * reopening an item for edit restores exactly what staff had set, instead
+ * of silently recomputing against today's defaults. `null` (JSON-safe
+ * "not set") converts back to `undefined` (schema-safe "not set").
+ */
+function restoreOverridesOf(b: StoredBreakdown) {
+  return {
+    ...(b.zincPriceOverride != null ? { zincPriceOverride: b.zincPriceOverride } : {}),
+    ...(b.printRunPriceOverride != null ? { printRunPriceOverride: b.printRunPriceOverride } : {}),
+    ...(b.numberingRunPriceOverride != null ? { numberingRunPriceOverride: b.numberingRunPriceOverride } : {}),
+    ...(b.designCostOverride != null ? { designCostOverride: b.designCostOverride } : {}),
+    ...(b.wasteSheetsOverride != null ? { wasteSheetsOverride: b.wasteSheetsOverride } : {}),
+    ...(b.calcSizeOverride != null ? { calcSizeOverride: b.calcSizeOverride } : {}),
+    ...(b.numberingSizeOverride != null ? { numberingSizeOverride: b.numberingSizeOverride } : {}),
+    ...(b.profitPercentOverride != null ? { profitPercentOverride: b.profitPercentOverride } : {}),
+    ...(b.sheetPriceOverride != null ? { sheetPriceOverride: b.sheetPriceOverride } : {}),
+    ...(b.paperCostOverride != null ? { paperCostOverride: b.paperCostOverride } : {}),
+    ...(b.originalPagesOverride != null ? { originalPagesOverride: b.originalPagesOverride } : {}),
+    ...(b.copyPagesOverride != null ? { copyPagesOverride: b.copyPagesOverride } : {}),
+  };
+}
+
 function reconstructPricingInput(
   kind: PricingKind,
   b: StoredBreakdown,
@@ -1504,6 +1650,7 @@ function reconstructPricingInput(
         secondSideColorCount: b.secondSideColorCount ?? undefined,
         secondSideIsNewDesign: b.secondSideIsNewDesign ?? undefined,
         ...extra,
+        ...restoreOverridesOf(b),
       };
     case 'NOTEBOOK': {
       if (!sizeFamilyKey || !realSizeLabel || !inventoryItemId) return null;
@@ -1529,6 +1676,7 @@ function reconstructPricingInput(
         bindingPricePerNotebook: b.quantity ? (b.bindingCost ?? 0) / b.quantity : 0,
         materials: materials.length ? materials : undefined,
         ...extra,
+        ...restoreOverridesOf(b),
       };
     }
     case 'ENVELOPE':
@@ -1539,6 +1687,7 @@ function reconstructPricingInput(
         isNewDesign: b.isNewDesign ?? false,
         readyEnvelopePricePerPiece: b.readyEnvelopePricePerPiece ?? 0,
         ...extra,
+        ...restoreOverridesOf(b),
       };
     case 'FOLDER':
       if (!sizeFamilyKey || !realSizeLabel || !inventoryItemId) return null;
@@ -1554,7 +1703,12 @@ function reconstructPricingInput(
         secondSideIsNewDesign: b.secondSideIsNewDesign ?? undefined,
         isNewDesign: b.isNewDesign ?? false,
         sellophaneEnabled: b.sellophaneEnabled ?? false,
+        riza: b.riza ?? undefined,
+        jarab: b.jarab ?? undefined,
+        forma: b.forma ?? undefined,
+        taksir: b.taksir ?? undefined,
         ...extra,
+        ...restoreOverridesOf(b),
       };
     case 'BOARDS':
       if (b.boardsCatalogItemId) {
@@ -1573,6 +1727,8 @@ function reconstructPricingInput(
         quantity: b.quantity ?? 1,
         hasDesign: b.hasDesign ?? undefined,
         hasSellophane: b.hasSellophane ?? undefined,
+        pricePerMeterOverride: b.pricePerMeterOverride ?? undefined,
+        pricePerMeterMarkupPercent: b.pricePerMeterMarkupPercent ?? undefined,
         ...extra,
       };
     case 'DIGITAL': {
@@ -1602,14 +1758,28 @@ function reconstructPricingInput(
           boshrPricePerPiece: c.boshrPricePerPiece ?? undefined,
         })),
         ...extra,
+        ...(b.profitPercentOverride != null ? { profitPercentOverride: b.profitPercentOverride } : {}),
       };
     }
     case 'PRODUCT':
     case 'SERVICE':
-      return { kind, quantity: b.quantity ?? 1, ...extra };
+      return {
+        kind,
+        quantity: b.quantity ?? 1,
+        unitPriceOverride: b.unitPriceOverride ?? undefined,
+        unitPriceMarkupPercent: b.unitPriceMarkupPercent ?? undefined,
+        ...extra,
+      };
     case 'INVENTORY_RETAIL':
       if (!inventoryItemId) return null;
-      return { kind: 'INVENTORY_RETAIL', inventoryItemId, quantity: b.quantity ?? 1, ...extra };
+      return {
+        kind: 'INVENTORY_RETAIL',
+        inventoryItemId,
+        quantity: b.quantity ?? 1,
+        unitPriceOverride: b.unitPriceOverride ?? undefined,
+        unitPriceMarkupPercent: b.unitPriceMarkupPercent ?? undefined,
+        ...extra,
+      };
     case 'MANUAL':
       return { kind: 'MANUAL', unitPrice: b.unitPrice ?? 0, quantity: b.quantity ?? 1 };
   }
@@ -1640,7 +1810,7 @@ interface ReconstructedLine {
 
 /** Shared by both edit-Order and edit-Quotation modes — the two item shapes carry the same fields relevant here. */
 function reconstructCartLine(
-  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; boardsCatalogItemId?: string | null; productionTrack?: ProductionTrack | null; groupId?: string | null },
+  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; boardsCatalogItemId?: string | null; productionTrack?: ProductionTrack | null; groupId?: string | null; discountAmount?: number },
   readyProducts: ReadyProduct[],
   services: Service[],
   inventoryItems: InventoryItem[],
@@ -1676,6 +1846,18 @@ function reconstructCartLine(
     return { line: null, warning: `تعذر إعادة بناء بيانات البند "${item.modelName ?? ''}" — احذفه وأضفه من جديد` };
   }
 
+  // Owner (2026-09-01, "لما بروح اعدل بند واحد فقط... كل البنود بيتضاف
+  // عليها النسبة المثبتة تاني وبيلغي النسبة اللي انا كنت عاملها") — this
+  // was missing entirely: `discountAmount` (the frozen currency amount,
+  // §"خصم البند الواحد") never got converted back to the `discountPercent`
+  // the composer actually edits, so EVERY item's discount silently reset
+  // to 0 the moment an order/quotation was reopened for editing — not just
+  // whichever item the user touched. Same percent→amount formula
+  // `resolveItemDiscountAmounts` uses on save, inverted.
+  const itemTotal = item.itemTotal ?? 0;
+  const discountAmount = item.discountAmount ?? 0;
+  const discountPercent = itemTotal > 0 && discountAmount > 0 ? (discountAmount / itemTotal) * 100 : undefined;
+
   return {
     line: {
       key: item.id,
@@ -1692,6 +1874,7 @@ function reconstructCartLine(
       attachmentUrl: b.referenceImageUrl ?? undefined,
       pricing,
       total: item.itemTotal ?? 0,
+      discountPercent,
       productionTrack: item.productionTrack ?? null,
       // "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — reusing the real
       // `groupId` as the reconstructed line's `groupKey` is enough: two
@@ -3961,6 +4144,121 @@ function NewOrderForm({
                   )}
                 </label>
               ))}
+            </div>
+          )}
+
+          {/* Owner (2026-09-01, "الأصل مكون من ورقتين... كل ورقة فيهم
+              وجهين وفي ورقة فيهم الوجهين شبه بعض والورقة التانية الوجهين
+              مختلفين") — a copy's own independent print job: own color
+              count, own وجه واحد/وجهين، own تصميم جديد. Off by default —
+              a copy shares the notebook-wide print settings exactly as
+              before until this is switched on for it specifically. */}
+          {draft.kind === 'NOTEBOOK' && draft.contentType === 'ORIGINAL_PLUS_COPIES' && toNum(draft.copies) >= 1 && (
+            <div className="space-y-2">
+              {Array.from({ length: toNum(draft.copies) }, (_, i) => {
+                const enabled = draft.copyPrintOverrideEnabled[i] ?? false;
+                const sides = draft.copySides[i] ?? '1';
+                const differentSides = draft.copyDifferentSides[i] ?? false;
+                function setAt(key: 'copyPrintOverrideEnabled' | 'copyDifferentSides' | 'copyIsNewDesign' | 'copySecondSideIsNewDesign', value: boolean): void;
+                function setAt(key: 'copyColorCount' | 'copySecondSideColorCount', value: string): void;
+                function setAt(key: 'copySides', value: '1' | '2'): void;
+                function setAt(key: keyof DraftItem, value: boolean | string) {
+                  const next = [...(draft[key] as unknown[])];
+                  next[i] = value;
+                  updateDraft({ [key]: next } as Partial<DraftItem>);
+                }
+                return (
+                  <div
+                    key={i}
+                    className={`space-y-2 rounded-xl border p-3 transition-colors ${
+                      enabled ? 'border-primary/50 bg-primary/5' : 'border-border bg-muted/20 hover:bg-muted/30'
+                    }`}
+                  >
+                    <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                      <Checkbox
+                        checked={enabled}
+                        onCheckedChange={(v) => setAt('copyPrintOverrideEnabled', v === true)}
+                      />
+                      <span aria-hidden className="text-base leading-none">🖨️</span>
+                      <span>طباعة مستقلة لنسخة {i + 1} (اختياري)</span>
+                    </label>
+                    {enabled ? (
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <label className="space-y-1 text-sm">
+                          <span className="text-muted-foreground">عدد الألوان</span>
+                          <input
+                            type="number"
+                            min={1}
+                            value={draft.copyColorCount[i] ?? ''}
+                            onChange={(e) => setAt('copyColorCount', e.target.value)}
+                            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                          />
+                        </label>
+                        <label className="space-y-1 text-sm">
+                          <span className="text-muted-foreground">عدد الوجوه</span>
+                          <select
+                            value={sides}
+                            onChange={(e) => {
+                              const v = e.target.value as '1' | '2';
+                              setAt('copySides', v);
+                              if (v === '1') setAt('copyDifferentSides', false);
+                            }}
+                            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                          >
+                            <option value="1">وجه واحد</option>
+                            <option value="2">وجهين</option>
+                          </select>
+                        </label>
+                        {sides === '2' && (
+                          <label className="space-y-1 text-sm">
+                            <span className="text-muted-foreground">شكل الوجهين</span>
+                            <select
+                              value={differentSides ? 'different' : 'same'}
+                              onChange={(e) => setAt('copyDifferentSides', e.target.value === 'different')}
+                              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                            >
+                              <option value="same">نفس الشكل</option>
+                              <option value="different">شكل مختلف لكل وجه</option>
+                            </select>
+                          </label>
+                        )}
+                        <label className="flex items-center gap-2 self-end text-sm">
+                          <input
+                            type="checkbox"
+                            checked={draft.copyIsNewDesign[i] ?? false}
+                            onChange={(e) => setAt('copyIsNewDesign', e.target.checked)}
+                          />
+                          {sides === '2' && differentSides ? 'تصميم جديد (الوجه الأول)' : 'تصميم جديد'}
+                        </label>
+                        {sides === '2' && differentSides && (
+                          <>
+                            <label className="space-y-1 text-sm">
+                              <span className="text-muted-foreground">عدد ألوان الوجه الثاني</span>
+                              <input
+                                type="number"
+                                min={1}
+                                value={draft.copySecondSideColorCount[i] ?? ''}
+                                onChange={(e) => setAt('copySecondSideColorCount', e.target.value)}
+                                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                              />
+                            </label>
+                            <label className="flex items-center gap-2 self-end text-sm">
+                              <input
+                                type="checkbox"
+                                checked={draft.copySecondSideIsNewDesign[i] ?? false}
+                                onChange={(e) => setAt('copySecondSideIsNewDesign', e.target.checked)}
+                              />
+                              تصميم جديد (الوجه الثاني)
+                            </label>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground text-xs">النسخة دي بتاخد نفس إعدادات الطباعة المشتركة للدفتر — فعّل ده لو مختلفة</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 

@@ -4,6 +4,7 @@ import {
   calculateFolderCost,
   calculateLoosePaperCost,
   calculateNotebookCost,
+  calculateNotebookMultiMaterialCost,
   calculateProductOrServiceCost,
   resolveNumbering,
   type PricingConstants,
@@ -245,6 +246,76 @@ describe('calculateNotebookCost — confirmed worked example (PRICING_ENGINE_SPE
     expect(genuinelyDifferent.zincCost).toBe(75 * 3);
     expect(genuinelyDifferent.zincCost).toBeLessThan(sameSides.zincCost);
     expect(genuinelyDifferent.sheetsNeeded).toBe(sameSides.sheetsNeeded); // sides never touch sheet count
+  });
+});
+
+describe('calculateNotebookMultiMaterialCost — per-copy independent print job (owner, 2026-09-01)', () => {
+  const baseInput = {
+    familyKey: 'standard',
+    realLabel: '25×35',
+    notebookQuantity: 500,
+    contentType: 'ORIGINAL_PLUS_COPIES' as const,
+    copies: 1,
+    colorCount: 1,
+    sides: 1 as const,
+    isNewDesign: false,
+    bindingPricePerNotebook: 2,
+    sheetPrice: 5,
+    families: FAMILIES,
+    settings: SETTINGS,
+  };
+
+  it('sheet-price-only override (no print fields) stays byte-identical to calculateNotebookCost (regression guard)', () => {
+    const base = calculateNotebookCost(baseInput);
+    const result = calculateNotebookMultiMaterialCost(baseInput, [{ role: 'COPY_1', sheetPrice: 8 }]);
+    expect(result.zincCost).toBe(base.zincCost);
+    expect(result.printRuns).toBe(base.printRuns);
+    expect(result.printCost).toBe(base.printCost);
+    expect(result.designCost).toBe(base.designCost);
+  });
+
+  it('owner\'s real job (500 دفتر حر ن 235، 25×35): الأصل مكون من ورقتين، ورقة "شبه بعض" وورقة "مختلفين" — each copy is its own independent print job, not one shared setting', () => {
+    // Isolated reference: "runs per unit of color" for a 500×50-page block
+    // at this size, with colorCount=1/sides=1 so totalColorCount=1 and
+    // printRuns IS that reference count directly — used below to predict
+    // each role's own runs without duplicating resolveCalcSize's tiering.
+    const reference = calculateNotebookCost({ ...baseInput, contentType: 'ORIGINAL_ONLY', originalPagesOverride: 50 });
+    const runsPerColor = reference.printRuns;
+
+    const result = calculateNotebookMultiMaterialCost(baseInput, [
+      // ORIGINAL left with no print override at all — falls back to the
+      // notebook-wide "same shape" setting (colorCount:1, sides:1 above).
+      { role: 'COPY_1', sheetPrice: 6, colorCount: 2, sides: 2, secondSideColorCount: 1, isNewDesign: true, secondSideIsNewDesign: true },
+    ]);
+
+    // ORIGINAL: totalColorCount = 1 (colorCount 1 × sides 1, untouched).
+    // COPY_1: totalColorCount = 2 + 1 = 3 (genuinely different sides, summed not multiplied).
+    expect(result.zincCost).toBe(75 * 1 + 75 * 3);
+    expect(result.printRuns).toBe(runsPerColor * 1 + runsPerColor * 3);
+    expect(result.printCost).toBe(result.printRuns * 75);
+    // ORIGINAL: isNewDesign false → 0. COPY_1: both sides new → designPrice × 2.
+    expect(result.designCost).toBe(75 * 2);
+    // Paper split/binding/numbering are untouched by any of this.
+    expect(result.paperCost).toBe(result.materials.reduce((sum, m) => sum + m.paperCost, 0));
+    expect(result.bindingCost).toBe(baseInput.bindingPricePerNotebook * baseInput.notebookQuantity);
+  });
+
+  it('a copy with no print override at all still shares the pooled zinc plate with the original (only an explicit override carves a role out into its own independent plate)', () => {
+    // sheetPrice-only override (no colorCount/sides/... fields) — same as
+    // the very first test above, just phrased against the pool directly:
+    // ORIGINAL and COPY_1 are still one combined print job, one shared
+    // zinc cost, because neither one was told it's printed independently.
+    const pooled = calculateNotebookMultiMaterialCost(baseInput, [{ role: 'COPY_1', sheetPrice: 5 }]);
+    const base = calculateNotebookCost(baseInput);
+    expect(pooled.zincCost).toBe(base.zincCost); // one plate for the whole notebook, not two
+  });
+
+  it('an explicit per-role override always charges its own zinc plate, even when the numbers happen to match the notebook default — a separate design/paper needs a separate plate regardless of color count', () => {
+    const carvedOut = calculateNotebookMultiMaterialCost(baseInput, [
+      { role: 'COPY_1', sheetPrice: 5, colorCount: 1, sides: 1, isNewDesign: false },
+    ]);
+    const base = calculateNotebookCost(baseInput);
+    expect(carvedOut.zincCost).toBe(base.zincCost * 2); // ORIGINAL's plate (pool) + COPY_1's own plate
   });
 });
 

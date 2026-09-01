@@ -243,6 +243,18 @@ export interface ItemPricingMaterial {
   sheetsNeeded: number;
   sheetPrice: number;
   paperName: string | null;
+  /**
+   * Owner (2026-09-01, "الأصل مكون من ورقتين... كل ورقة فيهم وجهين") —
+   * frozen so `reconstructPricingInput` (NewOrderPage.tsx) can restore this
+   * copy's own independent print job when re-opening the order for edit.
+   * `undefined`/absent for a copy that never overrode these (the common
+   * case — just a different paper, same print job as the rest).
+   */
+  colorCount?: number;
+  sides?: 1 | 2;
+  secondSideColorCount?: number;
+  isNewDesign?: boolean;
+  secondSideIsNewDesign?: boolean;
 }
 
 export interface ItemPricingResult {
@@ -266,6 +278,51 @@ export interface ItemPricingResult {
 /** Sums the manual "خدمات إضافية" amounts (owner-managed catalog — see orderItemPricing.ts's own doc comment). Never a fixed price, always caller-entered. */
 function sumExtraCosts(pricing: { extraServices?: { label: string; amount: number }[] }): number {
   return (pricing.extraServices ?? []).reduce((sum, s) => sum + s.amount, 0);
+}
+
+/**
+ * Owner (2026-09-01, "لما بروح اعدل بند واحد فقط في عرض السعر كل البنود
+ * بيتضاف عليها النسبة المثبتة تاني وبيلغي النسبة اللي انا كنت عاملها") —
+ * root cause: these manual override INPUTS were only ever fed into the
+ * one-time pricing-engine call, never frozen into `breakdown` itself (only
+ * their computed RESULT, e.g. `profitPercentUsed`, survived). Since editing
+ * an order/quotation reconstructs every item — not just the one being
+ * touched — from its frozen breakdown (`updateQuotationSchema`'s "items
+ * replace the full set" rule), every item silently lost its own override
+ * and fell back to the current default the moment ANY item in the same
+ * document was edited and saved. Freezing the raw override values
+ * themselves (not just their effect) lets `reconstructPricingInput`
+ * (NewOrderPage.tsx) restore them exactly on edit — same `?? null`
+ * JSON-safety convention as every other optional breakdown field.
+ */
+function frozenOverridesOf(pricing: {
+  zincPriceOverride?: number;
+  printRunPriceOverride?: number;
+  numberingRunPriceOverride?: number;
+  designCostOverride?: number;
+  wasteSheetsOverride?: number;
+  calcSizeOverride?: string;
+  numberingSizeOverride?: string;
+  profitPercentOverride?: number;
+  sheetPriceOverride?: number;
+  paperCostOverride?: number;
+  originalPagesOverride?: number;
+  copyPagesOverride?: number;
+}) {
+  return {
+    zincPriceOverride: pricing.zincPriceOverride ?? null,
+    printRunPriceOverride: pricing.printRunPriceOverride ?? null,
+    numberingRunPriceOverride: pricing.numberingRunPriceOverride ?? null,
+    designCostOverride: pricing.designCostOverride ?? null,
+    wasteSheetsOverride: pricing.wasteSheetsOverride ?? null,
+    calcSizeOverride: pricing.calcSizeOverride ?? null,
+    numberingSizeOverride: pricing.numberingSizeOverride ?? null,
+    profitPercentOverride: pricing.profitPercentOverride ?? null,
+    sheetPriceOverride: pricing.sheetPriceOverride ?? null,
+    paperCostOverride: pricing.paperCostOverride ?? null,
+    originalPagesOverride: pricing.originalPagesOverride ?? null,
+    copyPagesOverride: pricing.copyPagesOverride ?? null,
+  };
 }
 
 /**
@@ -350,6 +407,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           secondSideIsNewDesign: pricing.secondSideIsNewDesign ?? null,
           numberingStartNumber: pricing.numberingStartNumber ?? null,
           paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+          ...frozenOverridesOf(pricing),
         } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: result.sheetsNeeded,
         inventoryItemId: pricing.inventoryItemId,
@@ -377,7 +435,15 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           throw new PricingInputError(`Inventory item "${m.inventoryItemId}" has no linked sheet price`);
         }
         inventoryItemIdByRole[m.role] = m.inventoryItemId;
-        return { role: m.role, sheetPrice: overridePrice };
+        return {
+          role: m.role,
+          sheetPrice: overridePrice,
+          colorCount: m.colorCount,
+          sides: m.sides,
+          secondSideColorCount: m.secondSideColorCount,
+          isNewDesign: m.isNewDesign,
+          secondSideIsNewDesign: m.secondSideIsNewDesign,
+        };
       });
 
       const result = calculateNotebookMultiMaterialCost(
@@ -413,14 +479,21 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
         materialOverrides.length ? materialOverrides : undefined,
       );
 
+      const printOverrideByRole = new Map(materialOverrides.map((o) => [o.role, o]));
       const materials: ItemPricingMaterial[] = result.materials.map((m) => {
         const invId = inventoryItemIdByRole[m.role] ?? pricing.inventoryItemId;
+        const printOverride = printOverrideByRole.get(m.role);
         return {
           role: m.role,
           inventoryItemId: invId,
           sheetsNeeded: m.sheetsNeeded,
           sheetPrice: m.sheetPrice,
           paperName: ctx.paperNameByInventoryItemId.get(invId) ?? null,
+          colorCount: printOverride?.colorCount,
+          sides: printOverride?.sides,
+          secondSideColorCount: printOverride?.secondSideColorCount,
+          isNewDesign: printOverride?.isNewDesign,
+          secondSideIsNewDesign: printOverride?.secondSideIsNewDesign,
         };
       });
 
@@ -439,6 +512,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           copies: pricing.copies ?? null,
           paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
           materials,
+          ...frozenOverridesOf(pricing),
         } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: null,
         inventoryItemId: null,
@@ -468,6 +542,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           colorCount: pricing.colorCount,
           isNewDesign: pricing.isNewDesign,
           readyEnvelopePricePerPiece: pricing.readyEnvelopePricePerPiece,
+          ...frozenOverridesOf(pricing),
         } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: null,
         inventoryItemId: null,
@@ -518,6 +593,11 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           secondSideIsNewDesign: pricing.secondSideIsNewDesign ?? null,
           sellophaneEnabled: pricing.sellophaneEnabled,
           paperName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+          riza: pricing.riza ?? null,
+          jarab: pricing.jarab ?? null,
+          forma: pricing.forma ?? null,
+          taksir: pricing.taksir ?? null,
+          ...frozenOverridesOf(pricing),
         } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: result.sheetsNeeded,
         inventoryItemId: pricing.inventoryItemId,
@@ -597,6 +677,7 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           subtotal: result.subtotal,
           extraCosts: result.extraCosts,
           profitPercentUsed: result.profitPercentUsed,
+          profitPercentOverride: pricing.profitPercentOverride ?? null,
           components: componentsBreakdown,
         } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: null,
@@ -663,6 +744,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           heightCm: pricing.heightCm,
           hasDesign: pricing.hasDesign ?? null,
           hasSellophane: pricing.hasSellophane ?? null,
+          pricePerMeterOverride: pricing.pricePerMeterOverride ?? null,
+          pricePerMeterMarkupPercent: pricing.pricePerMeterMarkupPercent ?? null,
         } as unknown as Prisma.InputJsonValue,
         sheetsNeeded: null,
         inventoryItemId: null,
@@ -690,6 +773,8 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
           extraCosts,
           total,
           itemName: ctx.paperNameByInventoryItemId.get(pricing.inventoryItemId) ?? null,
+          unitPriceOverride: pricing.unitPriceOverride ?? null,
+          unitPriceMarkupPercent: pricing.unitPriceMarkupPercent ?? null,
         } as unknown as Prisma.InputJsonValue,
         // Same generic path LOOSE_PAPER/DIGITAL/... already use — no new
         // deduction code needed, just a plain piece count instead of a
@@ -714,7 +799,15 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       const total = calculateProductOrServiceCost(unitPrice, pricing.quantity, extraCosts);
       return {
         total,
-        breakdown: { kind: pricing.kind, unitPrice, quantity: pricing.quantity, extraCosts, total },
+        breakdown: {
+          kind: pricing.kind,
+          unitPrice,
+          quantity: pricing.quantity,
+          extraCosts,
+          total,
+          unitPriceOverride: pricing.unitPriceOverride ?? null,
+          unitPriceMarkupPercent: pricing.unitPriceMarkupPercent ?? null,
+        },
         sheetsNeeded: null,
         inventoryItemId: null,
         sizeFamilyKey: null,
