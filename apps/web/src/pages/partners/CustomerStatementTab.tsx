@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Order } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ORDER_STATUS_LABELS } from '../quotations/quotationLabels';
 import { downloadDocumentAsPdf } from '@/lib/documents/exportPdf';
+
+const UNNAMED_ITEM = '—';
 
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 const dateOnly = (iso: string) => new Date(iso).toLocaleDateString('ar-EG');
@@ -23,12 +26,33 @@ export function CustomerStatementTab({ partnerId, partnerName }: { partnerId: st
   const [error, setError] = useState<string | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  // Owner (2026-09-02, "عايز يكون عند العميل كشف حساب اقدر اطبعه لأصناف
+  // بعينها من كل الأصناف اللي العميل طلبها") — an optional item filter on
+  // top of the existing date-range filter. Empty set = show everything
+  // (unchanged behavior); a non-empty set narrows every order's item list
+  // down to just the selected item names and hides any order left with
+  // none of them, same "name-based, best-effort" matching already used by
+  // the reorder-prediction tab (no OrderItem→catalog FK exists to match on).
+  const [selectedItemNames, setSelectedItemNames] = useState<Set<string>>(new Set());
+  const [itemSearch, setItemSearch] = useState('');
 
   useEffect(() => {
     apiGet<Order[]>(`/api/orders?partnerId=${partnerId}`)
       .then(setOrders)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل كشف الحساب'));
   }, [partnerId]);
+
+  // Every distinct item name the customer has ever ordered — independent of
+  // the date range, so the picker always offers the full product history.
+  const allItemNames = useMemo(() => {
+    if (!orders) return [];
+    const names = new Set<string>();
+    for (const order of orders) {
+      if (order.status === 'CANCELLED') continue;
+      for (const item of order.items) names.add(item.modelName ?? UNNAMED_ITEM);
+    }
+    return Array.from(names).sort((a, b) => a.localeCompare(b, 'ar'));
+  }, [orders]);
 
   if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (!orders) return <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>;
@@ -42,6 +66,26 @@ export function CustomerStatementTab({ partnerId, partnerName }: { partnerId: st
   const totalBilled = filtered.reduce((sum, o) => sum + o.finalTotal, 0);
   const totalPaid = filtered.reduce((sum, o) => sum + o.paidTotal, 0);
   const totalRemaining = filtered.reduce((sum, o) => sum + o.remainingBalance, 0);
+
+  const itemFilterActive = selectedItemNames.size > 0;
+  const visibleItemsOf = (order: Order) =>
+    itemFilterActive ? order.items.filter((item) => selectedItemNames.has(item.modelName ?? UNNAMED_ITEM)) : order.items;
+  const ordersToRender = itemFilterActive ? filtered.filter((o) => visibleItemsOf(o).length > 0) : filtered;
+  const selectedItemsTotal = itemFilterActive
+    ? ordersToRender.reduce((sum, o) => sum + visibleItemsOf(o).reduce((s, item) => s + (item.itemTotal ?? 0), 0), 0)
+    : 0;
+  const visibleItemNames = itemSearch.trim()
+    ? allItemNames.filter((n) => n.toLowerCase().includes(itemSearch.trim().toLowerCase()))
+    : allItemNames;
+
+  const toggleItemName = (name: string) => {
+    setSelectedItemNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -85,6 +129,35 @@ export function CustomerStatementTab({ partnerId, partnerName }: { partnerId: st
         </div>
       </div>
 
+      <div className="border-border bg-card space-y-2 rounded-2xl border p-3 print:hidden">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium">
+            تصفية بأصناف معينة {itemFilterActive && <span className="text-muted-foreground">({selectedItemNames.size} مختار)</span>}
+          </p>
+          {itemFilterActive && (
+            <Button variant="ghost" size="sm" onClick={() => setSelectedItemNames(new Set())}>
+              مسح تصفية الأصناف
+            </Button>
+          )}
+        </div>
+        <input
+          type="text"
+          placeholder="ابحث باسم الصنف…"
+          value={itemSearch}
+          onChange={(e) => setItemSearch(e.target.value)}
+          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+        />
+        <div className="max-h-48 space-y-1 overflow-y-auto">
+          {visibleItemNames.map((name) => (
+            <label key={name} className="hover:bg-muted/30 flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-sm">
+              <Checkbox checked={selectedItemNames.has(name)} onCheckedChange={() => toggleItemName(name)} />
+              <span>{name}</span>
+            </label>
+          ))}
+          {visibleItemNames.length === 0 && <p className="text-muted-foreground px-2 py-1 text-sm">لا توجد أصناف مطابقة.</p>}
+        </div>
+      </div>
+
       <div className="document-print-root border-border bg-card space-y-3 rounded-2xl border p-4">
         <div className="hidden print:block">
           <h2 className="text-lg font-bold">كشف حساب — {partnerName}</h2>
@@ -92,6 +165,9 @@ export function CustomerStatementTab({ partnerId, partnerName }: { partnerId: st
             <p className="text-muted-foreground text-sm">
               الفترة: {from || 'البداية'} — {to || 'اليوم'}
             </p>
+          )}
+          {itemFilterActive && (
+            <p className="text-muted-foreground text-sm">أصناف مختارة فقط: {Array.from(selectedItemNames).join('، ')}</p>
           )}
         </div>
 
@@ -110,10 +186,16 @@ export function CustomerStatementTab({ partnerId, partnerName }: { partnerId: st
               {money(totalRemaining)} ج.م
             </p>
           </div>
+          {itemFilterActive && (
+            <div>
+              <p className="text-muted-foreground text-xs">إجمالي الأصناف المختارة فقط</p>
+              <p className="text-lg font-bold">{money(selectedItemsTotal)} ج.م</p>
+            </div>
+          )}
         </div>
 
         <div className="space-y-3">
-          {filtered.map((order) => (
+          {ordersToRender.map((order) => (
             <div key={order.id} className="border-border rounded-xl border p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -140,17 +222,19 @@ export function CustomerStatementTab({ partnerId, partnerName }: { partnerId: st
                 </div>
               </div>
               <ul className="text-muted-foreground mt-2 space-y-0.5 text-xs">
-                {order.items.map((item) => (
+                {visibleItemsOf(order).map((item) => (
                   <li key={item.id} className="flex justify-between">
-                    <span>{item.modelName ?? '—'}</span>
+                    <span>{item.modelName ?? UNNAMED_ITEM}</span>
                     <span>{item.itemTotal != null ? `${money(item.itemTotal)} ج.م` : '—'}</span>
                   </li>
                 ))}
               </ul>
             </div>
           ))}
-          {filtered.length === 0 && (
-            <p className="text-muted-foreground p-4 text-center text-sm">لا توجد فواتير في هذه الفترة.</p>
+          {ordersToRender.length === 0 && (
+            <p className="text-muted-foreground p-4 text-center text-sm">
+              {itemFilterActive ? 'لا توجد فواتير تحتوي على الأصناف المختارة في هذه الفترة.' : 'لا توجد فواتير في هذه الفترة.'}
+            </p>
           )}
         </div>
       </div>
