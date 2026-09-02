@@ -2454,6 +2454,20 @@ function NewOrderForm({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   /** "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — set by `duplicateLineAsVariant`, read once by the next `addToCart` to link the new line to its source line's group, then cleared. */
   const [pendingGroupKey, setPendingGroupKey] = useState<string | null>(null);
+  /**
+   * Owner (2026-09-02, "بدوس على الزرار ده مش بيعمل حاجه خالص") — the ⧉/edit
+   * buttons on a cart line DID always pre-fill the composer correctly, but
+   * silently, above the current scroll position: the cart sits in a sticky
+   * sidebar next to a long composer column, so on a real (desktop, scrolled
+   * far down while filling a complex item) window, the refill happens fully
+   * off-screen and looks like the click did nothing at all. Scrolling this
+   * anchor — the top of the item-composer's own category tabs — into view
+   * right after loading a line makes the refill actually visible.
+   */
+  const itemComposerRef = useRef<HTMLDivElement>(null);
+  const scrollComposerIntoView = () => {
+    itemComposerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
 
   // التحصيل — دفعات عند الإنشاء (فاتورة فقط)
   const [payments, setPayments] = useState<PaymentRow[]>([]);
@@ -2728,6 +2742,7 @@ function NewOrderForm({
     setEditingKey(line.key);
     setPendingGroupKey(null);
     setItemError(null);
+    scrollComposerIntoView();
   };
 
   /**
@@ -2754,6 +2769,7 @@ function NewOrderForm({
     setEditingKey(null);
     setPendingGroupKey(groupKey);
     setItemError(null);
+    scrollComposerIntoView();
   };
 
   const cancelEditingLine = () => {
@@ -3591,7 +3607,7 @@ function NewOrderForm({
         </div>
 
         {/* FEATURE-009 (2026-08-13) — الأقسام الرئيسية: أوفست / ديجيتال / لوحات وإعلانات / خدمات / منتجات جاهزة */}
-        <div className="border-border bg-muted/30 inline-flex flex-wrap gap-1 rounded-lg border p-1 text-sm">
+        <div ref={itemComposerRef} className="border-border bg-muted/30 inline-flex flex-wrap gap-1 rounded-lg border p-1 text-sm">
           {ORDER_ITEM_CATEGORIES.map((parent) => (
             <button
               key={parent.id}
