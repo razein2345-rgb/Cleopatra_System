@@ -93,6 +93,14 @@ export const settingSchema = z.object({
   showInvoiceEmail: z.boolean(),
   showInvoiceLandline: z.boolean(),
   showInvoiceFacebook: z.boolean(),
+  // Owner (2026-09-02, "عايز الفاتورة... أقدر انا أغير إسمها من السيستم أكتب
+  // إنها فاتورة أو إذن إستلام او أي حاجه بمزاجي") — the big centered label
+  // printed above the Invoice document (`documentTypeLabel` in
+  // `DocumentRenderer`), previously hardcoded to "فاتورة" in
+  // `OrderDocumentPage.tsx`. Null/empty keeps the existing default label —
+  // Quotation ("عرض سعر") and Work Order ("أمر شغل") labels stay hardcoded,
+  // this request was Invoice-specific.
+  invoiceDocumentLabel: z.string().nullable(),
   // Owner (2026-08-23, "ان احدد وقت لما يجي الحساب بيتقفل دايركت") — a
   // single global "HH:MM" (24h) time; null = the auto-close feature is
   // off (the default). See autoCloseDayJob.ts.
@@ -140,6 +148,7 @@ export const businessIdentitySchema = settingSchema.pick({
   showInvoiceEmail: true,
   showInvoiceLandline: true,
   showInvoiceFacebook: true,
+  invoiceDocumentLabel: true,
 });
 
 export type Setting = z.infer<typeof settingSchema>;

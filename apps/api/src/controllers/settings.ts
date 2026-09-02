@@ -44,6 +44,7 @@ export async function getBusinessIdentity(_req: Request, res: Response) {
       showInvoiceEmail: true,
       showInvoiceLandline: true,
       showInvoiceFacebook: true,
+      invoiceDocumentLabel: true,
     },
   });
   if (!setting) {

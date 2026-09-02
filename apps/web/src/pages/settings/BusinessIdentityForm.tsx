@@ -17,6 +17,9 @@ const TEXT_FIELDS: Array<{ key: keyof UpdateSettingInput; label: string }> = [
   { key: 'facebookUrl', label: 'صفحة الفيسبوك' },
   { key: 'taxNumber', label: 'الرقم الضريبي' },
   { key: 'commercialRegisterNumber', label: 'رقم السجل التجاري' },
+  // Owner (2026-09-02, "عايز الفاتورة اللي بتطلع مكتبش عليها فاتورة أقدر انا
+  // أغير إسمها من السيستم أكتب إنها فاتورة أو إذن إستلام او أي حاجه بمزاجي")
+  { key: 'invoiceDocumentLabel', label: 'العنوان المطبوع فوق الفاتورة (افتراضيًا "فاتورة")' },
 ];
 
 /** Reusable upload widget for both the logo and the stamp — same dropzone/replace/remove flow, different `Attachment.category`. */

@@ -594,6 +594,12 @@ model Setting {
   showInvoiceEmail            Boolean @default(false)
   showInvoiceLandline         Boolean @default(false)
   showInvoiceFacebook         Boolean @default(false)
+  /// Owner (2026-09-02, "عايز الفاتورة اللي بتطلع مكتبش عليها فاتورة أقدر انا
+  /// أغير إسمها من السيستم أكتب إنها فاتورة أو إذن إستلام او أي حاجه
+  /// بمزاجي") — the big centered label printed above the Invoice document,
+  /// previously hardcoded to "فاتورة". Null/empty keeps that default;
+  /// Quotation/Work Order labels stay hardcoded (Invoice-specific request).
+  invoiceDocumentLabel        String?
 
   /// Owner (2026-08-23, "ان احدد وقت لما يجي الحساب بيتقفل دايركت") — a
   /// single global "HH:MM" (24h) time; `autoCloseDayJob.ts` force-closes

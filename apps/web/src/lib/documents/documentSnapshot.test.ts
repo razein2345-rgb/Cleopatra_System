@@ -59,6 +59,7 @@ const baseSetting: Setting = {
   showInvoiceEmail: false,
   showInvoiceLandline: false,
   showInvoiceFacebook: false,
+  invoiceDocumentLabel: null,
   autoCloseDayTime: null,
   deviceAccessMode: 'ALLOW_ALL_REGISTERED',
 };

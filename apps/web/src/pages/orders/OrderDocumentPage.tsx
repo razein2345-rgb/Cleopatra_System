@@ -442,7 +442,10 @@ export function OrderDocumentPage() {
         hideCustomerSignature
         showStamp={business.showStampOnInvoice}
         createdByName={createdByName}
-        documentTypeLabel="فاتورة"
+        // Owner (2026-09-02, "عايز الفاتورة... أقدر انا أغير إسمها من السيستم
+        // أكتب إنها فاتورة أو إذن إستلام او أي حاجه بمزاجي") — configurable
+        // from Settings → الهوية التجارية, defaults to "فاتورة" when unset.
+        documentTypeLabel={business.invoiceDocumentLabel || 'فاتورة'}
         documentNumber={order.invoiceNumber}
         date={order.date}
         partnerName={partner ? partner.nameAr : 'عميل'}
