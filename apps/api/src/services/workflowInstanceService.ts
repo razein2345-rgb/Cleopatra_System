@@ -149,6 +149,7 @@ export function mapStageInstanceToDto(record: StageInstanceRecord, canSeeInterna
     actualReturnDate: record.actualReturnDate ? record.actualReturnDate.toISOString() : null,
     externalCost: canSeeInternal && record.externalCost ? record.externalCost.toNumber() : null,
     supplierStatus: record.supplierStatus,
+    manualSortOrder: record.manualSortOrder,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
@@ -555,16 +556,32 @@ async function queryWorkflowQueue(filter: {
     },
     include: {
       ...STAGE_INSTANCE_INCLUDE,
+      // Owner (2026-09-07, "عايز... افلتر براحتي") — `productionTrack` on
+      // top of the base include's plain department name, denormalized for
+      // client-side track filtering in a combined/unified queue.
+      department: { select: { name: true, productionTrack: true } },
       workflowInstance: {
         select: {
           workOrderId: true,
           workOrder: {
-            select: { workOrderNumber: true, order: { select: { partner: { select: { nameAr: true } } } } },
+            select: {
+              workOrderNumber: true,
+              order: { select: { partner: { select: { nameAr: true } } } },
+              // Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم الفاتورة") —
+              // same `modelName || kind` derivation `itemNames` already
+              // uses on the "الطلبات" tab (`WORKFLOW_INSTANCE_LIST_INCLUDE`
+              // below), now on every queue row too.
+              items: { select: { modelName: true, kind: true } },
+            },
           },
         },
       },
     },
-    orderBy: [{ priority: 'desc' }, { dueDate: 'asc' }, { createdAt: 'asc' }],
+    // Owner (2026-09-07, "اقدر اغير في ترتيبه") — a manually-set position
+    // wins first (ascending — lower sorts first, nulls last so untouched
+    // rows keep falling back to the original priority/due-date/age order
+    // exactly as before this feature).
+    orderBy: [{ manualSortOrder: { sort: 'asc', nulls: 'last' } }, { priority: 'desc' }, { dueDate: 'asc' }, { createdAt: 'asc' }],
   });
 
   return rows.map((row) => ({
@@ -572,11 +589,28 @@ async function queryWorkflowQueue(filter: {
     workOrderId: row.workflowInstance.workOrderId,
     workOrderNumber: row.workflowInstance.workOrder?.workOrderNumber ?? null,
     customerName: row.workflowInstance.workOrder?.order.partner?.nameAr ?? null,
+    itemNames: row.workflowInstance.workOrder?.items.map((i) => i.modelName || i.kind || 'صنف') ?? [],
+    productionTrack: row.department?.productionTrack ?? null,
   }));
 }
 
 export async function getDepartmentQueue(departmentId: string): Promise<WorkflowQueueItem[]> {
   return queryWorkflowQueue({ departmentId });
+}
+
+/**
+ * Owner (2026-09-07, "عايز كل الطلبات في مكان واحد وفي فلتر... لكن كله في
+ * نفس الداتا بيز وانا افلتر براحتي") — every open `StageInstance` across
+ * every department this caller may see, in one call, for the Production
+ * Board's new unified "الكل" view — track/department/priority/delayed
+ * slicing all happen client-side from this one combined list (same
+ * pattern `DepartmentsTab` already uses for priority/delayed-only), never
+ * a second round-trip per filter change. `'all'` (Super Admin /
+ * `work-orders.*`) means no department restriction at all, same
+ * `accessibleDepartmentScope(auth)` contract `getTrackQueue` already uses.
+ */
+export async function getAllQueue(accessibleDepartmentIds: string[] | 'all'): Promise<WorkflowQueueItem[]> {
+  return queryWorkflowQueue(accessibleDepartmentIds === 'all' ? {} : { departmentId: { in: accessibleDepartmentIds } });
 }
 
 /**
@@ -716,6 +750,7 @@ export async function updateCurrentStageInstance(
       actualReturnDate: toDate(input.actualReturnDate),
       externalCost: input.externalCost,
       supplierStatus: input.supplierStatus,
+      manualSortOrder: input.manualSortOrder,
     },
   });
 

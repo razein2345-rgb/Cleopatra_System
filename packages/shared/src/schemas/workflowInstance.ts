@@ -44,6 +44,17 @@ export const stageInstanceSchema = z.object({
   actualReturnDate: z.string().nullable(),
   externalCost: z.number().nullable(),
   supplierStatus: z.string().nullable(),
+  /**
+   * Owner (2026-09-07, "اقدر اغير في ترتيبه يعني ارفع الصف فوق او انزله
+   * براحتي") — a free manual position among the OTHER stage instances
+   * currently sitting at this exact same `stageId` (never global across
+   * every job) — confirmed explicit: "ترتيب خاص بكل قسم/مرحلة", so it
+   * naturally starts fresh (null) every time a job reaches a new stage
+   * (a brand-new `StageInstance` row). Null = no manual position set yet,
+   * falls back to the existing `[priority desc, dueDate asc, createdAt
+   * asc]` order. Ascending — lower sorts first.
+   */
+  manualSortOrder: z.number().int().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -97,6 +108,7 @@ export const updateStageInstanceSchema = z.object({
   actualReturnDate: z.string().nullable().optional(),
   externalCost: z.number().nonnegative().nullable().optional(),
   supplierStatus: z.string().trim().max(200).nullable().optional(),
+  manualSortOrder: z.number().int().nullable().optional(),
 });
 
 /** A department queue row — a `StageInstance` plus enough of its parent job to be useful without a second call. */
@@ -105,6 +117,21 @@ export const workflowQueueItemSchema = stageInstanceSchema.extend({
   workOrderNumber: z.string().nullable(),
   /** FEATURE-005 Sprint 2.5 — `Order.partner.nameAr`, nullable to match `workOrderNumber`. */
   customerName: z.string().nullable(),
+  /**
+   * Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم الفاتورة علشان اعرف
+   * هي ايه من برة") — same `OrderItem.modelName || kind` derivation the
+   * "الطلبات" tab's `itemNames` already uses, now on every queue row too.
+   */
+  itemNames: z.array(z.string()),
+  /**
+   * Owner (2026-09-07, "عايز كل الطلبات في مكان واحد وفي فلتر... افلتر
+   * براحتي") — denormalized from `department.productionTrack` at read
+   * time (never stored on `StageInstance` itself), so a unified
+   * all-departments queue can be sliced by track client-side without a
+   * second `/api/departments` round-trip. Null for a department that
+   * isn't tagged to one track (e.g. التصميم — shared across every track).
+   */
+  productionTrack: productionTrackSchema.nullable(),
 });
 
 /**

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Ban, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
+import { ArrowDown, ArrowUp, Ban, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
 import type {
   Department,
   Machine,
@@ -40,8 +40,9 @@ import {
  * a published template that wasn't in the owner's list but has jobs that
  * would otherwise have nowhere to show.
  */
-type TrackTabKey = 'DESIGN' | ProductionTrack;
+type TrackTabKey = 'ALL' | 'DESIGN' | ProductionTrack;
 const TRACK_TAB_ORDER: TrackTabKey[] = [
+  'ALL',
   'DESIGN',
   'OFFSET',
   'DIGITAL',
@@ -52,6 +53,13 @@ const TRACK_TAB_ORDER: TrackTabKey[] = [
   'OTHER_PRODUCTS',
 ];
 const TRACK_TAB_LABELS: Record<TrackTabKey, string> = {
+  // Owner (2026-09-07, "عايز كل الطلبات في مكان واحد وفي فلتر... لكن كله
+  // في نفس الداتا بيز وانا افلتر براحتي") — one combined queue across
+  // every track/department this caller can see, with its own track filter
+  // dropdown (see `DepartmentsTab`) instead of switching tabs one at a
+  // time. The per-track tabs below stay exactly as they were — additive,
+  // not a replacement.
+  ALL: 'الكل',
   DESIGN: 'التصميم',
   OFFSET: 'أوفست',
   DIGITAL: 'ديجيتال',
@@ -61,6 +69,8 @@ const TRACK_TAB_LABELS: Record<TrackTabKey, string> = {
   SERVICES: 'خدمات',
   OTHER_PRODUCTS: 'منتجات أخرى',
 };
+/** `OverviewTab`'s per-track summary cards — excludes the new "الكل" tab, which isn't a real track/department to summarize on its own. */
+const SUMMARY_TRACK_ORDER = TRACK_TAB_ORDER.filter((key): key is Exclude<TrackTabKey, 'ALL'> => key !== 'ALL');
 
 /**
  * FEATURE-010 (2026-08-14, owner's exact spec) — two tabs, both reading
@@ -182,7 +192,7 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
           (dashboardSummary?.avgDeliveryDurationByTrack ?? []).map((t) => [t.productionTrack, t.avgHours]),
         );
         const results = await Promise.all(
-          TRACK_TAB_ORDER.map(async (key): Promise<TrackSummary> => {
+          SUMMARY_TRACK_ORDER.map(async (key): Promise<TrackSummary> => {
             const trackMachines = machines.filter((m) =>
               key === 'DESIGN' ? m.departmentId === designDeptId : m.departmentId && trackByDeptId.get(m.departmentId) === key,
             );
@@ -555,6 +565,12 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
   const [priorityFilter, setPriorityFilter] = useState<WorkflowPriority | 'ALL'>('ALL');
   const [delayedOnly, setDelayedOnly] = useState(false);
   const [search, setSearch] = useState('');
+  // Owner (2026-09-07, "عايز كل الطلبات في مكان واحد وفي فلتر... افلتر
+  // براحتي") — only meaningful in the "الكل" tab (a per-track tab already
+  // narrows the fetch itself); slices the one combined queue further,
+  // client-side, exactly like priority/delayed-only above.
+  const [unifiedTrackFilter, setUnifiedTrackFilter] = useState<TrackTabKey | 'ALL'>('ALL');
+  const [reorderError, setReorderError] = useState<string | null>(null);
 
   useEffect(() => {
     apiGet<Department[]>('/api/departments')
@@ -580,11 +596,13 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
 
   const loadQueue = useCallback(() => {
     const query =
-      trackTab === 'DESIGN'
-        ? designDepartmentId
-          ? `departmentId=${designDepartmentId}`
-          : null
-        : `productionTrack=${trackTab}`;
+      trackTab === 'ALL'
+        ? 'all=true'
+        : trackTab === 'DESIGN'
+          ? designDepartmentId
+            ? `departmentId=${designDepartmentId}`
+            : null
+          : `productionTrack=${trackTab}`;
     if (!query) return;
     apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?${query}`)
       .then((items) => {
@@ -602,14 +620,67 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
     return queue.filter((item) => {
       if (priorityFilter !== 'ALL' && item.priority !== priorityFilter) return false;
       if (delayedOnly && !item.isDelayed) return false;
+      if (trackTab === 'ALL' && unifiedTrackFilter !== 'ALL') {
+        // Owner (2026-09-07, "افلتر براحتي") — 🐛 the fallback here used to
+        // be `?? 'DESIGN'`, meant only for the real التصميم department
+        // (which legitimately has no `productionTrack`) — but plenty of
+        // OTHER departments are just as legitimately untagged (خدمة
+        // العملاء, مورّد خارجي, التشطيب — shared across every track, per
+        // `Department.productionTrack`'s own schema comment), and that
+        // same fallback silently bucketed every one of them into "التصميم"
+        // too, so picking any track — even "التصميم" itself — matched
+        // everything and filtered nothing. An untagged non-Design
+        // department now simply matches no specific track filter (still
+        // visible under "كل الأقسام/المسارات" — only ALL, unfiltered,
+        // shows it).
+        const itemTrackKey: TrackTabKey | null = item.departmentId === designDepartmentId ? 'DESIGN' : item.productionTrack;
+        if (itemTrackKey !== unifiedTrackFilter) return false;
+      }
       if (q) {
         const matchesOrder = item.workOrderNumber?.toLowerCase().includes(q) ?? false;
         const matchesCustomer = item.customerName?.toLowerCase().includes(q) ?? false;
-        if (!matchesOrder && !matchesCustomer) return false;
+        // Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم الفاتورة علشان
+        // اعرف هي ايه من برة") — search should find a job by what it
+        // actually is, not just its number/customer.
+        const matchesItem = item.itemNames.some((name) => name.toLowerCase().includes(q));
+        if (!matchesOrder && !matchesCustomer && !matchesItem) return false;
       }
       return true;
     });
-  }, [queue, priorityFilter, delayedOnly, search]);
+  }, [queue, priorityFilter, delayedOnly, search, trackTab, unifiedTrackFilter, designDepartmentId]);
+
+  /**
+   * Owner (2026-09-07, "اقدر اغير في ترتيبه يعني ارفع الصف فوق او انزله
+   * براحتي") — swaps `manualSortOrder` with the immediate neighbor ABOVE
+   * or BELOW `item` among siblings sharing its exact `stageId` (confirmed
+   * explicit: per-stage, never global) — using each sibling's CURRENT
+   * effective order (their position in `filteredQueue`, which is already
+   * sorted server-side by manualSortOrder-then-priority/due-date). If
+   * neither value is set yet, both are lazily materialized to distinct
+   * numbers first so the swap always has something concrete to exchange.
+   */
+  const moveInStageQueue = async (item: WorkflowQueueItem, direction: 'UP' | 'DOWN') => {
+    if (!filteredQueue) return;
+    const siblings = filteredQueue.filter((i) => i.stageId === item.stageId);
+    const index = siblings.findIndex((i) => i.id === item.id);
+    const neighborIndex = direction === 'UP' ? index - 1 : index + 1;
+    if (index === -1 || neighborIndex < 0 || neighborIndex >= siblings.length) return;
+    const neighbor = siblings[neighborIndex]!;
+
+    const itemOrder = item.manualSortOrder ?? index;
+    const neighborOrder = neighbor.manualSortOrder ?? neighborIndex;
+
+    setReorderError(null);
+    try {
+      await Promise.all([
+        apiPut(`/api/workflow-instances/${item.workflowInstanceId}/current-stage`, { manualSortOrder: neighborOrder }),
+        apiPut(`/api/workflow-instances/${neighbor.workflowInstanceId}/current-stage`, { manualSortOrder: itemOrder }),
+      ]);
+      loadQueue();
+    } catch (err) {
+      setReorderError(err instanceof Error ? err.message : 'تعذر تغيير الترتيب');
+    }
+  };
 
   const advance = async (item: WorkflowQueueItem, action: 'COMPLETE' | 'FAIL' | 'SKIP') => {
     setActionError(null);
@@ -640,6 +711,25 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
         <input type="checkbox" checked={false} onChange={() => void advance(item, 'COMPLETE')} />
         إنهاء
       </label>
+      {/* Owner (2026-09-07, "اقدر اغير في ترتيبه يعني ارفع الصف فوق او
+          انزله براحتي") — up/down against siblings sharing this exact
+          stage only (see `moveInStageQueue`'s own doc comment). */}
+      <button
+        type="button"
+        title="رفع لأعلى (داخل نفس المرحلة)"
+        onClick={() => void moveInStageQueue(item, 'UP')}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <ArrowUp className="size-4" />
+      </button>
+      <button
+        type="button"
+        title="نزول لأسفل (داخل نفس المرحلة)"
+        onClick={() => void moveInStageQueue(item, 'DOWN')}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <ArrowDown className="size-4" />
+      </button>
       <button
         type="button"
         title="تخطي"
@@ -715,9 +805,27 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="بحث برقم الأمر أو اسم العميل…"
+          placeholder="بحث باسم الصنف أو رقم الأمر أو اسم العميل…"
           className="border-input bg-background min-w-[180px] flex-1 rounded-md border px-3 py-2 text-sm"
         />
+        {/* Owner (2026-09-07, "عايز... فلتر علشان لو حبيت اشوف الشغل
+            الاوفست لوحده او الديجيتال او المنتجات الجاهزة... افلتر
+            براحتي") — only shown in "الكل" (a per-track tab already IS
+            the filter). */}
+        {trackTab === 'ALL' && (
+          <select
+            value={unifiedTrackFilter}
+            onChange={(e) => setUnifiedTrackFilter(e.target.value as TrackTabKey | 'ALL')}
+            className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="ALL">كل الأقسام/المسارات</option>
+            {SUMMARY_TRACK_ORDER.map((key) => (
+              <option key={key} value={key}>
+                {TRACK_TAB_LABELS[key]}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           value={priorityFilter}
           onChange={(e) => setPriorityFilter(e.target.value as WorkflowPriority | 'ALL')}
@@ -742,6 +850,12 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
         </div>
       )}
 
+      {reorderError && (
+        <div className="border-destructive/40 bg-destructive/10 text-destructive rounded-lg border p-3 text-sm">
+          {reorderError}
+        </div>
+      )}
+
       {!filteredQueue ? (
         <div className="text-muted-foreground">جارٍ التحميل…</div>
       ) : (
@@ -751,6 +865,7 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>الصنف</TableHead>
                   <TableHead>العميل</TableHead>
                   <TableHead>أمر التشغيل</TableHead>
                   <TableHead>المرحلة</TableHead>
@@ -768,6 +883,11 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
               <TableBody>
                 {filteredQueue.map((item) => (
                   <TableRow key={item.id} className={cn(rowToneClassName(item.isDelayed, item.priority))}>
+                    {/* Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم
+                        الفاتورة علشان اعرف هي ايه من برة") — the item's
+                        own name is the primary identifier now, first
+                        column, ahead of the customer/order number. */}
+                    <TableCell className="font-medium">{item.itemNames.join('، ') || '—'}</TableCell>
                     <TableCell className="font-medium">{item.customerName ?? '—'}</TableCell>
                     <TableCell>{item.workOrderNumber ?? '—'}</TableCell>
                     <TableCell>{item.stageName}</TableCell>
@@ -798,7 +918,7 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                 ))}
                 {filteredQueue.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={canEdit ? 12 : 11} className="text-muted-foreground text-center">
+                    <TableCell colSpan={canEdit ? 13 : 12} className="text-muted-foreground text-center">
                       {queue && queue.length > 0
                         ? 'لا توجد مهام مطابقة لعوامل التصفية الحالية.'
                         : 'لا توجد مهام في قائمة الانتظار لهذا القسم.'}
@@ -821,7 +941,9 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
               <Card key={item.id} className={cn('gap-2 p-3', rowToneClassName(item.isDelayed, item.priority))}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{item.customerName ?? '—'}</p>
+                    {/* Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم الفاتورة") */}
+                    <p className="truncate font-medium">{item.itemNames.join('، ') || '—'}</p>
+                    <p className="text-muted-foreground truncate text-xs">{item.customerName ?? '—'}</p>
                     <p className="text-muted-foreground truncate text-xs">
                       {item.workOrderNumber ?? '—'} · {item.stageName}
                     </p>

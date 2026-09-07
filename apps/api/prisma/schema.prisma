@@ -2691,6 +2691,14 @@ model StageInstance {
   externalCost       Decimal?         @db.Decimal(12, 2)
   supplierStatus     String?
 
+  /// Owner (2026-09-07, "اقدر اغير في ترتيبه يعني ارفع الصف فوق او انزله
+  /// براحتي") — a free manual position among sibling `StageInstance` rows
+  /// sharing this exact `stageId` (confirmed explicit: "ترتيب خاص بكل
+  /// قسم/مرحلة", not a global/persistent-per-job number) — so it starts
+  /// fresh (null) on every new stage a job reaches. Null = falls back to
+  /// the existing `[priority desc, dueDate asc, createdAt asc]` order.
+  manualSortOrder Int?
+
   attachments Attachment[]
   events      WorkflowEvent[]
 

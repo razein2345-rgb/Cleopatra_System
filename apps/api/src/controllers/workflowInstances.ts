@@ -7,6 +7,7 @@ import {
   MissingRequiredVariablesError,
   WORKFLOW_INSTANCE_INCLUDE,
   advanceWorkflowInstance,
+  getAllQueue,
   getDepartmentQueue,
   getMyQueue,
   getTrackQueue,
@@ -158,10 +159,23 @@ export async function getWorkflowQueue(req: Request, res: Response) {
     return;
   }
 
+  // Owner (2026-09-07, "عايز كل الطلبات في مكان واحد وفي فلتر... افلتر
+  // براحتي") — لوحة الإنتاج's new unified "الكل" view: every open stage
+  // instance across every department this caller may see, one request
+  // instead of one per track — track/department/priority/delayed slicing
+  // all happen client-side from this single list. Explicit `?all=true`
+  // (not just "no other param given") so a genuinely malformed request
+  // still gets the 400 below instead of silently returning everything.
+  if (req.query.all === 'true') {
+    const items = await getAllQueue(accessibleDepartmentScope(auth));
+    res.json({ success: true, data: items });
+    return;
+  }
+
   if (!departmentId) {
     res
       .status(400)
-      .json({ success: false, error: { message: 'departmentId or productionTrack query parameter is required' } });
+      .json({ success: false, error: { message: 'departmentId, productionTrack, mine, or all query parameter is required' } });
     return;
   }
   if (!canAccessDepartment(auth, departmentId)) {
