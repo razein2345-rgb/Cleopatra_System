@@ -100,6 +100,21 @@ export const employeeAdvanceSummarySchema = z.object({
    * still applies, unchanged.
    */
   pendingPayrollPeriodId: z.string().uuid().nullable(),
+  /**
+   * Owner (2026-09-02, "ليه مش ظاهرلي إجمالي الشهر الجديد لحد دلوقتي") —
+   * once a `pendingPayrollPeriodId` exists, everything above (`netDue`,
+   * `periodStart`/`periodEnd`, `attendanceAdjustment`) describes the OLD
+   * closed-but-unpaid month specifically (what "صرف مرتب" would settle) —
+   * the still-ongoing current month's own running total was previously
+   * nowhere on this screen at all. These three always describe the LIVE
+   * current period (same source as `computeEmployeePayroll`), independent
+   * of whichever period the fields above are pointing at — purely
+   * informational, never used by the payment flow itself. Null only when
+   * no payroll is configured yet.
+   */
+  currentPeriodAdjustment: z.number().nullable(),
+  currentPeriodStart: z.string().nullable(),
+  currentPeriodEnd: z.string().nullable(),
 });
 
 export type AdvanceRepaymentMethod = z.infer<typeof advanceRepaymentMethodSchema>;

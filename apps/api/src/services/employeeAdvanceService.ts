@@ -199,6 +199,13 @@ export async function getEmployeeAdvanceSummaries(): Promise<EmployeeAdvanceSumm
       // anyone with nothing closed yet (WEEKLY staff, or a MONTHLY
       // employee still mid-cycle) — unchanged from before this feature.
       const pendingPeriod = await getPendingPayrollPeriodForStaff(s.id);
+      // Owner (2026-09-02, "ليه مش ظاهرلي إجمالي الشهر الجديد لحد
+      // دلوقتي؟") — always computed now, regardless of whether a closed
+      // period is pending, purely so the still-ongoing current month's
+      // own running total has somewhere to be reported from (see
+      // "currentPeriodAdjustment" below) — plays no part in netDue/the
+      // payment flow itself.
+      const livePayroll = await computeEmployeePayroll(s.id);
 
       let attendanceAdjustment: number;
       let grossDue: number | null;
@@ -215,11 +222,10 @@ export async function getEmployeeAdvanceSummaries(): Promise<EmployeeAdvanceSumm
         paidThisPeriod = pendingPeriod.paidAmount;
         pendingPayrollPeriodId = pendingPeriod.id;
       } else {
-        const payroll = await computeEmployeePayroll(s.id);
-        attendanceAdjustment = payroll?.totalAdjustment ?? 0;
+        attendanceAdjustment = livePayroll?.totalAdjustment ?? 0;
         grossDue = baseSalary !== null ? baseSalary + attendanceAdjustment : null;
-        periodStart = payroll?.periodStart ?? null;
-        periodEnd = payroll?.periodEnd ?? null;
+        periodStart = livePayroll?.periodStart ?? null;
+        periodEnd = livePayroll?.periodEnd ?? null;
         pendingPayrollPeriodId = null;
 
         // Owner (2026-08-20, "لو لا طب هنعمل ده ازاي") — sum of any
@@ -228,13 +234,13 @@ export async function getEmployeeAdvanceSummaries(): Promise<EmployeeAdvanceSumm
         // hard block — a legitimate correction/top-up must still be
         // possible).
         paidThisPeriod = 0;
-        if (payroll) {
+        if (livePayroll) {
           const payments = await prisma.salaryPayment.findMany({
             where: {
               staffId: s.id,
               isDeleted: false,
-              periodStart: new Date(payroll.periodStart),
-              periodEnd: new Date(payroll.periodEnd),
+              periodStart: new Date(livePayroll.periodStart),
+              periodEnd: new Date(livePayroll.periodEnd),
             },
             select: { amount: true },
           });
@@ -255,6 +261,9 @@ export async function getEmployeeAdvanceSummaries(): Promise<EmployeeAdvanceSumm
         periodEnd,
         paidThisPeriod,
         pendingPayrollPeriodId,
+        currentPeriodAdjustment: livePayroll?.totalAdjustment ?? null,
+        currentPeriodStart: livePayroll?.periodStart ?? null,
+        currentPeriodEnd: livePayroll?.periodEnd ?? null,
       };
     }),
   );

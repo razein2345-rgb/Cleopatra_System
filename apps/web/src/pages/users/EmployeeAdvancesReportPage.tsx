@@ -75,9 +75,27 @@ export function EmployeeAdvancesReportPage() {
                     <span dir="ltr">{money(s.totalOutstanding)}</span>
                   </td>
                   <td className="p-3">
-                    <span dir="ltr" className={s.attendanceAdjustment > 0 ? 'text-success' : s.attendanceAdjustment < 0 ? 'text-destructive' : ''}>
-                      {s.attendanceAdjustment !== 0 ? `${s.attendanceAdjustment > 0 ? '+' : ''}${money(s.attendanceAdjustment)}` : '—'}
-                    </span>
+                    <div>
+                      <span dir="ltr" className={s.attendanceAdjustment > 0 ? 'text-success' : s.attendanceAdjustment < 0 ? 'text-destructive' : ''}>
+                        {s.attendanceAdjustment !== 0 ? `${s.attendanceAdjustment > 0 ? '+' : ''}${money(s.attendanceAdjustment)}` : '—'}
+                      </span>
+                      {s.pendingPayrollPeriodId && <span className="text-muted-foreground text-xs"> (الشهر المقفول)</span>}
+                    </div>
+                    {/* Owner (2026-09-02, "ليه مش ظاهرلي إجمالي الشهر الجديد لحد دلوقتي؟") —
+                        the column above always describes the OLDEST unpaid closed month once
+                        one exists; the still-ongoing current month's own running total needs
+                        its own line, or it's invisible on this screen entirely. */}
+                    {s.pendingPayrollPeriodId && s.currentPeriodAdjustment !== null && (
+                      <div className="text-xs">
+                        <span
+                          dir="ltr"
+                          className={s.currentPeriodAdjustment > 0 ? 'text-success' : s.currentPeriodAdjustment < 0 ? 'text-destructive' : 'text-muted-foreground'}
+                        >
+                          {s.currentPeriodAdjustment !== 0 ? `${s.currentPeriodAdjustment > 0 ? '+' : ''}${money(s.currentPeriodAdjustment)}` : '—'}
+                        </span>
+                        <span className="text-muted-foreground"> (الشهر الحالي لحد دلوقتي)</span>
+                      </div>
+                    )}
                   </td>
                   <td className="p-3 font-medium">
                     <div className="flex items-center gap-1">

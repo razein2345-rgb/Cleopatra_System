@@ -331,6 +331,8 @@ export function EmployeeProfilePage() {
               </div>
             )}
             <p className="text-sm font-medium">
+              إجمالي ساعات التأخير لحد دلوقتي: <span dir="ltr">{totalLateHoursLabel(payroll?.days ?? [])}</span>
+              {' — '}
               إجمالي التسوية:{' '}
               <span className={attendanceAdjustment > 0 ? 'text-success' : attendanceAdjustment < 0 ? 'text-destructive' : ''}>
                 {attendanceAdjustment > 0 ? '+' : ''}
@@ -355,6 +357,7 @@ export function EmployeeProfilePage() {
               <thead>
                 <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
                   <th className="p-2">الفترة</th>
+                  <th className="p-2">ساعات التأخير</th>
                   <th className="p-2">تسوية الحضور</th>
                   <th className="p-2">المستحق</th>
                   <th className="p-2">المصروف</th>
@@ -1037,6 +1040,16 @@ function AdvanceRow({ advance, canEdit, onChanged }: { advance: EmployeeAdvance;
  * against it yet (`paidAmount === 0`, enforced again server-side) — after
  * that, discarding its numbers would desync from real cash already moved.
  */
+/** Owner (2026-09-02, "متأخر كام ساعة بالظبط الشهر اللي فات") — pure late minutes only (excludes early-leave/overtime, which `totalAdjustment` nets together into one money figure), summed across the frozen days and shown as hours:minutes. */
+function totalLateHoursLabel(days: { lateMinutes: number }[]): string {
+  const totalMinutes = days.reduce((sum, d) => sum + d.lateMinutes, 0);
+  if (totalMinutes <= 0) return '—';
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = Math.round(totalMinutes % 60);
+  if (hours === 0) return `${minutes} د`;
+  return minutes === 0 ? `${hours} س` : `${hours} س ${minutes} د`;
+}
+
 function PayrollPeriodRow({ period, onChanged }: { period: PayrollPeriod; onChanged: () => void }) {
   const [showReopen, setShowReopen] = useState(false);
   const canReopen = !period.isOpen && period.paidAmount === 0;
@@ -1044,6 +1057,9 @@ function PayrollPeriodRow({ period, onChanged }: { period: PayrollPeriod; onChan
     <tr className="border-border border-b last:border-0">
       <td className="p-2">
         {new Date(period.periodStart).toLocaleDateString('ar-EG')} — {new Date(period.periodEnd).toLocaleDateString('ar-EG')}
+      </td>
+      <td className="p-2">
+        <span dir="ltr">{totalLateHoursLabel(period.days)}</span>
       </td>
       <td className={`p-2 ${period.totalAdjustment > 0 ? 'text-success' : period.totalAdjustment < 0 ? 'text-destructive' : ''}`}>
         <span dir="ltr">
