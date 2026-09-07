@@ -661,6 +661,7 @@ function WaitingReasonCell({ item, updateField, disabled }: { item: WorkflowQueu
 function SortableQueueTableRow({
   item,
   employees,
+  supplierName,
   updateField,
   canEditFields,
   timelineLink,
@@ -669,6 +670,7 @@ function SortableQueueTableRow({
 }: {
   item: WorkflowQueueItem;
   employees: User[];
+  supplierName: (id: string | null) => string;
   updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>;
   canEditFields: boolean;
   timelineLink: (item: WorkflowQueueItem) => ReactNode;
@@ -706,6 +708,7 @@ function SortableQueueTableRow({
       <TableCell className="text-muted-foreground">
         <AssigneeCell item={item} employees={employees} updateField={updateField} disabled={!canEditFields} />
       </TableCell>
+      <TableCell className="text-muted-foreground">{supplierName(item.assignedSupplierId)}</TableCell>
       <TableCell className="text-muted-foreground">
         <WaitingReasonCell item={item} updateField={updateField} disabled={!canEditFields} />
       </TableCell>
@@ -719,6 +722,7 @@ function SortableQueueTableRow({
 function SortableQueueCard({
   item,
   employees,
+  supplierName,
   updateField,
   canEditFields,
   timelineLink,
@@ -727,6 +731,7 @@ function SortableQueueCard({
 }: {
   item: WorkflowQueueItem;
   employees: User[];
+  supplierName: (id: string | null) => string;
   updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>;
   canEditFields: boolean;
   timelineLink: (item: WorkflowQueueItem) => ReactNode;
@@ -763,6 +768,9 @@ function SortableQueueCard({
         <AssigneeCell item={item} employees={employees} updateField={updateField} disabled={!canEditFields} />
         <WaitingReasonCell item={item} updateField={updateField} disabled={!canEditFields} />
       </div>
+      {item.assignedSupplierId && (
+        <p className="text-muted-foreground text-xs">المورد: {supplierName(item.assignedSupplierId)}</p>
+      )}
       {timelineLink(item)}
       {canEdit && actionButtons(item)}
     </Card>
@@ -774,6 +782,10 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
   const [departments, setDepartments] = useState<Department[] | null>(null);
   const [trackTab, setTrackTab] = useState<TrackTabKey>(initialTrackTab ?? 'DESIGN');
   const [employees, setEmployees] = useState<User[]>([]);
+  // Owner (2026-09-08, "عايز يظهرلي مين المورد بتاع الصنف في قسم مورد
+  // خارجي") — fetched once alongside `employees`, reused both for the
+  // "المورد" column and (see `printPickupList`) the pickup-sheet print.
+  const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [queue, setQueue] = useState<WorkflowQueueItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -820,6 +832,7 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل الأقسام'));
     apiGet<User[]>('/api/users').then(setEmployees).catch(() => undefined);
+    apiGet<BusinessPartner[]>('/api/partners').then(setPartners).catch(() => undefined);
   }, []);
 
   const designDepartmentId = departments?.find((d) => d.code === 'DESIGN')?.id;
@@ -892,6 +905,9 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
   if (error) return <div className="text-destructive">{error}</div>;
 
   const canEdit = can('work-orders.edit');
+  // Owner (2026-09-08, "عايز يظهرلي مين المورد بتاع الصنف في قسم مورد
+  // خارجي") — `assignedSupplierId` resolved to a display name.
+  const supplierName = (id: string | null) => (id ? (partners.find((p) => p.id === id)?.nameAr ?? '—') : '—');
 
   // FEATURE-005 Sprint 2.5, Requirement 10 — always visible (read-only), unlike
   // the mutation actions above which stay gated behind `work-orders.edit`.
@@ -916,11 +932,10 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
     setPrinting(true);
     try {
       const supplierIds = [...new Set(filteredQueue.map((i) => i.assignedSupplierId).filter((id): id is string => Boolean(id)))];
-      const [allPartners, addressLists] = await Promise.all([
-        apiGet<BusinessPartner[]>('/api/partners'),
-        Promise.all(supplierIds.map((id) => apiGet<PartnerAddress[]>(`/api/partners/${id}/addresses`).catch(() => []))),
-      ]);
-      const partnerNameById = new Map(allPartners.map((p) => [p.id, p.nameAr]));
+      const addressLists = await Promise.all(
+        supplierIds.map((id) => apiGet<PartnerAddress[]>(`/api/partners/${id}/addresses`).catch(() => [])),
+      );
+      const partnerNameById = new Map(partners.map((p) => [p.id, p.nameAr]));
       const addressBySupplierId = new Map(
         supplierIds.map((id, index) => {
           const addresses = addressLists[index] ?? [];
@@ -1081,6 +1096,11 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                     <TableHead>تاريخ الاستحقاق</TableHead>
                     <TableHead>منذ</TableHead>
                     <TableHead>الموظف المسؤول</TableHead>
+                    {/* Owner (2026-09-08, "عايز يظهرلي مين المورد بتاع
+                        الصنف في قسم مورد خارجي") — "—" for tracks that
+                        never assign a supplier, so shown unconditionally
+                        rather than a per-tab column count to keep. */}
+                    <TableHead>المورد</TableHead>
                     <TableHead>سبب الانتظار</TableHead>
                     <TableHead>المسار</TableHead>
                     {canEdit && <TableHead>الإجراءات</TableHead>}
@@ -1092,6 +1112,7 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                       key={item.id}
                       item={item}
                       employees={employees}
+                      supplierName={supplierName}
                       updateField={updateField}
                       canEditFields={canEdit}
                       timelineLink={timelineLink}
@@ -1101,7 +1122,7 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                   ))}
                   {filteredQueue.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={canEdit ? 14 : 13} className="text-muted-foreground text-center">
+                      <TableCell colSpan={canEdit ? 15 : 14} className="text-muted-foreground text-center">
                         {queue && queue.length > 0
                           ? 'لا توجد مهام مطابقة لعوامل التصفية الحالية.'
                           : 'لا توجد مهام في قائمة الانتظار لهذا القسم.'}
@@ -1128,6 +1149,7 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                     key={item.id}
                     item={item}
                     employees={employees}
+                    supplierName={supplierName}
                     updateField={updateField}
                     canEditFields={canEdit}
                     timelineLink={timelineLink}

@@ -36,6 +36,10 @@ export function ProductionBoardOrdersTab() {
   const [templatesById, setTemplatesById] = useState<Map<string, WorkflowTemplate>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  // Owner (2026-09-08, "عايز سيرش بإسم الصنف في قائمة الطلبات") — same
+  // item-name/order-number/customer-name search "الأقسام" tab already has
+  // (`DepartmentsTab`'s own `search` state), just missing here until now.
+  const [search, setSearch] = useState('');
 
   const load = () => {
     apiGet<WorkflowInstanceListItem[]>('/api/workflow-instances?status=IN_PROGRESS')
@@ -55,7 +59,16 @@ export function ProductionBoardOrdersTab() {
 
   const cards = useMemo(() => {
     if (!instances) return null;
-    return instances.map((instance) => {
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? instances.filter((instance) => {
+          const matchesItem = instance.itemNames.some((name) => name.toLowerCase().includes(q));
+          const matchesOrder = instance.workOrderNumber?.toLowerCase().includes(q) ?? false;
+          const matchesCustomer = instance.customerName?.toLowerCase().includes(q) ?? false;
+          return matchesItem || matchesOrder || matchesCustomer;
+        })
+      : instances;
+    return filtered.map((instance) => {
       const template = templatesById.get(instance.templateId);
       const stageInstanceByStageId = new Map(instance.stageInstances.map((si) => [si.stageId, si]));
       const chain: ChainStageDisplay[] = (template?.stages ?? [])
@@ -68,7 +81,7 @@ export function ProductionBoardOrdersTab() {
         });
       return { instance, chain };
     });
-  }, [instances, templatesById]);
+  }, [instances, templatesById, search]);
 
   if (error) return <div className="text-destructive">{error}</div>;
 
@@ -85,13 +98,22 @@ export function ProductionBoardOrdersTab() {
             </span>
           )}
         </div>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="بحث باسم الصنف أو رقم الأمر أو اسم العميل…"
+          className="border-input bg-background min-w-[220px] rounded-md border px-3 py-2 text-sm"
+        />
       </div>
 
       {!cards ? (
         <div className="text-muted-foreground">جارٍ التحميل…</div>
       ) : cards.length === 0 ? (
         <div className="border-border bg-card text-muted-foreground rounded-2xl border p-6 text-center text-sm">
-          لا توجد طلبات قيد التشغيل حاليًا.
+          {instances && instances.length > 0
+            ? 'لا توجد طلبات مطابقة لعملية البحث.'
+            : 'لا توجد طلبات قيد التشغيل حاليًا.'}
         </div>
       ) : (
         <div className="grid gap-3">
