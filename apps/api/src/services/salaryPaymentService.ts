@@ -22,6 +22,14 @@ export class NoPayrollConfiguredError extends Error {
   }
 }
 
+/** `payrollPeriodId` re-verified server-side, never trusted at face value — this is the mismatch/already-reopened case. */
+export class InvalidPayrollPeriodError extends Error {
+  constructor() {
+    super('فترة المرتب دي مش صالحة للصرف — ممكن تكون اتفتحت تاني أو مش بتاعة الموظف ده');
+    this.name = 'InvalidPayrollPeriodError';
+  }
+}
+
 export function mapSalaryPaymentToDto(payment: SalaryPaymentRecord): SalaryPayment {
   return {
     id: payment.id,
@@ -33,6 +41,7 @@ export function mapSalaryPaymentToDto(payment: SalaryPaymentRecord): SalaryPayme
     method: payment.method,
     note: payment.note,
     recordedById: payment.recordedById,
+    payrollPeriodId: payment.payrollPeriodId,
     createdAt: payment.createdAt.toISOString(),
   };
 }
@@ -46,16 +55,39 @@ export async function listSalaryPaymentsForStaff(staffId: string): Promise<Salar
 }
 
 /**
- * `periodStart`/`periodEnd` are always resolved here from
- * `computeEmployeePayroll` (never accepted from the caller) — this must
- * reflect the real current pay period, not whatever a client claims.
+ * `periodStart`/`periodEnd` are always resolved here server-side, never
+ * accepted from the caller — this must reflect the real pay period being
+ * settled, not whatever a client claims.
+ *
+ * Owner (2026-09-02, "لما الشهر يخلص يتحسب المرتب بالظبط ويتحفظ لحد ما
+ * يتصرف للموظف") — `input.payrollPeriodId` (from
+ * `EmployeeAdvanceSummary.pendingPayrollPeriodId`) is re-verified here
+ * (belongs to this staff member, still closed) rather than trusted, and
+ * takes priority: pay against the frozen closed period when one exists.
+ * Falls back to the original live `computeEmployeePayroll` period exactly
+ * as before this feature when it doesn't (WEEKLY staff, or nothing closed
+ * yet) — zero behavior change for those cases.
  */
 export async function createSalaryPayment(input: CreateSalaryPaymentInput, recordedById: string): Promise<SalaryPayment> {
-  const payroll = await computeEmployeePayroll(input.staffId);
-  if (!payroll) throw new NoPayrollConfiguredError();
+  let periodStart: Date;
+  let periodEnd: Date;
+  let payrollPeriodId: string | null = null;
 
-  const periodStart = new Date(payroll.periodStart);
-  const periodEnd = new Date(payroll.periodEnd);
+  if (input.payrollPeriodId) {
+    const period = await prisma.payrollPeriod.findUnique({ where: { id: input.payrollPeriodId } });
+    if (!period || period.staffId !== input.staffId || period.isOpen) {
+      throw new InvalidPayrollPeriodError();
+    }
+    periodStart = period.periodStart;
+    periodEnd = period.periodEnd;
+    payrollPeriodId = period.id;
+  } else {
+    const payroll = await computeEmployeePayroll(input.staffId);
+    if (!payroll) throw new NoPayrollConfiguredError();
+    periodStart = new Date(payroll.periodStart);
+    periodEnd = new Date(payroll.periodEnd);
+  }
+
   const now = new Date();
 
   const payment = await prisma.$transaction(async (tx) => {
@@ -71,6 +103,7 @@ export async function createSalaryPayment(input: CreateSalaryPaymentInput, recor
         method: input.method,
         note: input.note ?? null,
         recordedById,
+        payrollPeriodId,
       },
     });
 

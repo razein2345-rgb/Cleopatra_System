@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '../generated/prisma/client.js';
 import type { CreateAdvanceRepaymentInput, CreateEmployeeAdvanceInput, EmployeeAdvance, EmployeeAdvanceSummary } from '@cleopatra/shared';
 import { computeEmployeePayroll } from './employeePayrollService.js';
+import { getPendingPayrollPeriodForStaff } from './payrollPeriodService.js';
 import { assertBranchDayNotClosed } from './treasuryService.js';
 
 /**
@@ -189,25 +190,56 @@ export async function getEmployeeAdvanceSummaries(): Promise<EmployeeAdvanceSumm
         return sum + (advance.amount.toNumber() - repaid);
       }, 0);
       const baseSalary = s.baseSalary ? s.baseSalary.toNumber() : null;
-      const payroll = await computeEmployeePayroll(s.id);
-      const attendanceAdjustment = payroll?.totalAdjustment ?? 0;
 
-      // Owner (2026-08-20, "لو لا طب هنعمل ده ازاي") — sum of any
-      // SalaryPayment already recorded for this exact period, so the "صرف
-      // مرتب" screen can warn before a possible double-pay (never a hard
-      // block — a legitimate correction/top-up must still be possible).
-      let paidThisPeriod = 0;
-      if (payroll) {
-        const payments = await prisma.salaryPayment.findMany({
-          where: {
-            staffId: s.id,
-            isDeleted: false,
-            periodStart: new Date(payroll.periodStart),
-            periodEnd: new Date(payroll.periodEnd),
-          },
-          select: { amount: true },
-        });
-        paidThisPeriod = payments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
+      // Owner (2026-09-02, "لما الشهر يخلص يتحسب المرتب بالظبط ويتحفظ لحد
+      // ما يتصرف للموظف") — a closed-but-unpaid `PayrollPeriod` takes
+      // priority over live computation: its numbers are frozen, so they
+      // can't silently drift once "today" moves into a new cycle. Falls
+      // back to the original live `computeEmployeePayroll` behavior for
+      // anyone with nothing closed yet (WEEKLY staff, or a MONTHLY
+      // employee still mid-cycle) — unchanged from before this feature.
+      const pendingPeriod = await getPendingPayrollPeriodForStaff(s.id);
+
+      let attendanceAdjustment: number;
+      let grossDue: number | null;
+      let periodStart: string | null;
+      let periodEnd: string | null;
+      let paidThisPeriod: number;
+      let pendingPayrollPeriodId: string | null;
+
+      if (pendingPeriod) {
+        attendanceAdjustment = pendingPeriod.totalAdjustment;
+        grossDue = pendingPeriod.grossDue;
+        periodStart = pendingPeriod.periodStart;
+        periodEnd = pendingPeriod.periodEnd;
+        paidThisPeriod = pendingPeriod.paidAmount;
+        pendingPayrollPeriodId = pendingPeriod.id;
+      } else {
+        const payroll = await computeEmployeePayroll(s.id);
+        attendanceAdjustment = payroll?.totalAdjustment ?? 0;
+        grossDue = baseSalary !== null ? baseSalary + attendanceAdjustment : null;
+        periodStart = payroll?.periodStart ?? null;
+        periodEnd = payroll?.periodEnd ?? null;
+        pendingPayrollPeriodId = null;
+
+        // Owner (2026-08-20, "لو لا طب هنعمل ده ازاي") — sum of any
+        // SalaryPayment already recorded for this exact period, so the
+        // "صرف مرتب" screen can warn before a possible double-pay (never a
+        // hard block — a legitimate correction/top-up must still be
+        // possible).
+        paidThisPeriod = 0;
+        if (payroll) {
+          const payments = await prisma.salaryPayment.findMany({
+            where: {
+              staffId: s.id,
+              isDeleted: false,
+              periodStart: new Date(payroll.periodStart),
+              periodEnd: new Date(payroll.periodEnd),
+            },
+            select: { amount: true },
+          });
+          paidThisPeriod = payments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
+        }
       }
 
       return {
@@ -218,10 +250,11 @@ export async function getEmployeeAdvanceSummaries(): Promise<EmployeeAdvanceSumm
         baseSalary,
         totalOutstanding,
         attendanceAdjustment,
-        netDue: baseSalary !== null ? baseSalary - totalOutstanding + attendanceAdjustment : null,
-        periodStart: payroll?.periodStart ?? null,
-        periodEnd: payroll?.periodEnd ?? null,
+        netDue: grossDue !== null ? grossDue - totalOutstanding : null,
+        periodStart,
+        periodEnd,
         paidThisPeriod,
+        pendingPayrollPeriodId,
       };
     }),
   );

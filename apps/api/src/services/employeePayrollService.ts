@@ -1,4 +1,5 @@
 import { prisma } from '../lib/prisma.js';
+import type { Prisma } from '../generated/prisma/client.js';
 import { BUSINESS_TIMEZONE, getTimezoneOffsetMinutes } from '../lib/businessTimezone.js';
 import type { EmployeePayroll, EmployeePayrollDay, PayFrequency } from '@cleopatra/shared';
 
@@ -12,6 +13,8 @@ import type { EmployeePayroll, EmployeePayrollDay, PayFrequency } from '@cleopat
  * - A flat 15-minute grace period at the start of the day only.
  */
 const GRACE_MINUTES = 15;
+
+type StaffWithPayrollFields = Prisma.StaffProfileGetPayload<object>;
 
 function utcMidnight(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -27,14 +30,20 @@ function clampToMonth(year: number, month: number, day: number): number {
 }
 
 /**
- * WEEKLY → the 7 days ending today (inclusive).
+ * WEEKLY → the 7 days ending `referenceDate` (inclusive).
  * MONTHLY → a full cycle anchored on `payDayOfMonth` (owner, 2026-08-20,
- * "عندي موظف بيبدأ قبض من يوم 9 في الشهر مش من يوم 1"): the cycle runs from
- * that day-of-month through the day before its next occurrence. Null (or 1)
- * keeps the original calendar-month behavior unchanged.
+ * "عندي موظف بيبدأ قبض من يوم 9 في الشهر مش من يوم 1"): the cycle running
+ * from that day-of-month through the day before its next occurrence,
+ * containing `referenceDate`. Null (or 1) keeps the original
+ * calendar-month behavior unchanged.
+ *
+ * `referenceDate` defaults to today (the original, only behavior before
+ * `computePreviousClosedPeriod` below needed to resolve an arbitrary past
+ * anchor point too — passing an explicit date is what lets that reuse this
+ * exact cycle math instead of re-deriving it).
  */
-function resolvePeriod(payFrequency: PayFrequency, payDayOfMonth: number | null): { periodStart: Date; periodEnd: Date } {
-  const today = utcMidnight(new Date());
+export function resolvePeriod(payFrequency: PayFrequency, payDayOfMonth: number | null, referenceDate: Date = new Date()): { periodStart: Date; periodEnd: Date } {
+  const today = utcMidnight(referenceDate);
   if (payFrequency === 'WEEKLY') {
     const periodStart = new Date(today);
     periodStart.setUTCDate(periodStart.getUTCDate() - 6);
@@ -102,47 +111,41 @@ function eachDay(start: Date, end: Date): Date[] {
   return days;
 }
 
+interface PayrollCore {
+  scheduledDaysInPeriod: number;
+  dailyRate: number | null;
+  hourlyRate: number | null;
+  days: EmployeePayrollDay[];
+  totalAdjustment: number;
+}
+
 /**
- * Null when the employee has no `payFrequency`/`baseSalary`/shift schedule
- * configured yet — payroll-by-hours simply doesn't apply until an admin
- * fills those in on the employee profile, same "nothing computed until
- * configured" behavior as the rest of this module's optional HR fields.
+ * The day-by-day rate/lateness/overtime math, shared by both the always-
+ * live "current period" computation (`computeEmployeePayroll`) and the
+ * "just-ended period, about to be frozen" computation
+ * (`computePreviousClosedPeriod`) — extracted so a period is priced
+ * exactly the same way regardless of which of the two ever calls it,
+ * per `periodStart`/`periodEnd`/`effectiveEnd` alone (the caller decides
+ * how far into the period to actually look: "up to today" for a still-
+ * ongoing period, or "the whole thing" for one that's already over).
  */
-export async function computeEmployeePayroll(staffId: string): Promise<EmployeePayroll | null> {
-  const staff = await prisma.staffProfile.findUnique({ where: { id: staffId } });
-  if (!staff || !staff.payFrequency || !staff.baseSalary || !staff.shiftStartTime || !staff.shiftEndTime || staff.workingDays.length === 0) {
-    return null;
-  }
-
-  const { periodStart, periodEnd } = resolvePeriod(staff.payFrequency, staff.payDayOfMonth);
-  const today = utcMidnight(new Date());
-  const effectiveEnd = periodEnd.getTime() < today.getTime() ? periodEnd : today;
-
+async function computePayrollCore(staff: StaffWithPayrollFields, periodStart: Date, periodEnd: Date, effectiveEnd: Date): Promise<PayrollCore> {
   const scheduledDays = eachDay(periodStart, periodEnd).filter((d) => staff.workingDays.includes(d.getUTCDay()));
   const scheduledDaysInPeriod = scheduledDays.length;
   if (scheduledDaysInPeriod === 0) {
-    return {
-      staffId,
-      periodStart: periodStart.toISOString(),
-      periodEnd: periodEnd.toISOString(),
-      scheduledDaysInPeriod: 0,
-      dailyRate: null,
-      hourlyRate: null,
-      days: [],
-      totalAdjustment: 0,
-    };
+    return { scheduledDaysInPeriod: 0, dailyRate: null, hourlyRate: null, days: [], totalAdjustment: 0 };
   }
 
-  const baseSalary = staff.baseSalary.toNumber();
+  const baseSalary = staff.baseSalary!.toNumber();
   const dailyRate = baseSalary / scheduledDaysInPeriod;
-  const shiftStart0 = combineDayAndTime(scheduledDays[0]!, staff.shiftStartTime);
-  const shiftEnd0 = combineDayAndTime(scheduledDays[0]!, staff.shiftEndTime);
+  const shiftStart0 = combineDayAndTime(scheduledDays[0]!, staff.shiftStartTime!);
+  const shiftEnd0 = combineDayAndTime(scheduledDays[0]!, staff.shiftEndTime!);
   const shiftMinutes = shiftEnd0.getTime() > shiftStart0.getTime() ? (shiftEnd0.getTime() - shiftStart0.getTime()) / 60000 : (shiftEnd0.getTime() + 86400000 - shiftStart0.getTime()) / 60000;
   const hourlyRate = dailyRate / (shiftMinutes / 60);
 
   const scheduledDaysElapsed = scheduledDays.filter((d) => d.getTime() <= effectiveEnd.getTime());
   const entries = await prisma.attendanceEntry.findMany({
-    where: { staffId, isDeleted: false, date: { gte: scheduledDaysElapsed[0] ?? periodStart, lte: effectiveEnd } },
+    where: { staffId: staff.id, isDeleted: false, date: { gte: scheduledDaysElapsed[0] ?? periodStart, lte: effectiveEnd } },
   });
   const entryByDate = new Map(entries.map((e) => [e.date.toISOString(), e]));
 
@@ -183,15 +186,84 @@ export async function computeEmployeePayroll(staffId: string): Promise<EmployeeP
   });
 
   const totalAdjustment = days.reduce((sum, d) => sum + d.adjustment, 0);
+  return { scheduledDaysInPeriod, dailyRate, hourlyRate, days, totalAdjustment };
+}
 
+function hasPayrollConfigured(staff: StaffWithPayrollFields | null): staff is StaffWithPayrollFields {
+  return Boolean(staff && staff.payFrequency && staff.baseSalary && staff.shiftStartTime && staff.shiftEndTime && staff.workingDays.length > 0);
+}
+
+/**
+ * Null when the employee has no `payFrequency`/`baseSalary`/shift schedule
+ * configured yet — payroll-by-hours simply doesn't apply until an admin
+ * fills those in on the employee profile, same "nothing computed until
+ * configured" behavior as the rest of this module's optional HR fields.
+ */
+export async function computeEmployeePayroll(staffId: string): Promise<EmployeePayroll | null> {
+  const staff = await prisma.staffProfile.findUnique({ where: { id: staffId } });
+  if (!hasPayrollConfigured(staff)) return null;
+
+  const { periodStart, periodEnd } = resolvePeriod(staff.payFrequency!, staff.payDayOfMonth);
+  const today = utcMidnight(new Date());
+  const effectiveEnd = periodEnd.getTime() < today.getTime() ? periodEnd : today;
+
+  const core = await computePayrollCore(staff, periodStart, periodEnd, effectiveEnd);
   return {
     staffId,
     periodStart: periodStart.toISOString(),
     periodEnd: periodEnd.toISOString(),
-    scheduledDaysInPeriod,
-    dailyRate,
-    hourlyRate,
-    days,
-    totalAdjustment,
+    ...core,
+  };
+}
+
+/**
+ * Owner (2026-09-02, "لما الشهر يخلص يتحسب المرتب بالظبط ويتحفظ") — the
+ * MONTHLY pay cycle immediately before the one `computeEmployeePayroll`
+ * currently reports as "current" — i.e. the most recent one that has
+ * fully ended. Used by `payrollPeriodCloseJob.ts` to freeze it into a
+ * `PayrollPeriod` row the moment it's over, so its exact numbers stay
+ * reachable even after "today" moves into the next cycle.
+ *
+ * Scoped to MONTHLY only: WEEKLY's period is a *rolling* 7-day window that
+ * ends anew every single day (see `resolvePeriod` above) — there is no
+ * single well-defined "period end" event for it to close on, so closing
+ * stays a MONTHLY-only concept until/unless the owner asks to extend it.
+ * Null for anyone not on a configured MONTHLY cycle, or whose previous
+ * cycle had zero scheduled work days (nothing to freeze).
+ */
+export async function computePreviousClosedPeriod(staffId: string): Promise<{
+  staffId: string;
+  branchId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  baseSalary: number;
+  dailyRate: number | null;
+  hourlyRate: number | null;
+  totalAdjustment: number;
+  grossDue: number;
+  days: EmployeePayrollDay[];
+} | null> {
+  const staff = await prisma.staffProfile.findUnique({ where: { id: staffId } });
+  if (!hasPayrollConfigured(staff) || staff.payFrequency !== 'MONTHLY') return null;
+
+  const { periodStart: currentPeriodStart } = resolvePeriod('MONTHLY', staff.payDayOfMonth);
+  const referenceDate = new Date(currentPeriodStart.getTime() - 86400000);
+  const { periodStart, periodEnd } = resolvePeriod('MONTHLY', staff.payDayOfMonth, referenceDate);
+
+  const core = await computePayrollCore(staff, periodStart, periodEnd, periodEnd);
+  if (core.scheduledDaysInPeriod === 0) return null;
+
+  const baseSalary = staff.baseSalary!.toNumber();
+  return {
+    staffId,
+    branchId: staff.branchId,
+    periodStart,
+    periodEnd,
+    baseSalary,
+    dailyRate: core.dailyRate,
+    hourlyRate: core.hourlyRate,
+    totalAdjustment: core.totalAdjustment,
+    grossDue: baseSalary + core.totalAdjustment,
+    days: core.days,
   };
 }

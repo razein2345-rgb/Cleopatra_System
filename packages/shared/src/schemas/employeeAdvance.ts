@@ -88,6 +88,18 @@ export const employeeAdvanceSummarySchema = z.object({
   periodStart: z.string().nullable(),
   periodEnd: z.string().nullable(),
   paidThisPeriod: z.number(),
+  /**
+   * Owner (2026-09-02, "لما الشهر يخلص يتحسب المرتب بالظبط ويتحفظ لحد ما
+   * يتصرف للموظف") — the oldest closed-but-unpaid `PayrollPeriod` for this
+   * employee, if one exists. When present, `periodStart`/`periodEnd`/
+   * `attendanceAdjustment`/`netDue` above are resolved FROM that frozen
+   * row instead of a live `computeEmployeePayroll` call, and "صرف مرتب"
+   * settles it specifically (`createSalaryPaymentSchema.payrollPeriodId`).
+   * Null means either no payroll is configured yet, or the current period
+   * simply hasn't closed yet — the existing live-computation behavior
+   * still applies, unchanged.
+   */
+  pendingPayrollPeriodId: z.string().uuid().nullable(),
 });
 
 export type AdvanceRepaymentMethod = z.infer<typeof advanceRepaymentMethodSchema>;

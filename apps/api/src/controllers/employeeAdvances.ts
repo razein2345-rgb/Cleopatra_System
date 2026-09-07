@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { createAdvanceRepaymentSchema, createEmployeeAdvanceSchema, createSalaryPaymentSchema } from '@cleopatra/shared';
+import { createAdvanceRepaymentSchema, createEmployeeAdvanceSchema, createSalaryPaymentSchema, reopenPayrollPeriodSchema } from '@cleopatra/shared';
 import { canAccessBranch } from '../services/authContext.js';
 import { recordAudit } from '../services/auditService.js';
 import {
@@ -12,7 +12,14 @@ import {
   MissingWalletMethodError,
 } from '../services/employeeAdvanceService.js';
 import { computeEmployeePayroll } from '../services/employeePayrollService.js';
-import { createSalaryPayment, listSalaryPaymentsForStaff, NoPayrollConfiguredError } from '../services/salaryPaymentService.js';
+import {
+  listPayrollPeriodsForStaff,
+  PayrollPeriodAlreadyOpenError,
+  PayrollPeriodAlreadyPaidError,
+  PayrollPeriodNotFoundError,
+  reopenPayrollPeriod,
+} from '../services/payrollPeriodService.js';
+import { createSalaryPayment, InvalidPayrollPeriodError, listSalaryPaymentsForStaff, NoPayrollConfiguredError } from '../services/salaryPaymentService.js';
 import { DayClosedError } from '../services/treasuryService.js';
 
 export async function listAdvancesForStaffHandler(req: Request<{ staffId: string }>, res: Response) {
@@ -113,6 +120,10 @@ export async function createSalaryPaymentHandler(req: Request, res: Response) {
       res.status(400).json({ success: false, error: { message: err.message, code: 'NO_PAYROLL_CONFIGURED' } });
       return;
     }
+    if (err instanceof InvalidPayrollPeriodError) {
+      res.status(409).json({ success: false, error: { message: err.message, code: 'INVALID_PAYROLL_PERIOD' } });
+      return;
+    }
     if (err instanceof DayClosedError) {
       res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
       return;
@@ -146,4 +157,61 @@ export async function getEmployeePayrollHandler(req: Request<{ staffId: string }
   }
   const payroll = await computeEmployeePayroll(req.params.staffId);
   res.json({ success: true, data: payroll });
+}
+
+/**
+ * Owner (2026-09-02, "لما الشهر يخلص يتحسب المرتب بالظبط ويتحفظ لحد ما
+ * يتصرف للموظف") — frozen closed periods carry the exact same kind of
+ * per-day attendance breakdown `getEmployeePayrollHandler` above already
+ * restricts to Super Admin, so this stays behind the same gate.
+ */
+export async function listPayrollPeriodsForStaffHandler(req: Request<{ staffId: string }>, res: Response) {
+  if (!req.auth!.roleNames.includes('SUPER_ADMIN')) {
+    res.status(403).json({ success: false, error: { message: 'Payroll data is restricted to Super Admin' } });
+    return;
+  }
+  const periods = await listPayrollPeriodsForStaff(req.params.staffId);
+  res.json({ success: true, data: periods });
+}
+
+/**
+ * Owner (2026-09-02, "يسمح بإعادة فتح الشهر وإعادة الحساب") — same
+ * elevated bar as `reopenTreasuryDayHandler` (SUPER_ADMIN/ADMIN only,
+ * stricter than the `employees.edit` route-level gate on every other
+ * mutation in this controller) since it discards a frozen salary figure.
+ */
+export async function reopenPayrollPeriodHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  if (!auth.roleNames.includes('SUPER_ADMIN') && !auth.roleNames.includes('ADMIN')) {
+    res.status(403).json({ success: false, error: { message: 'Reopening a closed payroll period is restricted to admins' } });
+    return;
+  }
+
+  const input = reopenPayrollPeriodSchema.parse(req.body);
+
+  let period;
+  try {
+    period = await reopenPayrollPeriod(req.params.id, auth.staffId, input.reason);
+  } catch (err) {
+    if (err instanceof PayrollPeriodNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof PayrollPeriodAlreadyOpenError || err instanceof PayrollPeriodAlreadyPaidError) {
+      res.status(409).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'PayrollPeriod',
+    entityId: period.id,
+    action: 'STATUS_CHANGE',
+    performedById: auth.staffId,
+    branchId: period.branchId,
+    newValue: { staffId: period.staffId, periodStart: period.periodStart, periodEnd: period.periodEnd, reopenReason: period.reopenReason },
+  });
+
+  res.json({ success: true, data: period });
 }

@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { startAttendanceCleanupJob } from './jobs/attendanceCleanupJob.js';
 import { startAutoCloseDayJob } from './jobs/autoCloseDayJob.js';
+import { startPayrollPeriodCloseJob } from './jobs/payrollPeriodCloseJob.js';
 
 const app = createApp();
 
@@ -11,3 +12,4 @@ app.listen(env.PORT, () => {
 
 startAttendanceCleanupJob();
 startAutoCloseDayJob();
+startPayrollPeriodCloseJob();

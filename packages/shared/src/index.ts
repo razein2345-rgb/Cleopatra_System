@@ -56,6 +56,7 @@ export * from './schemas/employeeAdvance.js';
 export * from './schemas/salaryPayment.js';
 export * from './schemas/lead.js';
 export * from './schemas/employeePayroll.js';
+export * from './schemas/payrollPeriod.js';
 export * from './schemas/attendance.js';
 export * from './schemas/auditLog.js';
 export * from './schemas/device.js';

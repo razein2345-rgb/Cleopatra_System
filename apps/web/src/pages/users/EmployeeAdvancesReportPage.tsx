@@ -156,6 +156,7 @@ function PaySalaryDialog({
         amount: parsed,
         method,
         note: note.trim() || undefined,
+        payrollPeriodId: summary.pendingPayrollPeriodId ?? undefined,
       };
       await apiPost('/api/employee-advances/salary-payments', input);
       onPaid();
@@ -176,7 +177,7 @@ function PaySalaryDialog({
           {error && <p className="text-destructive text-sm">{error}</p>}
           {summary.periodStart && summary.periodEnd && (
             <p className="text-muted-foreground text-sm">
-              الفترة الحالية:{' '}
+              {summary.pendingPayrollPeriodId ? 'الفترة المقفولة (محسوبة ومحفوظة بالظبط)' : 'الفترة الحالية (لسه ما اتقفلتش)'}:{' '}
               <span dir="ltr">
                 {new Date(summary.periodStart).toLocaleDateString('en-GB')} – {new Date(summary.periodEnd).toLocaleDateString('en-GB')}
               </span>

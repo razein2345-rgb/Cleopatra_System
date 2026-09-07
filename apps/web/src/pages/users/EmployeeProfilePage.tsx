@@ -7,6 +7,7 @@ import type {
   EmployeePayroll,
   FieldAssignment,
   PayFrequency,
+  PayrollPeriod,
   User,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
@@ -54,6 +55,7 @@ export function EmployeeProfilePage() {
   const [advances, setAdvances] = useState<EmployeeAdvance[] | null>(null);
   const [attendance, setAttendance] = useState<AttendanceEntry[] | null>(null);
   const [payroll, setPayroll] = useState<EmployeePayroll | null | undefined>(undefined);
+  const [payrollPeriods, setPayrollPeriods] = useState<PayrollPeriod[] | null>(null);
   const [fieldAssignments, setFieldAssignments] = useState<FieldAssignment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showAddAdvance, setShowAddAdvance] = useState(false);
@@ -68,13 +70,15 @@ export function EmployeeProfilePage() {
       apiGet<EmployeeAdvance[]>(`/api/employee-advances/staff/${id}`),
       apiGet<AttendanceEntry[]>(`/api/attendance/staff/${id}`),
       apiGet<EmployeePayroll | null>(`/api/employee-advances/staff/${id}/payroll`),
+      apiGet<PayrollPeriod[]>(`/api/employee-advances/staff/${id}/payroll-periods`),
       apiGet<FieldAssignment[]>(`/api/attendance/field-assignments?staffId=${id}`),
     ])
-      .then(([u, a, att, p, fa]) => {
+      .then(([u, a, att, p, pp, fa]) => {
         setUser(u);
         setAdvances(a);
         setAttendance(att);
         setPayroll(p);
+        setPayrollPeriods(pp);
         setFieldAssignments(fa);
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل بيانات الموظف'));
@@ -92,7 +96,7 @@ export function EmployeeProfilePage() {
   }
 
   if (error) return <div className="text-destructive">{error}</div>;
-  if (!user || !advances || !attendance || payroll === undefined) {
+  if (!user || !advances || !attendance || payroll === undefined || !payrollPeriods) {
     return <div className="text-muted-foreground">جارٍ التحميل…</div>;
   }
 
@@ -314,6 +318,37 @@ export function EmployeeProfilePage() {
               </span>
             </p>
           </>
+        )}
+      </div>
+
+      <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
+        <h2 className="font-semibold">مرتبات مقفولة</h2>
+        <p className="text-muted-foreground text-sm">
+          كل شهر يتقفل تلقائيًا لوحده لما يخلص (موظفين المرتب الشهري بس) — الأرقام هنا محفوظة زي
+          ما اتحسبت وقت القفل، ومش بتتغير حتى لو اتعدل الحضور بعد كده إلا لو اتفتحت تاني.
+        </p>
+        {payrollPeriods.length === 0 ? (
+          <p className="text-muted-foreground text-sm">لسه مفيش شهر اتقفل لهذا الموظف.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+                  <th className="p-2">الفترة</th>
+                  <th className="p-2">تسوية الحضور</th>
+                  <th className="p-2">المستحق</th>
+                  <th className="p-2">المصروف</th>
+                  <th className="p-2">الحالة</th>
+                  <th className="p-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {payrollPeriods.map((p) => (
+                  <PayrollPeriodRow key={p.id} period={p} onChanged={load} />
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -972,6 +1007,132 @@ function AdvanceRow({ advance, canEdit, onChanged }: { advance: EmployeeAdvance;
         />
       )}
     </tr>
+  );
+}
+
+/**
+ * Owner (2026-09-02, "لما الشهر يخلص يتحسب المرتب بالظبط ويتحفظ لحد ما
+ * يتصرف للموظف والشهر الجديد يكون منفصل عن القديم") — one row per frozen
+ * `PayrollPeriod`. "إعادة فتح" only shows once nothing has been paid
+ * against it yet (`paidAmount === 0`, enforced again server-side) — after
+ * that, discarding its numbers would desync from real cash already moved.
+ */
+function PayrollPeriodRow({ period, onChanged }: { period: PayrollPeriod; onChanged: () => void }) {
+  const [showReopen, setShowReopen] = useState(false);
+  const canReopen = !period.isOpen && period.paidAmount === 0;
+  return (
+    <tr className="border-border border-b last:border-0">
+      <td className="p-2">
+        {new Date(period.periodStart).toLocaleDateString('ar-EG')} — {new Date(period.periodEnd).toLocaleDateString('ar-EG')}
+      </td>
+      <td className={`p-2 ${period.totalAdjustment > 0 ? 'text-success' : period.totalAdjustment < 0 ? 'text-destructive' : ''}`}>
+        <span dir="ltr">
+          {period.totalAdjustment !== 0 ? `${period.totalAdjustment > 0 ? '+' : ''}${money(period.totalAdjustment)}` : '—'}
+        </span>
+      </td>
+      <td className="p-2 font-medium">
+        <span dir="ltr">{money(period.grossDue)}</span>
+      </td>
+      <td className="p-2">
+        <span dir="ltr">{money(period.paidAmount)}</span>
+      </td>
+      <td className="p-2">
+        {period.isOpen ? (
+          <span className="text-warning-foreground">مفتوحة — في انتظار إعادة الحساب</span>
+        ) : period.paidAmount >= period.grossDue ? (
+          <span className="text-success">اتصرفت بالكامل</span>
+        ) : (
+          <span className="text-muted-foreground">مقفولة</span>
+        )}
+      </td>
+      <td className="p-2">
+        {canReopen && (
+          <Button variant="secondary" size="sm" onClick={() => setShowReopen(true)}>
+            إعادة فتح
+          </Button>
+        )}
+      </td>
+      {showReopen && (
+        <ReopenPayrollPeriodDialog
+          period={period}
+          onClose={() => setShowReopen(false)}
+          onReopened={() => {
+            setShowReopen(false);
+            onChanged();
+          }}
+        />
+      )}
+    </tr>
+  );
+}
+
+function ReopenPayrollPeriodDialog({
+  period,
+  onClose,
+  onReopened,
+}: {
+  period: PayrollPeriod;
+  onClose: () => void;
+  onReopened: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    if (!reason.trim()) {
+      setError('اكتب سبب إعادة الفتح');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      await apiPost(`/api/employee-advances/payroll-periods/${period.id}/reopen`, { reason: reason.trim() });
+      onReopened();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'تعذر إعادة فتح الفترة');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            إعادة فتح فترة {new Date(period.periodStart).toLocaleDateString('ar-EG')} — {new Date(period.periodEnd).toLocaleDateString('ar-EG')}
+          </DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          {error && <p className="text-destructive text-sm">{error}</p>}
+          <p className="text-muted-foreground text-sm">
+            هيتم حساب الفترة دي من جديد تلقائيًا (خلال دقيقة تقريبًا) بأحدث بيانات الحضور، وهتتقفل
+            تاني بالأرقام الجديدة.
+          </p>
+          <label className="block space-y-1 text-sm">
+            <span className="text-muted-foreground">سبب إعادة الفتح</span>
+            <input
+              autoFocus
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="مثال: اتضاف يوم حضور كان ناقص"
+              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            />
+          </label>
+          <div className="flex gap-2">
+            <Button type="submit" variant="destructive" disabled={submitting}>
+              {submitting ? 'جارٍ إعادة الفتح…' : 'تأكيد إعادة الفتح'}
+            </Button>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              إلغاء
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

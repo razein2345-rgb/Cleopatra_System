@@ -457,6 +457,7 @@ model Branch {
   auditLogs           AuditLog[]
   employeeAdvances    EmployeeAdvance[]
   salaryPayments      SalaryPayment[]
+  payrollPeriods      PayrollPeriod[]
   leads               Lead[]
   attendanceEntries   AttendanceEntry[]
   fieldAssignments    FieldAssignment[]
@@ -957,6 +958,8 @@ model StaffProfile {
   advanceRepaymentsRecorded   EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
   salaryPaymentsReceived      SalaryPayment[]            @relation("SalaryPaymentStaff")
   salaryPaymentsRecorded      SalaryPayment[]            @relation("SalaryPaymentRecordedBy")
+  payrollPeriods              PayrollPeriod[]            @relation("PayrollPeriodStaff")
+  payrollPeriodsReopened      PayrollPeriod[]            @relation("PayrollPeriodReopenedBy")
   leadsAssigned               Lead[]                     @relation("LeadAssignedTo")
   leadsRecorded               Lead[]                     @relation("LeadRecordedBy")
   supplierPurchasesRecorded   SupplierPurchase[]         @relation("SupplierPurchaseRecordedBy")
@@ -2961,6 +2964,14 @@ model SalaryPayment {
   recordedById String       @db.Uuid
   recordedBy   StaffProfile @relation("SalaryPaymentRecordedBy", fields: [recordedById], references: [id])
 
+  /// Owner (2026-09-02, "لما الشهر يخلص يتحسب المرتب بالظبط ويتحفظ لحد ما
+  /// يتصرف للموظف") — links this payment to the frozen `PayrollPeriod` it
+  /// settles, when one exists. Nullable for backward compatibility: every
+  /// `SalaryPayment` created before this feature (and any paid mid-period,
+  /// before that period has actually closed) has none.
+  payrollPeriodId String?        @db.Uuid
+  payrollPeriod   PayrollPeriod? @relation(fields: [payrollPeriodId], references: [id])
+
   treasuryEntry TreasuryEntry?
 
   isDeleted Boolean   @default(false)
@@ -2972,6 +2983,70 @@ model SalaryPayment {
   @@index([staffId])
   @@index([branchId])
   @@index([isDeleted])
+  @@index([payrollPeriodId])
+}
+
+/// Owner (2026-09-02, "بالنسبة للمرتبات عايز لما الشهر يخلص يتحسب المرتب
+/// بالظبط ويتحفظ لحد ما يتصرف للموظف والشهر الجديد يكون منفصل عن القديم
+/// علشان منخلطش بين الشهور") — before this, `computeEmployeePayroll` only
+/// ever computed the CURRENT period live against `new Date()`; nothing was
+/// ever persisted, so once a period rolled into the next one its exact
+/// numbers were no longer reachable through the normal screens unless a
+/// `SalaryPayment` had already been recorded against it. One row per
+/// (staff, period) — created automatically by `payrollPeriodCloseJob.ts`
+/// the moment that employee's own pay cycle (`payFrequency`/
+/// `payDayOfMonth`) fully ends, freezing the exact breakdown so it never
+/// silently drifts (an attendance edit made after close does NOT change
+/// this row unless it's explicitly reopened first). Mirrors
+/// `TreasuryDayClosure`'s exact close/reopen shape (`isOpen` + reopener
+/// fields) — reopening (owner: "يسمح بإعادة فتح الشهر وإعادة الحساب")
+/// simply flips `isOpen: true`; the same closing sweep then treats it as
+/// "not closed yet" and recomputes+re-closes it on its next tick, so there
+/// is no separate manual "recompute" action to keep in sync.
+model PayrollPeriod {
+  id String @id @default(uuid()) @db.Uuid
+
+  staffId String       @db.Uuid
+  staff   StaffProfile @relation("PayrollPeriodStaff", fields: [staffId], references: [id])
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  periodStart DateTime
+  periodEnd   DateTime
+
+  /// Snapshot of `StaffProfile.baseSalary` at close time — a later change
+  /// to the employee's current base salary must never retroactively alter
+  /// an already-closed historical period.
+  baseSalary      Decimal  @db.Decimal(12, 2)
+  dailyRate       Decimal? @db.Decimal(12, 2)
+  hourlyRate      Decimal? @db.Decimal(12, 2)
+  totalAdjustment Decimal  @db.Decimal(12, 2)
+  /// baseSalary + totalAdjustment, frozen — the exact amount due for this
+  /// period before netting outstanding advances (those stay a live,
+  /// running balance, unaffected by period boundaries, same as today).
+  grossDue        Decimal  @db.Decimal(12, 2)
+  /// Frozen `EmployeePayrollDay[]` — the same day-by-day breakdown
+  /// `computeEmployeePayroll` already returns live, kept for audit/display
+  /// even after the underlying `AttendanceEntry` rows are edited later.
+  days            Json
+
+  closedAt DateTime @default(now())
+
+  isOpen       Boolean       @default(false)
+  reopenedById String?       @db.Uuid
+  reopenedBy   StaffProfile? @relation("PayrollPeriodReopenedBy", fields: [reopenedById], references: [id])
+  reopenedAt   DateTime?
+  reopenReason String?
+
+  salaryPayments SalaryPayment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([staffId, periodStart, periodEnd])
+  @@index([staffId])
+  @@index([branchId])
 }
 
 // ---------------------------------------------------------------------------

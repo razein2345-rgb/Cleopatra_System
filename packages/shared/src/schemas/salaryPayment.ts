@@ -23,6 +23,7 @@ export const salaryPaymentSchema = z.object({
   method: paymentMethodSchema,
   note: z.string().nullable(),
   recordedById: z.string().uuid(),
+  payrollPeriodId: z.string().uuid().nullable(),
   createdAt: z.string(),
 });
 
@@ -32,6 +33,16 @@ export const createSalaryPaymentSchema = z.object({
   amount: z.number().positive(),
   method: paymentMethodSchema,
   note: z.string().trim().min(1).max(500).optional(),
+  /**
+   * Owner (2026-09-02, "لما الشهر يخلص يتحسب المرتب بالظبط ويتحفظ لحد ما
+   * يتصرف للموظف") — the closed `PayrollPeriod` this payment settles, from
+   * `EmployeeAdvanceSummary.pendingPayrollPeriodId`. Optional: still
+   * resolved server-side, never trusted at face value (the server
+   * re-verifies it belongs to `staffId` and is unpaid) — omitted entirely
+   * falls back to the original pre-close-tracking behavior (live
+   * `computeEmployeePayroll` period), for staff with nothing closed yet.
+   */
+  payrollPeriodId: z.string().uuid().optional(),
 });
 
 export type SalaryPayment = z.infer<typeof salaryPaymentSchema>;
