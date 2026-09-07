@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link } from 'react-router-dom';
 import { Ban, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
 import type {
+  BusinessPartner,
   Department,
   Machine,
+  PartnerAddress,
   ProductionTrack,
   User,
   WorkflowDashboardSummary,
@@ -15,7 +17,7 @@ import { apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { StatusBadge } from '@/components/cleopatra';
+import { EditableDateCell, EditableSelectCell, EditableTextCell, StatusBadge } from '@/components/cleopatra';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/state/AuthContext';
 import { ConfirmStageActionDialog } from './ConfirmStageActionDialog';
@@ -43,7 +45,7 @@ import {
  * a published template that wasn't in the owner's list but has jobs that
  * would otherwise have nowhere to show.
  */
-type TrackTabKey = 'ALL' | 'DESIGN' | ProductionTrack;
+type TrackTabKey = 'ALL' | 'DESIGN' | 'EXTERNAL_SUPPLIER' | ProductionTrack;
 const TRACK_TAB_ORDER: TrackTabKey[] = [
   'ALL',
   'DESIGN',
@@ -54,6 +56,17 @@ const TRACK_TAB_ORDER: TrackTabKey[] = [
   'READY_PRODUCTS',
   'SERVICES',
   'OTHER_PRODUCTS',
+  // Owner (2026-09-08, "خانة الطلبات اللي هتتجاب من مورد عايزها تظهر كا
+  // قسم في الوورك فلو بردو زي باقي الاقسام... اقدر اشوف الطلبات اللي
+  // موجودة عند مورد خارجي واقدر ادوس إنها تم استلامها ولا لا") — the real
+  // `Department` code `EXTERNAL_SUPPLIER` ("مورّد خارجي") already exists
+  // and already carries every "إرسال للمورد"/"الإحضار من المورد" stage
+  // instance — it was just buried inside whichever track happened to use
+  // it (mainly "منتجات جاهزة"), never its own tab. Handled exactly like
+  // `DESIGN` above: a real Department, not a `ProductionTrack`, queried by
+  // `departmentId`. The existing "إنهاء" checkbox already marks an item
+  // received (advances the stage) — nothing new needed there.
+  'EXTERNAL_SUPPLIER',
 ];
 const TRACK_TAB_LABELS: Record<TrackTabKey, string> = {
   // Owner (2026-09-07, "عايز كل الطلبات في مكان واحد وفي فلتر... لكن كله
@@ -71,6 +84,7 @@ const TRACK_TAB_LABELS: Record<TrackTabKey, string> = {
   READY_PRODUCTS: 'منتجات جاهزة',
   SERVICES: 'خدمات',
   OTHER_PRODUCTS: 'منتجات أخرى',
+  EXTERNAL_SUPPLIER: 'مورّد خارجي',
 };
 /** `OverviewTab`'s per-track summary cards — excludes the new "الكل" tab, which isn't a real track/department to summarize on its own. */
 const SUMMARY_TRACK_ORDER = TRACK_TAB_ORDER.filter((key): key is Exclude<TrackTabKey, 'ALL'> => key !== 'ALL');
@@ -161,6 +175,15 @@ function formatDeliveryDuration(hours: number): string {
   return `${days} يوم و${remainingHours} ساعة`;
 }
 
+/** Owner (2026-09-08, "يطبع فيها... عنوانه علشان يقدر يوصله") — joins a `PartnerAddress`'s free-form fields into one printable line; `null` (no address on file) prints as "—", not an empty cell. */
+function formatPartnerAddress(address: PartnerAddress | null): string {
+  if (!address) return '—';
+  const parts = [address.governorate, address.city, address.district, address.street, address.building].filter(
+    (p): p is string => Boolean(p),
+  );
+  return parts.length > 0 ? parts.join('، ') : '—';
+}
+
 const PRIORITY_RANK: Record<WorkflowPriority, number> = { LOW: 0, NORMAL: 1, HIGH: 2, URGENT: 3 };
 
 /**
@@ -197,23 +220,26 @@ function OverviewTab({ onSelectTrack }: { onSelectTrack: (track: TrackTabKey) =>
     ])
       .then(async ([depts, machines, dashboardSummary]) => {
         const designDeptId = depts.find((d) => d.code === 'DESIGN')?.id;
+        const externalSupplierDeptId = depts.find((d) => d.code === 'EXTERNAL_SUPPLIER')?.id;
         const trackByDeptId = new Map(depts.map((d) => [d.id, d.productionTrack]));
         const avgHoursByTrack = new Map(
           (dashboardSummary?.avgDeliveryDurationByTrack ?? []).map((t) => [t.productionTrack, t.avgHours]),
         );
         const results = await Promise.all(
           SUMMARY_TRACK_ORDER.map(async (key): Promise<TrackSummary> => {
+            const specialDeptId = key === 'DESIGN' ? designDeptId : key === 'EXTERNAL_SUPPLIER' ? externalSupplierDeptId : undefined;
+            const isSpecial = key === 'DESIGN' || key === 'EXTERNAL_SUPPLIER';
             const trackMachines = machines.filter((m) =>
-              key === 'DESIGN' ? m.departmentId === designDeptId : m.departmentId && trackByDeptId.get(m.departmentId) === key,
+              isSpecial ? m.departmentId === specialDeptId : m.departmentId && trackByDeptId.get(m.departmentId) === key,
             );
             const machineCounts = {
               machinesTotal: trackMachines.length,
               machinesRunning: trackMachines.filter((m) => m.status === 'RUNNING').length,
               machinesInMaintenance: trackMachines.filter((m) => m.status === 'MAINTENANCE').length,
             };
-            const avgDeliveryHours = key === 'DESIGN' ? null : (avgHoursByTrack.get(key) ?? null);
+            const avgDeliveryHours = isSpecial ? null : (avgHoursByTrack.get(key) ?? null);
 
-            const query = key === 'DESIGN' ? (designDeptId ? `departmentId=${designDeptId}` : null) : `productionTrack=${key}`;
+            const query = isSpecial ? (specialDeptId ? `departmentId=${specialDeptId}` : null) : `productionTrack=${key}`;
             if (!query) return { key, running: 0, delayed: 0, topPriority: null, avgDeliveryHours, ...machineCounts };
             const items = await apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?${query}`);
             const topPriority = items.reduce<WorkflowPriority | null>(
@@ -564,15 +590,87 @@ function MyTasksTab() {
  * `DepartmentsTab`'s existing column layout exactly, just with a leading
  * drag-handle cell.
  */
+/**
+ * Owner (2026-09-08, "عايز اقدر اعدل على التفاصيل... زي نوشن") — the four
+ * queue fields that used to be edit-only through `EditQueueItemDialog`,
+ * now click-to-edit-in-place using the existing `Editable*Cell` family
+ * (`@/components/cleopatra`, already built for this exact "زي جدول نوشن"
+ * pattern elsewhere in the app — rule 5, no new inline-edit primitives).
+ * Shared by the table row, the mobile card, and the Kanban card so all
+ * three stay in sync automatically.
+ */
+function PriorityCell({ item, updateField, disabled }: { item: WorkflowQueueItem; updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>; disabled: boolean }) {
+  if (disabled) return <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>;
+  return (
+    <EditableSelectCell
+      value={item.priority}
+      options={PRIORITY_OPTIONS}
+      onSave={(next) => updateField(item, { priority: next })}
+      renderValue={(v) => <StatusBadge tone={priorityTone(v)}>{PRIORITY_LABELS[v]}</StatusBadge>}
+    />
+  );
+}
+
+function DueDateCell({ item, updateField, disabled }: { item: WorkflowQueueItem; updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>; disabled: boolean }) {
+  if (disabled) return <span className="text-muted-foreground">{formatDueDate(item.dueDate)}</span>;
+  return (
+    <EditableDateCell
+      value={item.dueDate ? item.dueDate.slice(0, 10) : null}
+      onSave={(next) => updateField(item, { dueDate: next })}
+    />
+  );
+}
+
+function AssigneeCell({
+  item,
+  employees,
+  updateField,
+  disabled,
+}: {
+  item: WorkflowQueueItem;
+  employees: User[];
+  updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>;
+  disabled: boolean;
+}) {
+  const name = employees.find((e) => e.id === item.assignedEmployeeId)?.name ?? '—';
+  if (disabled) return <span className="text-muted-foreground">{name}</span>;
+  // `EditableSelectCell` is `T extends string` — `''` stands in for "غير
+  // معيّن" (unassigned) since the component itself can't carry `null`.
+  const options: [string, string][] = [['', 'غير معيّن'], ...employees.map((e): [string, string] => [e.id, e.name])];
+  return (
+    <EditableSelectCell
+      value={item.assignedEmployeeId ?? ''}
+      options={options}
+      onSave={(next) => updateField(item, { assignedEmployeeId: next || null })}
+      renderValue={(v) => employees.find((e) => e.id === v)?.name ?? 'غير معيّن'}
+    />
+  );
+}
+
+function WaitingReasonCell({ item, updateField, disabled }: { item: WorkflowQueueItem; updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>; disabled: boolean }) {
+  if (disabled) return <span className="text-muted-foreground">{item.waitingReason ?? '—'}</span>;
+  return (
+    <EditableTextCell
+      value={item.waitingReason ?? ''}
+      placeholder="—"
+      onSave={(next) => updateField(item, { waitingReason: next || null })}
+    />
+  );
+}
+
 function SortableQueueTableRow({
   item,
-  employeeName,
+  employees,
+  updateField,
+  canEditFields,
   timelineLink,
   canEdit,
   actionButtons,
 }: {
   item: WorkflowQueueItem;
-  employeeName: (id: string | null) => string;
+  employees: User[];
+  updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>;
+  canEditFields: boolean;
   timelineLink: (item: WorkflowQueueItem) => ReactNode;
   canEdit: boolean;
   actionButtons: (item: WorkflowQueueItem) => ReactNode;
@@ -596,15 +694,21 @@ function SortableQueueTableRow({
         </StatusBadge>
       </TableCell>
       <TableCell>
-        <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
+        <PriorityCell item={item} updateField={updateField} disabled={!canEditFields} />
       </TableCell>
       <TableCell>
         {item.isDelayed ? <StatusBadge tone="danger">متأخرة</StatusBadge> : <StatusBadge tone="success">في الموعد</StatusBadge>}
       </TableCell>
-      <TableCell className="text-muted-foreground">{formatDueDate(item.dueDate)}</TableCell>
+      <TableCell className="text-muted-foreground">
+        <DueDateCell item={item} updateField={updateField} disabled={!canEditFields} />
+      </TableCell>
       <TableCell className="text-muted-foreground">{formatTimeInStage(item.startedAt, item.createdAt)}</TableCell>
-      <TableCell className="text-muted-foreground">{employeeName(item.assignedEmployeeId)}</TableCell>
-      <TableCell className="text-muted-foreground">{item.waitingReason ?? '—'}</TableCell>
+      <TableCell className="text-muted-foreground">
+        <AssigneeCell item={item} employees={employees} updateField={updateField} disabled={!canEditFields} />
+      </TableCell>
+      <TableCell className="text-muted-foreground">
+        <WaitingReasonCell item={item} updateField={updateField} disabled={!canEditFields} />
+      </TableCell>
       <TableCell>{timelineLink(item)}</TableCell>
       {canEdit && <TableCell>{actionButtons(item)}</TableCell>}
     </TableRow>
@@ -614,13 +718,17 @@ function SortableQueueTableRow({
 /** The mobile-card equivalent of `SortableQueueTableRow` — same drag wiring, `DepartmentsTab`'s existing card layout plus a leading drag handle. */
 function SortableQueueCard({
   item,
-  employeeName,
+  employees,
+  updateField,
+  canEditFields,
   timelineLink,
   canEdit,
   actionButtons,
 }: {
   item: WorkflowQueueItem;
-  employeeName: (id: string | null) => string;
+  employees: User[];
+  updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>;
+  canEditFields: boolean;
   timelineLink: (item: WorkflowQueueItem) => ReactNode;
   canEdit: boolean;
   actionButtons: (item: WorkflowQueueItem) => ReactNode;
@@ -641,19 +749,19 @@ function SortableQueueCard({
         </div>
         {item.isDelayed ? <StatusBadge tone="danger">متأخرة</StatusBadge> : <StatusBadge tone="success">في الموعد</StatusBadge>}
       </div>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
           {STAGE_STATUS_LABELS[item.status]}
         </StatusBadge>
-        <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
+        <PriorityCell item={item} updateField={updateField} disabled={!canEditFields} />
       </div>
       <div className="text-muted-foreground flex items-center justify-between text-xs">
-        <span>الاستحقاق: {formatDueDate(item.dueDate)}</span>
+        <span>الاستحقاق: <DueDateCell item={item} updateField={updateField} disabled={!canEditFields} /></span>
         <span>منذ {formatTimeInStage(item.startedAt, item.createdAt)}</span>
       </div>
-      <div className="text-muted-foreground text-xs">
-        {employeeName(item.assignedEmployeeId)}
-        {item.waitingReason ? ` — ${item.waitingReason}` : ''}
+      <div className="text-muted-foreground flex items-center gap-2 text-xs">
+        <AssigneeCell item={item} employees={employees} updateField={updateField} disabled={!canEditFields} />
+        <WaitingReasonCell item={item} updateField={updateField} disabled={!canEditFields} />
       </div>
       {timelineLink(item)}
       {canEdit && actionButtons(item)}
@@ -678,6 +786,16 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
   // narrows the fetch itself); slices the one combined queue further,
   // client-side, exactly like priority/delayed-only above.
   const [unifiedTrackFilter, setUnifiedTrackFilter] = useState<TrackTabKey | 'ALL'>('ALL');
+  // Owner (2026-09-08, "عايز اقدر اطبعها علشان لو حد رايح يجيب الطلبات
+  // ياخد الورقه دي معاه... يطبع فيها اسم الصنف وإسم المورد وعنوانه") — a
+  // pickup sheet for the "مورّد خارجي" tab specifically: resolved once,
+  // on demand (not on every load), then printed via a print-only block —
+  // see `printPickupList`/`pickupPrintRows` below.
+  const [pickupPrintRows, setPickupPrintRows] = useState<
+    { itemName: string; supplierName: string; supplierAddress: string }[] | null
+  >(null);
+  const [printError, setPrintError] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   useEffect(() => {
     apiGet<Department[]>('/api/departments')
@@ -691,23 +809,31 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
         const fromLink = new URLSearchParams(window.location.search).get('department');
         const linkedDept = fromLink ? depts.find((d) => d.id === fromLink) : undefined;
         if (linkedDept) {
-          setTrackTab(linkedDept.code === 'DESIGN' ? 'DESIGN' : (linkedDept.productionTrack ?? 'DESIGN'));
+          setTrackTab(
+            linkedDept.code === 'DESIGN'
+              ? 'DESIGN'
+              : linkedDept.code === 'EXTERNAL_SUPPLIER'
+                ? 'EXTERNAL_SUPPLIER'
+                : (linkedDept.productionTrack ?? 'DESIGN'),
+          );
         }
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل الأقسام'));
     apiGet<User[]>('/api/users').then(setEmployees).catch(() => undefined);
   }, []);
 
-  const employeeName = (id: string | null) => employees.find((e) => e.id === id)?.name ?? '—';
   const designDepartmentId = departments?.find((d) => d.code === 'DESIGN')?.id;
+  const externalSupplierDepartmentId = departments?.find((d) => d.code === 'EXTERNAL_SUPPLIER')?.id;
 
   const loadQueue = useCallback(() => {
+    const specialDepartmentId =
+      trackTab === 'DESIGN' ? designDepartmentId : trackTab === 'EXTERNAL_SUPPLIER' ? externalSupplierDepartmentId : undefined;
     const query =
       trackTab === 'ALL'
         ? 'all=true'
-        : trackTab === 'DESIGN'
-          ? designDepartmentId
-            ? `departmentId=${designDepartmentId}`
+        : trackTab === 'DESIGN' || trackTab === 'EXTERNAL_SUPPLIER'
+          ? specialDepartmentId
+            ? `departmentId=${specialDepartmentId}`
             : null
           : `productionTrack=${trackTab}`;
     if (!query) return;
@@ -717,7 +843,7 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
         setLastUpdated(new Date());
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل قائمة الانتظار'));
-  }, [trackTab, designDepartmentId]);
+  }, [trackTab, designDepartmentId, externalSupplierDepartmentId]);
 
   useEffect(loadQueue, [loadQueue]);
 
@@ -740,7 +866,12 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
         // department now simply matches no specific track filter (still
         // visible under "كل الأقسام/المسارات" — only ALL, unfiltered,
         // shows it).
-        const itemTrackKey: TrackTabKey | null = item.departmentId === designDepartmentId ? 'DESIGN' : item.productionTrack;
+        const itemTrackKey: TrackTabKey | null =
+          item.departmentId === designDepartmentId
+            ? 'DESIGN'
+            : item.departmentId === externalSupplierDepartmentId
+              ? 'EXTERNAL_SUPPLIER'
+              : item.productionTrack;
         if (itemTrackKey !== unifiedTrackFilter) return false;
       }
       if (q) {
@@ -754,9 +885,9 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
       }
       return true;
     });
-  }, [queue, priorityFilter, delayedOnly, search, trackTab, unifiedTrackFilter, designDepartmentId]);
+  }, [queue, priorityFilter, delayedOnly, search, trackTab, unifiedTrackFilter, designDepartmentId, externalSupplierDepartmentId]);
 
-  const { actionError, reorderError, actionButtons, dialogs, persistStageOrder } = useQueueActions(loadQueue);
+  const { actionError, reorderError, actionButtons, dialogs, persistStageOrder, updateField } = useQueueActions(loadQueue);
 
   if (error) return <div className="text-destructive">{error}</div>;
 
@@ -774,8 +905,50 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
     </Link>
   );
 
+  // Owner (2026-09-08, "يطبع فيها اسم الصنف وإسم المورد وعنوانه علشان
+  // يقدر يوصله") — resolves the supplier + its default address for every
+  // item currently visible on the "مورّد خارجي" tab, on demand (not on
+  // every load — a supplier's address rarely changes mid-session), then
+  // prints via the `pickupPrintRows` print-only block below.
+  const printPickupList = async () => {
+    if (!filteredQueue) return;
+    setPrintError(null);
+    setPrinting(true);
+    try {
+      const supplierIds = [...new Set(filteredQueue.map((i) => i.assignedSupplierId).filter((id): id is string => Boolean(id)))];
+      const [allPartners, addressLists] = await Promise.all([
+        apiGet<BusinessPartner[]>('/api/partners'),
+        Promise.all(supplierIds.map((id) => apiGet<PartnerAddress[]>(`/api/partners/${id}/addresses`).catch(() => []))),
+      ]);
+      const partnerNameById = new Map(allPartners.map((p) => [p.id, p.nameAr]));
+      const addressBySupplierId = new Map(
+        supplierIds.map((id, index) => {
+          const addresses = addressLists[index] ?? [];
+          const address = addresses.find((a) => a.isDefault) ?? addresses[0] ?? null;
+          return [id, address];
+        }),
+      );
+      const rows = filteredQueue.map((item) => ({
+        itemName: item.itemNames.join('، ') || '—',
+        supplierName: item.assignedSupplierId ? (partnerNameById.get(item.assignedSupplierId) ?? '—') : '—',
+        supplierAddress: item.assignedSupplierId ? formatPartnerAddress(addressBySupplierId.get(item.assignedSupplierId) ?? null) : '—',
+      }));
+      setPickupPrintRows(rows);
+      // The print-only block only exists in the DOM once `pickupPrintRows`
+      // is set — wait a tick for that render before invoking the browser's
+      // print dialog, or `window.print()` would fire against a still-empty
+      // block.
+      requestAnimationFrame(() => window.print());
+    } catch (err) {
+      setPrintError(err instanceof Error ? err.message : 'تعذر تجهيز قائمة الطباعة');
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
-    <div className="space-y-4">
+    <>
+    <div className="space-y-4 print:hidden">
       <div className="border-border bg-muted/40 flex flex-wrap gap-1 rounded-lg border p-1">
         {TRACK_TAB_ORDER.map((key) => (
           <button
@@ -802,8 +975,22 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
               آخر تحديث: {lastUpdated.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
             </span>
           )}
+          {/* Owner (2026-09-08, "عايز اقدر اطبعها علشان لو حد رايح يجيب
+              الطلبات ياخد الورقه دي معاه") — only meaningful on the
+              "مورّد خارجي" tab. */}
+          {trackTab === 'EXTERNAL_SUPPLIER' && (
+            <Button type="button" variant="secondary" disabled={printing} onClick={() => void printPickupList()}>
+              {printing ? 'جارٍ التجهيز…' : 'طباعة قائمة الاستلام'}
+            </Button>
+          )}
         </div>
       </div>
+
+      {printError && (
+        <div className="border-destructive/40 bg-destructive/10 text-destructive rounded-lg border p-3 text-sm">
+          {printError}
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <input
@@ -867,53 +1054,63 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
         <>
           {/* Desktop/tablet: table. Mobile: cards (Requirement 12 — a real layout, not horizontal scroll). */}
           <div className="border-border bg-card hidden rounded-2xl border sm:block">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  {/* Owner (2026-09-08, "عايز اقدر احرك الصفوف بأريحية شبه
-                      صفوف نوشن") — drag-handle column, empty header label. */}
-                  <TableHead className="w-8" />
-                  <TableHead>الصنف</TableHead>
-                  <TableHead>العميل</TableHead>
-                  <TableHead>أمر التشغيل</TableHead>
-                  <TableHead>المرحلة</TableHead>
-                  <TableHead>الحالة</TableHead>
-                  <TableHead>الأولوية</TableHead>
-                  <TableHead>التأخير</TableHead>
-                  <TableHead>تاريخ الاستحقاق</TableHead>
-                  <TableHead>منذ</TableHead>
-                  <TableHead>الموظف المسؤول</TableHead>
-                  <TableHead>سبب الانتظار</TableHead>
-                  <TableHead>المسار</TableHead>
-                  {canEdit && <TableHead>الإجراءات</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredQueue.length > 0 && (
-                  <QueueDndContext items={filteredQueue} onReorder={(newOrder, movedId) => void persistStageOrder(newOrder, movedId)}>
-                    {filteredQueue.map((item) => (
-                      <SortableQueueTableRow
-                        key={item.id}
-                        item={item}
-                        employeeName={employeeName}
-                        timelineLink={timelineLink}
-                        canEdit={canEdit}
-                        actionButtons={actionButtons}
-                      />
-                    ))}
-                  </QueueDndContext>
-                )}
-                {filteredQueue.length === 0 && (
+            {/* 🐛 dnd-kit's `DndContext` renders a hidden accessibility
+                `<div>` alongside its children — nesting `QueueDndContext`
+                directly inside `<TableBody>` put that `<div>` where only
+                `<tr>` is valid HTML (React warned: "In HTML, <div> cannot
+                be a child of <tbody>"). Wrapping the whole `<Table>`
+                instead keeps that hidden node a sibling of `<Table>` under
+                this plain `<div>` — valid either way — while
+                `SortableContext` (zero DOM of its own) still only needs to
+                reach the actual sortable rows inside `<TableBody>`. */}
+            <QueueDndContext items={filteredQueue} onReorder={(newOrder, movedId) => void persistStageOrder(newOrder, movedId)}>
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={canEdit ? 14 : 13} className="text-muted-foreground text-center">
-                      {queue && queue.length > 0
-                        ? 'لا توجد مهام مطابقة لعوامل التصفية الحالية.'
-                        : 'لا توجد مهام في قائمة الانتظار لهذا القسم.'}
-                    </TableCell>
+                    {/* Owner (2026-09-08, "عايز اقدر احرك الصفوف بأريحية
+                        شبه صفوف نوشن") — drag-handle column, empty header
+                        label. */}
+                    <TableHead className="w-8" />
+                    <TableHead>الصنف</TableHead>
+                    <TableHead>العميل</TableHead>
+                    <TableHead>أمر التشغيل</TableHead>
+                    <TableHead>المرحلة</TableHead>
+                    <TableHead>الحالة</TableHead>
+                    <TableHead>الأولوية</TableHead>
+                    <TableHead>التأخير</TableHead>
+                    <TableHead>تاريخ الاستحقاق</TableHead>
+                    <TableHead>منذ</TableHead>
+                    <TableHead>الموظف المسؤول</TableHead>
+                    <TableHead>سبب الانتظار</TableHead>
+                    <TableHead>المسار</TableHead>
+                    {canEdit && <TableHead>الإجراءات</TableHead>}
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredQueue.map((item) => (
+                    <SortableQueueTableRow
+                      key={item.id}
+                      item={item}
+                      employees={employees}
+                      updateField={updateField}
+                      canEditFields={canEdit}
+                      timelineLink={timelineLink}
+                      canEdit={canEdit}
+                      actionButtons={actionButtons}
+                    />
+                  ))}
+                  {filteredQueue.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={canEdit ? 14 : 13} className="text-muted-foreground text-center">
+                        {queue && queue.length > 0
+                          ? 'لا توجد مهام مطابقة لعوامل التصفية الحالية.'
+                          : 'لا توجد مهام في قائمة الانتظار لهذا القسم.'}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </QueueDndContext>
           </div>
 
           <div className="grid gap-2 sm:hidden">
@@ -930,7 +1127,9 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                   <SortableQueueCard
                     key={item.id}
                     item={item}
-                    employeeName={employeeName}
+                    employees={employees}
+                    updateField={updateField}
+                    canEditFields={canEdit}
                     timelineLink={timelineLink}
                     canEdit={canEdit}
                     actionButtons={actionButtons}
@@ -944,17 +1143,51 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
 
       {dialogs}
     </div>
+    {/* Owner (2026-09-08, "عايز اقدر اطبعها... يطبع فيها اسم الصنف وإسم
+        المورد وعنوانه") — `hidden print:block`, the exact mirror of the
+        normal UI's `print:hidden` above: only this shows when the browser
+        print dialog actually renders the page. */}
+    {pickupPrintRows && (
+      <div className="hidden p-8 print:block">
+        <h1 className="mb-4 text-xl font-bold">قائمة استلام من الموردين</h1>
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-black text-start">
+              <th className="p-2 text-start">الصنف</th>
+              <th className="p-2 text-start">المورد</th>
+              <th className="p-2 text-start">العنوان</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pickupPrintRows.map((row, index) => (
+              <tr key={index} className="border-b border-black/20">
+                <td className="p-2">{row.itemName}</td>
+                <td className="p-2">{row.supplierName}</td>
+                <td className="p-2">{row.supplierAddress}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+    </>
   );
 }
 
 /** One draggable Kanban card — a column is already scoped to a single stage, so drag reordering here is always within one stage by construction. */
 function SortableKanbanCard({
   item,
+  employees,
+  updateField,
+  canEditFields,
   timelineLink,
   canEdit,
   actionButtons,
 }: {
   item: WorkflowQueueItem;
+  employees: User[];
+  updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>;
+  canEditFields: boolean;
   timelineLink: (item: WorkflowQueueItem) => ReactNode;
   canEdit: boolean;
   actionButtons: (item: WorkflowQueueItem) => ReactNode;
@@ -970,16 +1203,20 @@ function SortableKanbanCard({
           <p className="text-muted-foreground truncate text-xs">{item.workOrderNumber ?? '—'}</p>
         </div>
       </div>
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
           {STAGE_STATUS_LABELS[item.status]}
         </StatusBadge>
-        <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
+        <PriorityCell item={item} updateField={updateField} disabled={!canEditFields} />
         {item.isDelayed && <StatusBadge tone="danger">متأخرة</StatusBadge>}
       </div>
       <div className="text-muted-foreground flex items-center justify-between text-xs">
-        <span>الاستحقاق: {formatDueDate(item.dueDate)}</span>
+        <span>الاستحقاق: <DueDateCell item={item} updateField={updateField} disabled={!canEditFields} /></span>
         <span>منذ {formatTimeInStage(item.startedAt, item.createdAt)}</span>
+      </div>
+      <div className="text-muted-foreground flex items-center gap-2 text-xs">
+        <AssigneeCell item={item} employees={employees} updateField={updateField} disabled={!canEditFields} />
+        <WaitingReasonCell item={item} updateField={updateField} disabled={!canEditFields} />
       </div>
       {timelineLink(item)}
       {canEdit && actionButtons(item)}
@@ -1006,6 +1243,7 @@ function WorkflowKanbanTab() {
   const [templates, setTemplates] = useState<WorkflowTemplate[] | null>(null);
   const [templateId, setTemplateId] = useState('');
   const [queue, setQueue] = useState<WorkflowQueueItem[] | null>(null);
+  const [employees, setEmployees] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<WorkflowPriority | 'ALL'>('ALL');
@@ -1019,6 +1257,7 @@ function WorkflowKanbanTab() {
         setTemplateId((current) => current || (list[0]?.id ?? ''));
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل قائمة الوركفلوهات'));
+    apiGet<User[]>('/api/users').then(setEmployees).catch(() => undefined);
   }, []);
 
   const loadQueue = useCallback(() => {
@@ -1049,7 +1288,7 @@ function WorkflowKanbanTab() {
     });
   }, [queue, priorityFilter, delayedOnly, search]);
 
-  const { actionError, reorderError, actionButtons, dialogs, persistStageOrder } = useQueueActions(loadQueue);
+  const { actionError, reorderError, actionButtons, dialogs, persistStageOrder, updateField } = useQueueActions(loadQueue);
 
   const canEdit = can('work-orders.edit');
 
@@ -1170,6 +1409,9 @@ function WorkflowKanbanTab() {
                         <SortableKanbanCard
                           key={item.id}
                           item={item}
+                          employees={employees}
+                          updateField={updateField}
+                          canEditFields={canEdit}
                           timelineLink={timelineLink}
                           canEdit={canEdit}
                           actionButtons={actionButtons}

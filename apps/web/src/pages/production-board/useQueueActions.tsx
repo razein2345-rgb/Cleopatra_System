@@ -71,6 +71,22 @@ export function useQueueActions(reload: () => void) {
     }
   };
 
+  /**
+   * Owner (2026-09-08, "عايز اقدر اعدل على التفاصيل... زي نوشن") — the
+   * same `PUT .../current-stage` `EditQueueItemDialog` already calls,
+   * exposed directly so a queue row's own cells (priority/due date/
+   * assignee/waiting reason) can be click-to-edit-in-place — no Dialog
+   * popup — reusing the exact `EditableTextCell`/`EditableSelectCell`/
+   * `EditableDateCell` primitives already built for this (rule 5). The
+   * Dialog (`Pencil` button below) stays for the less common External-
+   * Supplier-only fields it also covers (expected return date, cost,
+   * supplier status).
+   */
+  const updateField = async (item: WorkflowQueueItem, patch: Record<string, unknown>) => {
+    await apiPut(`/api/workflow-instances/${item.workflowInstanceId}/current-stage`, patch);
+    reload();
+  };
+
   // FEATURE-010 (2026-08-14, owner: "في الورك فلو متقسم ويدجيتز بتنتقل
   // دايركت لما ادوس على الـchek box اللي جمب الطلب إلى المرحلة اللي بعدها")
   // — a single checkbox replaces the "إنهاء" button: ticking it immediately
@@ -135,5 +151,5 @@ export function useQueueActions(reload: () => void) {
     </>
   );
 
-  return { actionError, reorderError, actionButtons, dialogs, persistStageOrder };
+  return { actionError, reorderError, actionButtons, dialogs, persistStageOrder, updateField };
 }
