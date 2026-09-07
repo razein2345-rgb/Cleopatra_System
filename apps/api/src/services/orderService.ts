@@ -643,10 +643,11 @@ export async function createOrder(
     // (when `result.materials` is populated) be linked correctly. A bulk
     // nested create gives back no per-item ids to correlate against
     // `priced[index]`, which the old single-material path never needed.
-    const createdItemRows: { id: string; productionTrack: ProductionTrack | null }[] = [];
+    const createdItemRows: { id: string; productionTrack: ProductionTrack | null; groupId: string | null }[] = [];
     for (let index = 0; index < input.items.length; index++) {
       const item = input.items[index]!;
       const result = priced[index]!;
+      const resolvedGroupId = item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null;
       const createdItem = await tx.orderItem.create({
         data: {
           orderId: created.id,
@@ -661,7 +662,7 @@ export async function createOrder(
             boardsCatalogItemId: item.boardsCatalogItemId,
             boardsCatalogItemName: item.boardsCatalogItemId ? (itemNames.get(item.boardsCatalogItemId) ?? null) : null,
             itemTotal: result.total,
-            groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
+            groupId: resolvedGroupId,
             requiredQuantity: resolveRequiredQuantity(item.pricing),
             discountAmount: itemDiscountAmounts[index],
             preferredSupplierId: item.preferredSupplierId,
@@ -713,7 +714,7 @@ export async function createOrder(
         });
       }
 
-      createdItemRows.push(createdItem);
+      createdItemRows.push({ ...createdItem, groupId: resolvedGroupId });
 
       // Part 3 of the supplier-linkage initiative (owner, 2026-08-27,
       // "الروول أب... لما نطلب الاوردر يتحط في قائمة شراء عاجل... دائمًا

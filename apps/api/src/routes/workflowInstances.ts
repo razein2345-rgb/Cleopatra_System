@@ -7,6 +7,7 @@ import {
   getWorkflowInstance,
   getWorkflowQueue,
   listWorkflowInstancesHandler,
+  listWorkflowTemplatesForKanbanHandler,
   updateCurrentStageInstanceHandler,
 } from '../controllers/workflowInstances.js';
 
@@ -16,14 +17,17 @@ workflowInstancesRouter.use(requireAuth);
 
 // FEATURE-010 (2026-08-14) — لوحة الإنتاج's "الطلبات" tab.
 workflowInstancesRouter.get('/', requirePermission('work-orders.view'), listWorkflowInstancesHandler);
-// /queue and /dashboard-summary must be registered before /:id —
-// otherwise Express would match them as an :id param.
+// /queue, /dashboard-summary, and /templates must be registered before
+// /:id — otherwise Express would match them as an :id param.
 workflowInstancesRouter.get('/queue', requirePermission('work-orders.view'), getWorkflowQueue);
 workflowInstancesRouter.get(
   '/dashboard-summary',
   requirePermission('work-orders.view'),
   getWorkflowDashboardSummaryHandler,
 );
+// Owner (2026-09-07, "عايز فيو مختلف... كل وورك فلو حسب اختياري") — the
+// Kanban view's own template picker, read-only for the production floor.
+workflowInstancesRouter.get('/templates', requirePermission('work-orders.view'), listWorkflowTemplatesForKanbanHandler);
 workflowInstancesRouter.get('/:id', requirePermission('work-orders.view'), getWorkflowInstance);
 workflowInstancesRouter.put(
   '/:id/advance',

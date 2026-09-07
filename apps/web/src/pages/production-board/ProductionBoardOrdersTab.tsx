@@ -99,13 +99,16 @@ export function ProductionBoardOrdersTab() {
             <Card key={instance.id} className="gap-3 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="font-bold">{instance.workOrderNumber ?? '—'}</p>
+                  {/* Owner (2026-09-08, "عايز يبانلي إسم الصنف هو اللي بخط
+                      واضح مش رقم الفاتورة") — the item's own name is the
+                      primary identifier now (same treatment "الأقسام" tab
+                      already gives it), the work order number a secondary
+                      line underneath, not the other way around. */}
+                  <p className="font-bold">{instance.itemNames.join('، ') || '—'}</p>
                   <p className="text-muted-foreground text-xs">
                     {instance.customerName ?? '—'} · {instance.templateName}
                   </p>
-                  {instance.itemNames.length > 0 && (
-                    <p className="text-muted-foreground text-xs">{instance.itemNames.join('، ')}</p>
-                  )}
+                  <p className="text-muted-foreground text-xs">{instance.workOrderNumber ?? '—'}</p>
                 </div>
                 <Link
                   to={`/production-board/timeline/${instance.id}?workOrderNumber=${encodeURIComponent(instance.workOrderNumber ?? '')}&customerName=${encodeURIComponent(instance.customerName ?? '')}`}

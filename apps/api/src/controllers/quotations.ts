@@ -552,7 +552,7 @@ export async function convertQuotation(req: Request<{ id: string }>, res: Respon
     // no-op, since Quotations now carry each item's track.
     const createdItemRows = await tx.orderItem.findMany({
       where: { orderId: createdOrder.id },
-      select: { id: true, productionTrack: true },
+      select: { id: true, productionTrack: true, groupId: true },
     });
     await tryAutoCreateWorkOrders(tx, { id: createdOrder.id, branchId: createdOrder.branchId }, createdItemRows, undefined, auth.staffId);
 

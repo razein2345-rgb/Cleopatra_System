@@ -546,13 +546,17 @@ export async function advanceWorkflowInstance(
 async function queryWorkflowQueue(filter: {
   departmentId?: string | { in: string[] };
   assignedEmployeeId?: string;
+  templateId?: string;
 }): Promise<WorkflowQueueItem[]> {
   const rows = await prisma.stageInstance.findMany({
     where: {
       ...(filter.departmentId !== undefined ? { departmentId: filter.departmentId } : {}),
       ...(filter.assignedEmployeeId !== undefined ? { assignedEmployeeId: filter.assignedEmployeeId } : {}),
       status: { in: ['WAITING', 'IN_PROGRESS'] },
-      workflowInstance: { isDeleted: false },
+      workflowInstance: {
+        isDeleted: false,
+        ...(filter.templateId !== undefined ? { templateId: filter.templateId } : {}),
+      },
     },
     include: {
       ...STAGE_INSTANCE_INCLUDE,
@@ -652,6 +656,26 @@ export async function getTrackQueue(
   }
   if (departmentIds.length === 0) return [];
   return queryWorkflowQueue({ departmentId: { in: departmentIds } });
+}
+
+/**
+ * Owner (2026-09-07, "عايز فيو مختلف يظهرلي فيه كل وورك فلو حسب اختياري...
+ * اشوفه في مراحله المختلفة") — لوحة الإنتاج's Kanban-by-workflow view:
+ * every open stage instance belonging to one specific `WorkflowTemplate`
+ * version, regardless of which department each of its stages happens to
+ * live in (a single workflow like "دفتر أوفست" spans Design → Pre-Press →
+ * Printing → ... — several different departments). Still respects the
+ * caller's department access exactly like every other queue variant above;
+ * `'all'` means no restriction (Super Admin / `work-orders.*`).
+ */
+export async function getTemplateQueue(
+  templateId: string,
+  accessibleDepartmentIds: string[] | 'all',
+): Promise<WorkflowQueueItem[]> {
+  return queryWorkflowQueue({
+    templateId,
+    ...(accessibleDepartmentIds === 'all' ? {} : { departmentId: { in: accessibleDepartmentIds } }),
+  });
 }
 
 const WORKFLOW_INSTANCE_LIST_INCLUDE = {

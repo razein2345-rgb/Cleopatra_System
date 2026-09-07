@@ -424,6 +424,16 @@ export function OrderDocumentPage() {
               طباعة أمر شغل {PRODUCTION_TRACK_LABELS[wo.productionTrack]}
             </Button>
           ))}
+          {/* Owner (2026-09-08, "عايز زرار واحد يجمع كل أوامر شغل الأوردر
+              في PDF واحد، كل واحد في صفحة كاملة") — one order can now have
+              several Work Orders (one per item, "أمر شغل مستقل لكل صنف
+              حسب مساره") — this combines all of them into a single PDF
+              instead of downloading/printing each one separately. */}
+          {order.workOrders.length > 1 && (
+            <Button type="button" variant="secondary" onClick={() => navigate(`/orders/${order.id}/work-orders-pdf`)}>
+              تنزيل كل أوامر الشغل PDF
+            </Button>
+          )}
           <Button type="button" variant="secondary" disabled={exportingPdf} onClick={() => void exportPdf()}>
             {exportingPdf ? 'جارٍ التصدير…' : 'تنزيل PDF'}
           </Button>

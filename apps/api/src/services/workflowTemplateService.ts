@@ -170,3 +170,22 @@ export async function getLatestPublishedTemplate(code: string): Promise<Template
     include: TEMPLATE_INCLUDE,
   });
 }
+
+/**
+ * Owner (2026-09-07, "عايز فيو مختلف يظهرلي فيه كل وورك فلو حسب اختياري") —
+ * لوحة الإنتاج's Kanban view picker: every published, non-deleted template
+ * version (not just the latest per `code` — publishing a new version never
+ * unpublishes the old one, so real in-flight `WorkflowInstance` rows can
+ * still be frozen on an older version; hiding it would hide their jobs from
+ * the board entirely). Read-only, gated by `work-orders.view` at the route
+ * level (not `workflow-templates.view`, which is template *administration*
+ * and only granted to DESIGNER/Super Admin today — the production floor
+ * roles that actually use this board would otherwise be locked out).
+ */
+export async function listPublishedWorkflowTemplates(): Promise<TemplateRecord[]> {
+  return prisma.workflowTemplate.findMany({
+    where: { publishedAt: { not: null }, isDeleted: false },
+    orderBy: [{ code: 'asc' }, { version: 'desc' }],
+    include: TEMPLATE_INCLUDE,
+  });
+}

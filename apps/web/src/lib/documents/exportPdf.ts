@@ -95,6 +95,24 @@ export interface DownloadPdfOptions {
   enhanced?: boolean;
 }
 
+/**
+ * Owner (2026-09-08, "اوامر الشغل محتاجها لما تنزل PDF كل أمر شغل يكون في
+ * صفحة كامله لوحده") — a real, unconditional page break, distinct from
+ * `[data-pdf-atomic]` (which only ever stops a block from being SPLIT, it
+ * never forces a break early if the block would otherwise fit on the
+ * current page). Discovered while investigating: the print-only Tailwind
+ * class `break-before-page` `OffsetItemCard`/`ReadyProductItemCard` already
+ * used has ZERO effect here — this file screenshots the DOM and slices the
+ * raster image itself, it never consults CSS break-before/break-inside at
+ * all, only `[data-pdf-atomic]`/`<table tr>` boundaries and now this new
+ * marker. Tag any element with `data-pdf-page-break-before` to always start
+ * a fresh page right at its top, however much room is left on the current
+ * one — used to separate multiple work orders combined into one PDF, and
+ * now also the thing `OffsetItemCard`/`ReadyProductItemCard`'s own
+ * `pageBreakBefore` prop sets instead of the inert CSS class.
+ */
+const FORCED_BREAK_SELECTOR = '[data-pdf-page-break-before]';
+
 export async function downloadDocumentAsPdf(filename: string, options: DownloadPdfOptions = {}): Promise<void> {
   const element = document.querySelector<HTMLElement>('.document-print-root');
   if (!element) {
@@ -117,6 +135,7 @@ export async function downloadDocumentAsPdf(filename: string, options: DownloadP
   // everything into one raster image.
   const tableRowRectsCss = Array.from(element.querySelectorAll<HTMLElement>('table tr')).map(rectOf);
   const atomicRectsCss = Array.from(element.querySelectorAll<HTMLElement>('[data-pdf-atomic]')).map(rectOf);
+  const forcedBreakRectsCss = Array.from(element.querySelectorAll<HTMLElement>(FORCED_BREAK_SELECTOR)).map(rectOf);
   const theadRow = element.querySelector<HTMLElement>('table thead tr');
   const theadRectCss = theadRow ? rectOf(theadRow) : null;
   // The continuation-page header when not `enhanced` (or when this
@@ -155,6 +174,7 @@ export async function downloadDocumentAsPdf(filename: string, options: DownloadP
 
   let tableRowRects = tableRowRectsCss.map(toRectPx);
   let atomicRects = [...atomicRectsCss, ...repeatFooterAsAtomicCss].map(toRectPx);
+  let forcedBreakTops = forcedBreakRectsCss.map((r) => toPx(r.top));
   const lightHeaderPx = enhanced && lightHeaderRectCss ? toRectPx(lightHeaderRectCss) : null;
   const theadPx = theadRectCss ? toRectPx(theadRectCss) : null;
   const legacyHeaderHeightPx = toPx(legacyHeaderHeightCss);
@@ -173,6 +193,7 @@ export async function downloadDocumentAsPdf(filename: string, options: DownloadP
     const shiftBoundary = (b: { top: number; bottom: number }) => ({ top: shift(b.top), bottom: shift(b.bottom) });
     tableRowRects = tableRowRects.filter((b) => !inAnyRegion(b)).map(shiftBoundary);
     atomicRects = atomicRects.filter((b) => !inAnyRegion(b)).map(shiftBoundary);
+    forcedBreakTops = forcedBreakTops.filter((top) => !repeatFooterRegions.some((r) => top >= r.top && top < r.bottom)).map(shift);
   }
   // Everything that must never be sliced mid-block — rows first, then
   // atomic blocks; order doesn't matter for the snapping logic below.
@@ -241,8 +262,11 @@ export async function downloadDocumentAsPdf(filename: string, options: DownloadP
     drawImageAt(repeatFooterCanvas.toDataURL('image/png'), 0, footerYMm, contentWidthMm, footerHeightMm);
   };
 
+  // A forced break means "at least two documents", so the single-page
+  // shortcut never applies when any exist — each must land on its own
+  // page even if, combined, they'd otherwise fit on one.
   const singlePageBudgetPx = pageContentHeightPx - repeatFooterHeightPx;
-  if (flowCanvas.height <= singlePageBudgetPx) {
+  if (forcedBreakTops.length === 0 && flowCanvas.height <= singlePageBudgetPx) {
     drawImageAt(flowCanvas.toDataURL('image/png'), 0, 0, contentWidthMm, flowCanvas.height * mmPerCanvasPx);
     drawFooter();
     pdf.save(filename.endsWith('.pdf') ? filename : `${filename}.pdf`);
@@ -263,6 +287,12 @@ export async function downloadDocumentAsPdf(filename: string, options: DownloadP
       let breakPoint = naiveBreakPoint;
       for (const b of noSplitBoundaries) {
         if (b.top > cursor && b.top < breakPoint && b.bottom > breakPoint) breakPoint = b.top;
+      }
+      // A forced break always wins over the naive/no-split-adjusted cut —
+      // end the current page right there even if plenty of room remains,
+      // so whatever comes after it always starts a brand-new page.
+      for (const forcedTop of forcedBreakTops) {
+        if (forcedTop > cursor && forcedTop < breakPoint) breakPoint = forcedTop;
       }
       // A single block taller than one whole page can't be moved above
       // `cursor` — fall back to the naive cut. Absolute last resort:

@@ -106,32 +106,42 @@ export async function createWorkOrderForTrack(
 /**
  * "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16, owner: "الغيها خالص —
  * النظام يحدد لوحده") — supersedes the old singular `tryAutoCreateWorkOrder`
- * (one order-level track → one WorkOrder for the whole order). Groups the
- * order's just-created items by their own frozen `productionTrack`, and
- * creates one independent WorkOrder per distinct track present — a mixed
- * order (e.g. an Offset flyer + a Sublimation mug) gets two WorkOrders,
- * each linked only to its own items. Items with no track (INVENTORY_RETAIL,
- * or a track with no published template) are simply left unlinked — same
- * best-effort, never-blocks-the-Order principle `tryAutoCreateWorkOrder`
- * always had, just applied per-track instead of once for the whole order.
+ * (one order-level track → one WorkOrder for the whole order).
+ *
+ * Owner (2026-09-08, found via a real MTSC order — "1000 كارت اوفست وجهين"
+ * + "300 كارت ديجيتال وجهين" had landed on the *same* WorkOrder together,
+ * with zero شارك design link between them — "لا كل واحد فيهم صنف مستقل ليه
+ * أمر شغل مستقل"): grouping items by `productionTrack` ALONE (the original
+ * 2026-08-16 behavior) silently bundled any two unrelated items that
+ * happened to share a track into one Job — correct for two faces of the
+ * SAME product, wrong for two different products. The group key is now
+ * `(track, groupId)`: items sharing an explicit `groupId` ("تصميم واحد
+ * بمتغيرات إنتاج متعددة", 2026-08-19 — the customer/owner deliberately
+ * asked for one shared design job) still bundle together, but an item with
+ * no `groupId` always gets its own independent WorkOrder — its own `id` is
+ * used as that item's group key so it can never accidentally collide with
+ * another ungrouped item on the same track. Items with no track
+ * (INVENTORY_RETAIL, or a track with no published template) stay unlinked —
+ * same best-effort, never-blocks-the-Order principle as before.
  */
 export async function tryAutoCreateWorkOrders(
   tx: Prisma.TransactionClient,
   order: { id: string; branchId: string },
-  createdItems: Array<{ id: string; productionTrack: ProductionTrack | null }>,
+  createdItems: Array<{ id: string; productionTrack: ProductionTrack | null; groupId: string | null }>,
   requiresDesignByTrack: Record<string, boolean> | undefined,
   performedById: string,
 ): Promise<Array<{ workOrderId: string; productionTrack: ProductionTrack; itemIds: string[] }>> {
-  const itemIdsByTrack = new Map<ProductionTrack, string[]>();
+  const groups = new Map<string, { track: ProductionTrack; itemIds: string[] }>();
   for (const item of createdItems) {
     if (!item.productionTrack) continue;
-    const list = itemIdsByTrack.get(item.productionTrack) ?? [];
-    list.push(item.id);
-    itemIdsByTrack.set(item.productionTrack, list);
+    const key = `${item.productionTrack}::${item.groupId ?? item.id}`;
+    const group = groups.get(key) ?? { track: item.productionTrack, itemIds: [] };
+    group.itemIds.push(item.id);
+    groups.set(key, group);
   }
 
   const results: Array<{ workOrderId: string; productionTrack: ProductionTrack; itemIds: string[] }> = [];
-  for (const [track, itemIds] of itemIdsByTrack) {
+  for (const { track, itemIds } of groups.values()) {
     const result = await createWorkOrderForTrack(tx, {
       orderId: order.id,
       branchId: order.branchId,

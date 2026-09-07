@@ -10,12 +10,14 @@ import {
   getAllQueue,
   getDepartmentQueue,
   getMyQueue,
+  getTemplateQueue,
   getTrackQueue,
   getWorkflowDashboardSummary,
   listWorkflowInstances,
   mapWorkflowInstanceToDto,
   updateCurrentStageInstance,
 } from '../services/workflowInstanceService.js';
+import { listPublishedWorkflowTemplates, mapWorkflowTemplateToDto } from '../services/workflowTemplateService.js';
 import { accessibleDepartmentScope, canAccessDepartment } from '../services/authContext.js';
 import { recordAudit } from '../services/auditService.js';
 
@@ -172,10 +174,23 @@ export async function getWorkflowQueue(req: Request, res: Response) {
     return;
   }
 
+  // Owner (2026-09-07, "عايز فيو مختلف يظهرلي فيه كل وورك فلو حسب اختياري
+  // بيبانلي فيه كل الشغل اللي في الوورك فلو اللي اختارته") — لوحة الإنتاج's
+  // Kanban-by-workflow view: every open stage instance for one specific
+  // WorkflowTemplate version, across whichever departments its stages live
+  // in, still scoped to what this caller may see.
+  const templateId = typeof req.query.templateId === 'string' ? req.query.templateId : undefined;
+  if (templateId) {
+    const items = await getTemplateQueue(templateId, accessibleDepartmentScope(auth));
+    res.json({ success: true, data: items });
+    return;
+  }
+
   if (!departmentId) {
-    res
-      .status(400)
-      .json({ success: false, error: { message: 'departmentId, productionTrack, mine, or all query parameter is required' } });
+    res.status(400).json({
+      success: false,
+      error: { message: 'departmentId, productionTrack, mine, all, or templateId query parameter is required' },
+    });
     return;
   }
   if (!canAccessDepartment(auth, departmentId)) {
@@ -187,6 +202,19 @@ export async function getWorkflowQueue(req: Request, res: Response) {
 
   const items = await getDepartmentQueue(departmentId);
   res.json({ success: true, data: items });
+}
+
+/**
+ * Owner (2026-09-07, "عايز فيو مختلف يظهرلي فيه كل وورك فلو حسب اختياري") —
+ * the picker list for لوحة الإنتاج's Kanban-by-workflow view. Deliberately
+ * gated by `work-orders.view` at the route level, not `workflow-templates.
+ * view` (template *administration*, granted only to DESIGNER/Super Admin
+ * today) — this is a read-only list of published templates for the
+ * production floor to pick from, not a template-editing surface.
+ */
+export async function listWorkflowTemplatesForKanbanHandler(_req: Request, res: Response) {
+  const templates = await listPublishedWorkflowTemplates();
+  res.json({ success: true, data: templates.map(mapWorkflowTemplateToDto) });
 }
 
 /**

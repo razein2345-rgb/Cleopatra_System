@@ -105,6 +105,20 @@ export interface DocumentRendererProps {
   showDate?: boolean;
   /** FEATURE-007 (2026-08-13, owner: "السيريل نمبر بتاع العرض حابب... متظهرش على العرض اللي هيتطبع للعميل") — whether the document's own serial number ("رقم: ...") prints. Defaults to `true`. */
   showDocumentNumber?: boolean;
+  /**
+   * Owner (2026-09-08, "كل أمر شغل يكون في صفحة كامله لوحده") — when
+   * several Work Orders are combined into one PDF/print (see
+   * `OrderWorkOrdersDocumentPage`), only the OUTERMOST wrapper around all
+   * of them may carry `.document-print-root` (`downloadDocumentAsPdf`
+   * grabs the first match only) — every `DocumentRenderer` nested inside
+   * that combined page passes `isPrintRoot={false}` to render a plain div
+   * with the same visual styling instead. Defaults to `true` (unchanged
+   * behavior for every other caller — Invoice/Quotation/a standalone
+   * Work Order).
+   */
+  isPrintRoot?: boolean;
+  /** Owner (2026-09-08, same combined-PDF feature) — forces this document to start a fresh PDF page (see exportPdf.ts's `FORCED_BREAK_SELECTOR`), used on every combined Work Order after the first. Defaults to `false`. */
+  pageBreakBefore?: boolean;
 }
 
 function money(n: number) {
@@ -150,6 +164,8 @@ export function DocumentRenderer({
   showStamp = true,
   showDate = true,
   showDocumentNumber = true,
+  isPrintRoot = true,
+  pageBreakBefore = false,
 }: DocumentRendererProps) {
   const { business, config } = snapshot;
   const showLogo = showBranding && Boolean(config.showLogo) && business.logoUrl;
@@ -165,7 +181,11 @@ export function DocumentRenderer({
     business.website;
 
   return (
-    <div className="document-print-root bg-background text-foreground relative mx-auto max-w-3xl overflow-hidden p-8 text-sm" style={accentStyle}>
+    <div
+      className={`${isPrintRoot ? 'document-print-root ' : ''}bg-background text-foreground relative mx-auto max-w-3xl overflow-hidden p-8 text-sm`}
+      style={accentStyle}
+      {...(pageBreakBefore ? { 'data-pdf-page-break-before': true } : {})}
+    >
       {showLogo && (
         <img
           src={business.logoUrl ?? undefined}

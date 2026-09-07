@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowDown, ArrowUp, Ban, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
+import { Ban, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
 import type {
   Department,
   Machine,
@@ -9,6 +9,7 @@ import type {
   WorkflowDashboardSummary,
   WorkflowPriority,
   WorkflowQueueItem,
+  WorkflowTemplate,
 } from '@cleopatra/shared';
 import { apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -20,6 +21,8 @@ import { useAuth } from '@/state/AuthContext';
 import { ConfirmStageActionDialog } from './ConfirmStageActionDialog';
 import { EditQueueItemDialog } from './EditQueueItemDialog';
 import { ProductionBoardOrdersTab } from './ProductionBoardOrdersTab';
+import { useQueueActions } from './useQueueActions';
+import { DragHandle, QueueDndContext, useQueueSortableItem } from './QueueDnd';
 import {
   PRIORITY_LABELS,
   PRIORITY_OPTIONS,
@@ -80,13 +83,19 @@ const SUMMARY_TRACK_ORDER = TRACK_TAB_ORDER.filter((key): key is Exclude<TrackTa
  * queue, unchanged behaviorally — see `DepartmentsTab` below, previously
  * this whole file's default export).
  */
-type TopTab = 'OVERVIEW' | 'MY_TASKS' | 'ORDERS' | 'DEPARTMENTS';
-const TOP_TAB_ORDER: TopTab[] = ['OVERVIEW', 'MY_TASKS', 'ORDERS', 'DEPARTMENTS'];
+type TopTab = 'OVERVIEW' | 'MY_TASKS' | 'ORDERS' | 'DEPARTMENTS' | 'WORKFLOW';
+const TOP_TAB_ORDER: TopTab[] = ['OVERVIEW', 'MY_TASKS', 'ORDERS', 'DEPARTMENTS', 'WORKFLOW'];
 const TOP_TAB_LABELS: Record<TopTab, string> = {
   OVERVIEW: 'نظرة عامة',
   MY_TASKS: 'مهامي اليوم',
   ORDERS: 'الطلبات',
   DEPARTMENTS: 'الأقسام',
+  // Owner (2026-09-07, "عايز فيو مختلف يظهرلي فيه كل وورك فلو حسب اختياري
+  // بيبانلي فيه كل الشغل اللي في الوورك فلو اللي اختارته واشوفه في مراحله
+  // المختلفة") — the Kanban-by-workflow view, explicitly deferred until the
+  // unified "الكل" tab above shipped (owner's own choice: "ملحق بعد ما
+  // الشاشة الموحدة تخلص").
+  WORKFLOW: 'حسب الوركفلو',
 };
 
 export function ProductionBoardPage() {
@@ -125,6 +134,7 @@ export function ProductionBoardPage() {
       {tab === 'MY_TASKS' && <MyTasksTab />}
       {tab === 'ORDERS' && <ProductionBoardOrdersTab />}
       {tab === 'DEPARTMENTS' && <DepartmentsTab initialTrackTab={departmentsTrackTab} />}
+      {tab === 'WORKFLOW' && <WorkflowKanbanTab />}
     </div>
   );
 }
@@ -548,6 +558,109 @@ function MyTasksTab() {
   );
 }
 
+/**
+ * One draggable desktop table row — `useQueueSortableItem` must be called
+ * per-row (a real hook, so it needs its own component instance), matching
+ * `DepartmentsTab`'s existing column layout exactly, just with a leading
+ * drag-handle cell.
+ */
+function SortableQueueTableRow({
+  item,
+  employeeName,
+  timelineLink,
+  canEdit,
+  actionButtons,
+}: {
+  item: WorkflowQueueItem;
+  employeeName: (id: string | null) => string;
+  timelineLink: (item: WorkflowQueueItem) => ReactNode;
+  canEdit: boolean;
+  actionButtons: (item: WorkflowQueueItem) => ReactNode;
+}) {
+  const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(item.id);
+  return (
+    <TableRow ref={setNodeRef} style={style} className={cn(rowToneClassName(item.isDelayed, item.priority))}>
+      <TableCell className="w-8">
+        <DragHandle attributes={attributes} listeners={listeners} />
+      </TableCell>
+      {/* Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم الفاتورة علشان اعرف
+          هي ايه من برة") — the item's own name is the primary identifier
+          now, first column, ahead of the customer/order number. */}
+      <TableCell className="font-medium">{item.itemNames.join('، ') || '—'}</TableCell>
+      <TableCell className="font-medium">{item.customerName ?? '—'}</TableCell>
+      <TableCell>{item.workOrderNumber ?? '—'}</TableCell>
+      <TableCell>{item.stageName}</TableCell>
+      <TableCell>
+        <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
+          {STAGE_STATUS_LABELS[item.status]}
+        </StatusBadge>
+      </TableCell>
+      <TableCell>
+        <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
+      </TableCell>
+      <TableCell>
+        {item.isDelayed ? <StatusBadge tone="danger">متأخرة</StatusBadge> : <StatusBadge tone="success">في الموعد</StatusBadge>}
+      </TableCell>
+      <TableCell className="text-muted-foreground">{formatDueDate(item.dueDate)}</TableCell>
+      <TableCell className="text-muted-foreground">{formatTimeInStage(item.startedAt, item.createdAt)}</TableCell>
+      <TableCell className="text-muted-foreground">{employeeName(item.assignedEmployeeId)}</TableCell>
+      <TableCell className="text-muted-foreground">{item.waitingReason ?? '—'}</TableCell>
+      <TableCell>{timelineLink(item)}</TableCell>
+      {canEdit && <TableCell>{actionButtons(item)}</TableCell>}
+    </TableRow>
+  );
+}
+
+/** The mobile-card equivalent of `SortableQueueTableRow` — same drag wiring, `DepartmentsTab`'s existing card layout plus a leading drag handle. */
+function SortableQueueCard({
+  item,
+  employeeName,
+  timelineLink,
+  canEdit,
+  actionButtons,
+}: {
+  item: WorkflowQueueItem;
+  employeeName: (id: string | null) => string;
+  timelineLink: (item: WorkflowQueueItem) => ReactNode;
+  canEdit: boolean;
+  actionButtons: (item: WorkflowQueueItem) => ReactNode;
+}) {
+  const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(item.id);
+  return (
+    <Card ref={setNodeRef} style={style} className={cn('gap-2 p-3', rowToneClassName(item.isDelayed, item.priority))}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2">
+          <DragHandle attributes={attributes} listeners={listeners} />
+          <div className="min-w-0">
+            <p className="truncate font-medium">{item.itemNames.join('، ') || '—'}</p>
+            <p className="text-muted-foreground truncate text-xs">{item.customerName ?? '—'}</p>
+            <p className="text-muted-foreground truncate text-xs">
+              {item.workOrderNumber ?? '—'} · {item.stageName}
+            </p>
+          </div>
+        </div>
+        {item.isDelayed ? <StatusBadge tone="danger">متأخرة</StatusBadge> : <StatusBadge tone="success">في الموعد</StatusBadge>}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
+          {STAGE_STATUS_LABELS[item.status]}
+        </StatusBadge>
+        <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
+      </div>
+      <div className="text-muted-foreground flex items-center justify-between text-xs">
+        <span>الاستحقاق: {formatDueDate(item.dueDate)}</span>
+        <span>منذ {formatTimeInStage(item.startedAt, item.createdAt)}</span>
+      </div>
+      <div className="text-muted-foreground text-xs">
+        {employeeName(item.assignedEmployeeId)}
+        {item.waitingReason ? ` — ${item.waitingReason}` : ''}
+      </div>
+      {timelineLink(item)}
+      {canEdit && actionButtons(item)}
+    </Card>
+  );
+}
+
 function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) {
   const { can } = useAuth();
   const [departments, setDepartments] = useState<Department[] | null>(null);
@@ -555,11 +668,6 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
   const [employees, setEmployees] = useState<User[]>([]);
   const [queue, setQueue] = useState<WorkflowQueueItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [editingItem, setEditingItem] = useState<WorkflowQueueItem | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{ item: WorkflowQueueItem; action: 'FAIL' | 'SKIP' } | null>(
-    null,
-  );
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const [priorityFilter, setPriorityFilter] = useState<WorkflowPriority | 'ALL'>('ALL');
@@ -570,7 +678,6 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
   // narrows the fetch itself); slices the one combined queue further,
   // client-side, exactly like priority/delayed-only above.
   const [unifiedTrackFilter, setUnifiedTrackFilter] = useState<TrackTabKey | 'ALL'>('ALL');
-  const [reorderError, setReorderError] = useState<string | null>(null);
 
   useEffect(() => {
     apiGet<Department[]>('/api/departments')
@@ -649,113 +756,11 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
     });
   }, [queue, priorityFilter, delayedOnly, search, trackTab, unifiedTrackFilter, designDepartmentId]);
 
-  /**
-   * Owner (2026-09-07, "اقدر اغير في ترتيبه يعني ارفع الصف فوق او انزله
-   * براحتي") — swaps `manualSortOrder` with the immediate neighbor ABOVE
-   * or BELOW `item` among siblings sharing its exact `stageId` (confirmed
-   * explicit: per-stage, never global) — using each sibling's CURRENT
-   * effective order (their position in `filteredQueue`, which is already
-   * sorted server-side by manualSortOrder-then-priority/due-date). If
-   * neither value is set yet, both are lazily materialized to distinct
-   * numbers first so the swap always has something concrete to exchange.
-   */
-  const moveInStageQueue = async (item: WorkflowQueueItem, direction: 'UP' | 'DOWN') => {
-    if (!filteredQueue) return;
-    const siblings = filteredQueue.filter((i) => i.stageId === item.stageId);
-    const index = siblings.findIndex((i) => i.id === item.id);
-    const neighborIndex = direction === 'UP' ? index - 1 : index + 1;
-    if (index === -1 || neighborIndex < 0 || neighborIndex >= siblings.length) return;
-    const neighbor = siblings[neighborIndex]!;
-
-    const itemOrder = item.manualSortOrder ?? index;
-    const neighborOrder = neighbor.manualSortOrder ?? neighborIndex;
-
-    setReorderError(null);
-    try {
-      await Promise.all([
-        apiPut(`/api/workflow-instances/${item.workflowInstanceId}/current-stage`, { manualSortOrder: neighborOrder }),
-        apiPut(`/api/workflow-instances/${neighbor.workflowInstanceId}/current-stage`, { manualSortOrder: itemOrder }),
-      ]);
-      loadQueue();
-    } catch (err) {
-      setReorderError(err instanceof Error ? err.message : 'تعذر تغيير الترتيب');
-    }
-  };
-
-  const advance = async (item: WorkflowQueueItem, action: 'COMPLETE' | 'FAIL' | 'SKIP') => {
-    setActionError(null);
-    try {
-      await apiPut(`/api/workflow-instances/${item.workflowInstanceId}/advance`, {
-        action,
-        variableValues: item.variableValues ?? undefined,
-      });
-      loadQueue();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'تعذر تنفيذ الإجراء');
-    }
-  };
+  const { actionError, reorderError, actionButtons, dialogs, persistStageOrder } = useQueueActions(loadQueue);
 
   if (error) return <div className="text-destructive">{error}</div>;
 
   const canEdit = can('work-orders.edit');
-
-  // FEATURE-010 (2026-08-14, owner: "في الورك فلو متقسم ويدجيتز بتنتقل
-  // دايركت لما ادوس على الـchek box اللي جمب الطلب إلى المرحلة اللي بعدها")
-  // — a single checkbox replaces the "إنهاء" button: ticking it immediately
-  // completes the current stage (same `advance(item, 'COMPLETE')` call the
-  // button already made, no confirmation). تخطي/فشل/تعديل stay available as
-  // small secondary icons next to it — less common actions, not gone.
-  const actionButtons = (item: WorkflowQueueItem) => (
-    <div className="flex items-center gap-2">
-      <label className="flex items-center gap-1.5 text-xs" title="إنهاء المرحلة والانتقال للتالية">
-        <input type="checkbox" checked={false} onChange={() => void advance(item, 'COMPLETE')} />
-        إنهاء
-      </label>
-      {/* Owner (2026-09-07, "اقدر اغير في ترتيبه يعني ارفع الصف فوق او
-          انزله براحتي") — up/down against siblings sharing this exact
-          stage only (see `moveInStageQueue`'s own doc comment). */}
-      <button
-        type="button"
-        title="رفع لأعلى (داخل نفس المرحلة)"
-        onClick={() => void moveInStageQueue(item, 'UP')}
-        className="text-muted-foreground hover:text-foreground"
-      >
-        <ArrowUp className="size-4" />
-      </button>
-      <button
-        type="button"
-        title="نزول لأسفل (داخل نفس المرحلة)"
-        onClick={() => void moveInStageQueue(item, 'DOWN')}
-        className="text-muted-foreground hover:text-foreground"
-      >
-        <ArrowDown className="size-4" />
-      </button>
-      <button
-        type="button"
-        title="تخطي"
-        onClick={() => setConfirmAction({ item, action: 'SKIP' })}
-        className="text-muted-foreground hover:text-foreground"
-      >
-        <SkipForward className="size-4" />
-      </button>
-      <button
-        type="button"
-        title="فشل"
-        onClick={() => setConfirmAction({ item, action: 'FAIL' })}
-        className="text-muted-foreground hover:text-destructive"
-      >
-        <Ban className="size-4" />
-      </button>
-      <button
-        type="button"
-        title="تعديل"
-        onClick={() => setEditingItem(item)}
-        className="text-muted-foreground hover:text-foreground"
-      >
-        <Pencil className="size-4" />
-      </button>
-    </div>
-  );
 
   // FEATURE-005 Sprint 2.5, Requirement 10 — always visible (read-only), unlike
   // the mutation actions above which stay gated behind `work-orders.edit`.
@@ -865,6 +870,9 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
             <Table>
               <TableHeader>
                 <TableRow>
+                  {/* Owner (2026-09-08, "عايز اقدر احرك الصفوف بأريحية شبه
+                      صفوف نوشن") — drag-handle column, empty header label. */}
+                  <TableHead className="w-8" />
                   <TableHead>الصنف</TableHead>
                   <TableHead>العميل</TableHead>
                   <TableHead>أمر التشغيل</TableHead>
@@ -881,44 +889,23 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredQueue.map((item) => (
-                  <TableRow key={item.id} className={cn(rowToneClassName(item.isDelayed, item.priority))}>
-                    {/* Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم
-                        الفاتورة علشان اعرف هي ايه من برة") — the item's
-                        own name is the primary identifier now, first
-                        column, ahead of the customer/order number. */}
-                    <TableCell className="font-medium">{item.itemNames.join('، ') || '—'}</TableCell>
-                    <TableCell className="font-medium">{item.customerName ?? '—'}</TableCell>
-                    <TableCell>{item.workOrderNumber ?? '—'}</TableCell>
-                    <TableCell>{item.stageName}</TableCell>
-                    <TableCell>
-                      <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
-                        {STAGE_STATUS_LABELS[item.status]}
-                      </StatusBadge>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
-                    </TableCell>
-                    <TableCell>
-                      {item.isDelayed ? (
-                        <StatusBadge tone="danger">متأخرة</StatusBadge>
-                      ) : (
-                        <StatusBadge tone="success">في الموعد</StatusBadge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{formatDueDate(item.dueDate)}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatTimeInStage(item.startedAt, item.createdAt)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{employeeName(item.assignedEmployeeId)}</TableCell>
-                    <TableCell className="text-muted-foreground">{item.waitingReason ?? '—'}</TableCell>
-                    <TableCell>{timelineLink(item)}</TableCell>
-                    {canEdit && <TableCell>{actionButtons(item)}</TableCell>}
-                  </TableRow>
-                ))}
+                {filteredQueue.length > 0 && (
+                  <QueueDndContext items={filteredQueue} onReorder={(newOrder, movedId) => void persistStageOrder(newOrder, movedId)}>
+                    {filteredQueue.map((item) => (
+                      <SortableQueueTableRow
+                        key={item.id}
+                        item={item}
+                        employeeName={employeeName}
+                        timelineLink={timelineLink}
+                        canEdit={canEdit}
+                        actionButtons={actionButtons}
+                      />
+                    ))}
+                  </QueueDndContext>
+                )}
                 {filteredQueue.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={canEdit ? 13 : 12} className="text-muted-foreground text-center">
+                    <TableCell colSpan={canEdit ? 14 : 13} className="text-muted-foreground text-center">
                       {queue && queue.length > 0
                         ? 'لا توجد مهام مطابقة لعوامل التصفية الحالية.'
                         : 'لا توجد مهام في قائمة الانتظار لهذا القسم.'}
@@ -937,67 +924,267 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                   : 'لا توجد مهام في قائمة الانتظار لهذا القسم.'}
               </div>
             )}
-            {filteredQueue.map((item) => (
-              <Card key={item.id} className={cn('gap-2 p-3', rowToneClassName(item.isDelayed, item.priority))}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    {/* Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم الفاتورة") */}
-                    <p className="truncate font-medium">{item.itemNames.join('، ') || '—'}</p>
-                    <p className="text-muted-foreground truncate text-xs">{item.customerName ?? '—'}</p>
-                    <p className="text-muted-foreground truncate text-xs">
-                      {item.workOrderNumber ?? '—'} · {item.stageName}
-                    </p>
-                  </div>
-                  {item.isDelayed ? (
-                    <StatusBadge tone="danger">متأخرة</StatusBadge>
-                  ) : (
-                    <StatusBadge tone="success">في الموعد</StatusBadge>
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
-                    {STAGE_STATUS_LABELS[item.status]}
-                  </StatusBadge>
-                  <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
-                </div>
-                <div className="text-muted-foreground flex items-center justify-between text-xs">
-                  <span>الاستحقاق: {formatDueDate(item.dueDate)}</span>
-                  <span>منذ {formatTimeInStage(item.startedAt, item.createdAt)}</span>
-                </div>
-                <div className="text-muted-foreground text-xs">
-                  {employeeName(item.assignedEmployeeId)}
-                  {item.waitingReason ? ` — ${item.waitingReason}` : ''}
-                </div>
-                {timelineLink(item)}
-                {canEdit && actionButtons(item)}
-              </Card>
-            ))}
+            {filteredQueue.length > 0 && (
+              <QueueDndContext items={filteredQueue} onReorder={(newOrder, movedId) => void persistStageOrder(newOrder, movedId)}>
+                {filteredQueue.map((item) => (
+                  <SortableQueueCard
+                    key={item.id}
+                    item={item}
+                    employeeName={employeeName}
+                    timelineLink={timelineLink}
+                    canEdit={canEdit}
+                    actionButtons={actionButtons}
+                  />
+                ))}
+              </QueueDndContext>
+            )}
           </div>
         </>
       )}
 
-      {editingItem && (
-        <EditQueueItemDialog
-          item={editingItem}
-          onClose={() => setEditingItem(null)}
-          onSaved={() => {
-            setEditingItem(null);
-            loadQueue();
-          }}
+      {dialogs}
+    </div>
+  );
+}
+
+/** One draggable Kanban card — a column is already scoped to a single stage, so drag reordering here is always within one stage by construction. */
+function SortableKanbanCard({
+  item,
+  timelineLink,
+  canEdit,
+  actionButtons,
+}: {
+  item: WorkflowQueueItem;
+  timelineLink: (item: WorkflowQueueItem) => ReactNode;
+  canEdit: boolean;
+  actionButtons: (item: WorkflowQueueItem) => ReactNode;
+}) {
+  const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(item.id);
+  return (
+    <Card ref={setNodeRef} style={style} className={cn('gap-2 p-3', rowToneClassName(item.isDelayed, item.priority))}>
+      <div className="flex items-start gap-2">
+        <DragHandle attributes={attributes} listeners={listeners} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium">{item.itemNames.join('، ') || '—'}</p>
+          <p className="text-muted-foreground truncate text-xs">{item.customerName ?? '—'}</p>
+          <p className="text-muted-foreground truncate text-xs">{item.workOrderNumber ?? '—'}</p>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
+          {STAGE_STATUS_LABELS[item.status]}
+        </StatusBadge>
+        <StatusBadge tone={priorityTone(item.priority)}>{PRIORITY_LABELS[item.priority]}</StatusBadge>
+        {item.isDelayed && <StatusBadge tone="danger">متأخرة</StatusBadge>}
+      </div>
+      <div className="text-muted-foreground flex items-center justify-between text-xs">
+        <span>الاستحقاق: {formatDueDate(item.dueDate)}</span>
+        <span>منذ {formatTimeInStage(item.startedAt, item.createdAt)}</span>
+      </div>
+      {timelineLink(item)}
+      {canEdit && actionButtons(item)}
+    </Card>
+  );
+}
+
+/**
+ * Owner (2026-09-07, "عايز فيو مختلف يظهرلي فيه كل وورك فلو حسب اختياري
+ * بيبانلي فيه كل الشغل اللي في الوورك فلو اللي اختارته واشوفه في مراحله
+ * المختلفة") — a Kanban board for ONE chosen `WorkflowTemplate` version:
+ * columns are that template's own ordered stages (its real structure, not
+ * just whichever stages happen to have jobs right now — an empty stage
+ * still shows as an empty column), cards are the same `WorkflowQueueItem`
+ * rows `DepartmentsTab` already uses, grouped by `stageId`. Deliberately
+ * scoped to exactly one template VERSION at a time, never "every version
+ * of a code" — an instance's `templateId` is frozen at creation (Workflow
+ * Versioning), so a stage from one version has nothing to do with a
+ * same-named stage in another; the picker lists every published version
+ * (not just the latest) since an older one can still have real jobs on it.
+ */
+function WorkflowKanbanTab() {
+  const { can } = useAuth();
+  const [templates, setTemplates] = useState<WorkflowTemplate[] | null>(null);
+  const [templateId, setTemplateId] = useState('');
+  const [queue, setQueue] = useState<WorkflowQueueItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [priorityFilter, setPriorityFilter] = useState<WorkflowPriority | 'ALL'>('ALL');
+  const [delayedOnly, setDelayedOnly] = useState(false);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    apiGet<WorkflowTemplate[]>('/api/workflow-instances/templates')
+      .then((list) => {
+        setTemplates(list);
+        setTemplateId((current) => current || (list[0]?.id ?? ''));
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل قائمة الوركفلوهات'));
+  }, []);
+
+  const loadQueue = useCallback(() => {
+    if (!templateId) return;
+    apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?templateId=${templateId}`)
+      .then((items) => {
+        setQueue(items);
+        setLastUpdated(new Date());
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل شغل هذا الوركفلو'));
+  }, [templateId]);
+
+  useEffect(loadQueue, [loadQueue]);
+
+  const filteredQueue = useMemo(() => {
+    if (!queue) return null;
+    const q = search.trim().toLowerCase();
+    return queue.filter((item) => {
+      if (priorityFilter !== 'ALL' && item.priority !== priorityFilter) return false;
+      if (delayedOnly && !item.isDelayed) return false;
+      if (q) {
+        const matchesOrder = item.workOrderNumber?.toLowerCase().includes(q) ?? false;
+        const matchesCustomer = item.customerName?.toLowerCase().includes(q) ?? false;
+        const matchesItem = item.itemNames.some((name) => name.toLowerCase().includes(q));
+        if (!matchesOrder && !matchesCustomer && !matchesItem) return false;
+      }
+      return true;
+    });
+  }, [queue, priorityFilter, delayedOnly, search]);
+
+  const { actionError, reorderError, actionButtons, dialogs, persistStageOrder } = useQueueActions(loadQueue);
+
+  const canEdit = can('work-orders.edit');
+
+  const timelineLink = (item: WorkflowQueueItem) => (
+    <Link
+      to={`/production-board/timeline/${item.workflowInstanceId}?workOrderNumber=${encodeURIComponent(item.workOrderNumber ?? '')}&customerName=${encodeURIComponent(item.customerName ?? '')}`}
+      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
+    >
+      <RouteIcon className="size-3.5" />
+      المسار الكامل
+    </Link>
+  );
+
+  if (error) return <div className="text-destructive">{error}</div>;
+  if (!templates) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
+  if (templates.length === 0) {
+    return <div className="text-muted-foreground">لا يوجد أي وركفلو منشور بعد.</div>;
+  }
+
+  // Templates sharing a `code` (an older + a newer published version, both
+  // still capable of holding real running instances) get a version suffix
+  // so the picker can tell them apart; a code with only one published
+  // version stays plain.
+  const codeCounts = new Map<string, number>();
+  for (const t of templates) codeCounts.set(t.code, (codeCounts.get(t.code) ?? 0) + 1);
+  const templateLabel = (t: WorkflowTemplate) => ((codeCounts.get(t.code) ?? 0) > 1 ? `${t.name} (v${t.version})` : t.name);
+
+  const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
+  const byStage = new Map<string, WorkflowQueueItem[]>();
+  for (const item of filteredQueue ?? []) {
+    const list = byStage.get(item.stageId) ?? [];
+    list.push(item);
+    byStage.set(item.stageId, list);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          value={templateId}
+          onChange={(e) => setTemplateId(e.target.value)}
+          className="border-input bg-background min-w-[220px] rounded-md border px-3 py-2 text-sm font-medium"
+        >
+          {templates.map((t) => (
+            <option key={t.id} value={t.id}>
+              {templateLabel(t)}
+            </option>
+          ))}
+        </select>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="بحث باسم الصنف أو رقم الأمر أو اسم العميل…"
+          className="border-input bg-background min-w-[180px] flex-1 rounded-md border px-3 py-2 text-sm"
         />
+        <select
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value as WorkflowPriority | 'ALL')}
+          className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+        >
+          <option value="ALL">كل الأولويات</option>
+          {PRIORITY_OPTIONS.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-1.5 text-sm">
+          <input type="checkbox" checked={delayedOnly} onChange={(e) => setDelayedOnly(e.target.checked)} />
+          المتأخرة فقط
+        </label>
+        <Button type="button" variant="secondary" size="icon" onClick={loadQueue} aria-label="تحديث">
+          <RefreshCw className="size-4" />
+        </Button>
+        {lastUpdated && (
+          <span className="text-muted-foreground text-xs">
+            آخر تحديث: {lastUpdated.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        )}
+      </div>
+
+      {actionError && (
+        <div className="border-destructive/40 bg-destructive/10 text-destructive rounded-lg border p-3 text-sm">
+          {actionError}
+        </div>
+      )}
+      {reorderError && (
+        <div className="border-destructive/40 bg-destructive/10 text-destructive rounded-lg border p-3 text-sm">
+          {reorderError}
+        </div>
       )}
 
-      {confirmAction && (
-        <ConfirmStageActionDialog
-          stageName={confirmAction.item.stageName}
-          action={confirmAction.action}
-          onCancel={() => setConfirmAction(null)}
-          onConfirm={() => {
-            void advance(confirmAction.item, confirmAction.action);
-            setConfirmAction(null);
-          }}
-        />
+      {!filteredQueue || !selectedTemplate ? (
+        <div className="text-muted-foreground">جارٍ التحميل…</div>
+      ) : (
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {selectedTemplate.stages.map((stage) => {
+            const items = byStage.get(stage.id) ?? [];
+            return (
+              <div
+                key={stage.id}
+                className="border-border bg-muted/20 flex w-72 shrink-0 flex-col gap-2 rounded-2xl border p-2"
+              >
+                <div className="flex items-center justify-between px-1 pt-1">
+                  <h3 className="text-sm font-semibold">{stage.name}</h3>
+                  <span className="text-muted-foreground text-xs">{items.length}</span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {items.length === 0 && (
+                    <div className="text-muted-foreground rounded-xl border border-dashed p-3 text-center text-xs">
+                      لا يوجد شغل في هذه المرحلة
+                    </div>
+                  )}
+                  {items.length > 0 && (
+                    <QueueDndContext items={items} onReorder={(newOrder, movedId) => void persistStageOrder(newOrder, movedId)}>
+                      {items.map((item) => (
+                        <SortableKanbanCard
+                          key={item.id}
+                          item={item}
+                          timelineLink={timelineLink}
+                          canEdit={canEdit}
+                          actionButtons={actionButtons}
+                        />
+                      ))}
+                    </QueueDndContext>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
+
+      {dialogs}
     </div>
   );
 }

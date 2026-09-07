@@ -305,7 +305,15 @@ function OffsetItemCard({
   );
 
   return (
-    <div className={`mb-6 break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}>
+    <div
+      className={`mb-6 break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}
+      // Owner (2026-09-08, "كل أمر شغل يكون في صفحة كامله لوحده") —
+      // `break-before-page` only affects real browser printing
+      // (`window.print()`); the "تنزيل PDF" button screenshots the DOM and
+      // slices the raster itself, so it needs this separate marker too
+      // (see exportPdf.ts's own doc comment on `FORCED_BREAK_SELECTOR`).
+      {...(pageBreakBefore ? { 'data-pdf-page-break-before': true } : {})}
+    >
       <WorkOrderItemHeader {...headerProps} />
       <div className="border-border space-y-0 rounded-lg border p-3 text-base">
       <Field label="العميل" value={partnerName} />
@@ -424,7 +432,15 @@ function ReadyProductItemCard({
     ? (supplierNameById.get(item.preferredSupplierId) ?? '')
     : fallbackSupplierName;
   return (
-    <div className={`mb-6 break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}>
+    <div
+      className={`mb-6 break-inside-avoid ${pageBreakBefore ? 'break-before-page' : ''}`}
+      // Owner (2026-09-08, "كل أمر شغل يكون في صفحة كامله لوحده") —
+      // `break-before-page` only affects real browser printing
+      // (`window.print()`); the "تنزيل PDF" button screenshots the DOM and
+      // slices the raster itself, so it needs this separate marker too
+      // (see exportPdf.ts's own doc comment on `FORCED_BREAK_SELECTOR`).
+      {...(pageBreakBefore ? { 'data-pdf-page-break-before': true } : {})}
+    >
       <WorkOrderItemHeader {...headerProps} />
       <div className="border-border space-y-0 rounded-lg border p-3 text-base">
       <Field label="إسم العميل" value={partnerName} />
@@ -500,6 +516,176 @@ function OffsetItemCards({
           headerProps={{ ...headerBase, trackLabel: 'أوفست' }}
         />
       ))}
+    </div>
+  );
+}
+
+/**
+ * Owner (2026-09-08, "عايز زرار واحد يجمع كل أوامر شغل الأوردر في PDF
+ * واحد، كل واحد في صفحة كاملة") — the pure document-content half of a
+ * Work Order's page, extracted so `OrderWorkOrdersDocumentPage` (combining
+ * every Work Order on an Order into one PDF) can reuse the exact same
+ * per-track rendering (GENERIC/OFFSET_DETAILED/READY_PRODUCTS_DETAILED)
+ * `WorkOrderDocumentPage` already has, instead of a second copy (rule 5).
+ * `isPrintRoot`/`forcePageBreakBefore` only matter for the combined case —
+ * a standalone Work Order page always passes `isPrintRoot` and never
+ * `forcePageBreakBefore` (nothing before it to break from).
+ */
+export function WorkOrderPrintableBody({
+  workOrder,
+  order,
+  partner,
+  business,
+  branch,
+  staff,
+  partners,
+  pricingReference,
+  isPrintRoot,
+  forcePageBreakBefore,
+}: {
+  workOrder: WorkOrder;
+  order: Order;
+  partner: BusinessPartner | null;
+  business: BusinessIdentity;
+  branch: BranchSummary | undefined;
+  staff: User[];
+  partners: BusinessPartner[];
+  pricingReference: PricingReference | null;
+  isPrintRoot: boolean;
+  forcePageBreakBefore: boolean;
+}) {
+  const responsibleStaff = staff.find((s) => s.id === order.staffId)?.name ?? '—';
+  // FEATURE-007 (2026-08-12) — the issuing branch's own identity wins over the global one.
+  const effectiveLogoUrl = branch?.logoUrl || business.logoUrl;
+  const effectiveName = branch?.name || business.businessNameAr;
+
+  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was
+  // `order.productionTrack` (one value for the whole order, now removed);
+  // every Work Order carries its own frozen track directly, always
+  // non-null, no fallback needed.
+  const trackRenderer = WORK_ORDER_TRACK_RENDERERS[workOrder.productionTrack];
+  // Owner (2026-08-23) — the "الإحضار من المورد" stage's own assigned
+  // supplier, resolved to a display name (blank until a supplier is
+  // actually picked during production) — the fallback for items with no
+  // `preferredSupplierId` of their own (see `ReadyProductItemCard`'s doc
+  // comment, 2026-08-24, for why this is no longer the only source).
+  const fallbackSupplierName =
+    partners.find((p) => p.id === workOrder.workflowInstance?.stageInstances.find((s) => s.assignedSupplierId)?.assignedSupplierId)
+      ?.nameAr ?? '';
+  const supplierNameById = new Map(partners.map((p) => [p.id, p.nameAr]));
+
+  if (trackRenderer === 'GENERIC') {
+    // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was `order.items`
+    // (every item on the whole Order); now `workOrder.items`, the items
+    // belonging to *this* Work Order only — printing two Work Orders for
+    // the same mixed-track Order used to print the same full item list
+    // twice, this is exactly the bug that fixes.
+    const items: DocumentRendererItem[] = workOrder.items.map((item) => {
+      const breakdown = item.breakdown as {
+        quantity?: number;
+        notes?: string | null;
+        components?: { pieceWidthCm?: number; pieceHeightCm?: number }[];
+      } | null;
+      // Owner (2026-08-24, "مش كاتبلي مقاس التكسير... المفروض يكتبلي مقاس
+      // الطباعه الفعلي اللي هيتطبع عليه") — DIGITAL items never populate
+      // `realSizeLabel` (no single family/size concept for them — see
+      // pricingEngineService.ts's DIGITAL case), so this generic work-order
+      // table showed a blank size for every Digital job. The actual piece
+      // size lives per-component in the frozen breakdown; fall back to it
+      // (first component — a multi-component item's pieces are normally
+      // all the same physical size) whenever `realSizeLabel` is empty.
+      const firstComponent = breakdown?.components?.[0];
+      const digitalSize =
+        firstComponent?.pieceWidthCm && firstComponent?.pieceHeightCm
+          ? `${firstComponent.pieceWidthCm}×${firstComponent.pieceHeightCm} سم`
+          : null;
+      return {
+        itemType: item.kind ?? '—',
+        quantity: breakdown?.quantity ?? 0,
+        size: item.realSizeLabel ?? digitalSize,
+        description: item.modelName,
+        notes: breakdown?.notes ?? null,
+      };
+    });
+    const snapshot = resolveDocumentSnapshot(business, null, null, branch);
+    return (
+      <DocumentRenderer
+        snapshot={snapshot}
+        contactIconTheme={branch && !branch.isDefault ? 'blue-pink' : 'red'}
+        documentTypeLabel="أمر شغل"
+        documentNumber={workOrder.workOrderNumber}
+        date={workOrder.createdAt}
+        partnerName={partner ? partner.nameAr : 'عميل'}
+        partnerPhone={partner?.phone}
+        partnerSalutation={partner ? partnerSalutation(partner) : ''}
+        items={items}
+        customerNotes={order.customerNotes}
+        isPrintRoot={isPrintRoot}
+        pageBreakBefore={forcePageBreakBefore}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`${isPrintRoot ? 'document-print-root ' : ''}bg-background text-foreground relative mx-auto max-w-4xl overflow-hidden p-8 text-sm`}
+      {...(forcePageBreakBefore ? { 'data-pdf-page-break-before': true } : {})}
+    >
+      {effectiveLogoUrl && (
+        <img
+          src={effectiveLogoUrl}
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute left-1/2 top-1/2 max-h-[65%] max-w-[65%] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.06] print:opacity-[0.08]"
+        />
+      )}
+      {trackRenderer === 'READY_PRODUCTS_DETAILED' ? (
+        <ReadyProductItemCards
+          items={workOrder.items}
+          partnerName={partner ? partner.nameAr : 'عميل'}
+          supplierNameById={supplierNameById}
+          fallbackSupplierName={fallbackSupplierName}
+          deliveryDate={order.deliveryDate}
+          headerBase={{
+            effectiveName,
+            effectiveLogoUrl,
+            workOrderNumber: workOrder.workOrderNumber,
+            createdAt: workOrder.createdAt,
+            deliveryDate: order.deliveryDate,
+            responsibleStaff,
+          }}
+        />
+      ) : (
+        <OffsetItemCards
+          items={workOrder.items}
+          partnerName={partner ? partner.nameAr : 'عميل'}
+          sizeFamilyLabelByKey={new Map((pricingReference?.sizeFamilies ?? []).map((f) => [f.key, f.label]))}
+          headerBase={{
+            effectiveName,
+            effectiveLogoUrl,
+            workOrderNumber: workOrder.workOrderNumber,
+            createdAt: workOrder.createdAt,
+            deliveryDate: order.deliveryDate,
+            responsibleStaff,
+          }}
+        />
+      )}
+
+      {order.customerNotes && (
+        <section className="mb-3">
+          <div className="text-muted-foreground text-xs">ملاحظات العميل</div>
+          {/* Owner (2026-09-01, "لما بكتب ملاحظات بتطلع كلها في سطر
+              واحد... محتاجين فعلاً نخلي الفونت bold") — same fix as
+              DocumentRenderer.tsx's own customerNotes block. */}
+          <div className="whitespace-pre-line text-xs font-bold">{order.customerNotes}</div>
+        </section>
+      )}
+      {order.internalNotes && (
+        <section className="mb-3">
+          <div className="text-muted-foreground text-xs">ملاحظات داخلية</div>
+          <div className="text-xs">{order.internalNotes}</div>
+        </section>
+      )}
     </div>
   );
 }
@@ -599,114 +785,8 @@ export function WorkOrderDocumentPage() {
     }
   };
 
-  const responsibleStaff = staff.find((s) => s.id === order.staffId)?.name ?? '—';
   // FEATURE-007 (2026-08-12) — the issuing branch's own identity wins over the global one.
   const branch = branches.find((b) => b.id === order.branchId);
-  const effectiveLogoUrl = branch?.logoUrl || business.logoUrl;
-  const effectiveName = branch?.name || business.businessNameAr;
-
-  // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was
-  // `order.productionTrack` (one value for the whole order, now removed);
-  // every Work Order carries its own frozen track directly, always
-  // non-null, no fallback needed.
-  const trackRenderer = WORK_ORDER_TRACK_RENDERERS[workOrder.productionTrack];
-  // Owner (2026-08-23) — the "الإحضار من المورد" stage's own assigned
-  // supplier, resolved to a display name (blank until a supplier is
-  // actually picked during production) — the fallback for items with no
-  // `preferredSupplierId` of their own (see `ReadyProductItemCard`'s doc
-  // comment, 2026-08-24, for why this is no longer the only source).
-  const fallbackSupplierName =
-    partners.find((p) => p.id === workOrder.workflowInstance?.stageInstances.find((s) => s.assignedSupplierId)?.assignedSupplierId)
-      ?.nameAr ?? '';
-  const supplierNameById = new Map(partners.map((p) => [p.id, p.nameAr]));
-  if (trackRenderer === 'GENERIC') {
-    // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — was `order.items`
-    // (every item on the whole Order); now `workOrder.items`, the items
-    // belonging to *this* Work Order only — printing two Work Orders for
-    // the same mixed-track Order used to print the same full item list
-    // twice, this is exactly the bug that fixes.
-    const items: DocumentRendererItem[] = workOrder.items.map((item) => {
-      const breakdown = item.breakdown as {
-        quantity?: number;
-        notes?: string | null;
-        components?: { pieceWidthCm?: number; pieceHeightCm?: number }[];
-      } | null;
-      // Owner (2026-08-24, "مش كاتبلي مقاس التكسير... المفروض يكتبلي مقاس
-      // الطباعه الفعلي اللي هيتطبع عليه") — DIGITAL items never populate
-      // `realSizeLabel` (no single family/size concept for them — see
-      // pricingEngineService.ts's DIGITAL case), so this generic work-order
-      // table showed a blank size for every Digital job. The actual piece
-      // size lives per-component in the frozen breakdown; fall back to it
-      // (first component — a multi-component item's pieces are normally
-      // all the same physical size) whenever `realSizeLabel` is empty.
-      const firstComponent = breakdown?.components?.[0];
-      const digitalSize =
-        firstComponent?.pieceWidthCm && firstComponent?.pieceHeightCm
-          ? `${firstComponent.pieceWidthCm}×${firstComponent.pieceHeightCm} سم`
-          : null;
-      return {
-        itemType: item.kind ?? '—',
-        quantity: breakdown?.quantity ?? 0,
-        size: item.realSizeLabel ?? digitalSize,
-        description: item.modelName,
-        notes: breakdown?.notes ?? null,
-      };
-    });
-    const snapshot = resolveDocumentSnapshot(business, null, null, branch);
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center justify-between print:hidden">
-          <div>
-            <Breadcrumbs
-              items={[
-                { label: 'المستندات', to: '/quotations' },
-                ...(partner ? [{ label: partner.nameAr, to: `/partners/${order.partnerId}` }] : []),
-                { label: `أمر شغل ${workOrder.workOrderNumber}` },
-              ]}
-            />
-            <div className="flex flex-wrap items-center gap-x-3 text-sm">
-              <h1 className="text-xl font-bold">أمر شغل {workOrder.workOrderNumber}</h1>
-              <Link to={`/orders/${order.id}`} className="text-primary hover:underline">
-                الفاتورة الأصلية
-              </Link>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {can('orders.edit') && (
-              <Button type="button" variant="secondary" onClick={() => navigate(`/orders/new?editOrder=${order.id}`)}>
-                تعديل
-              </Button>
-            )}
-            {can('work-orders.delete') && (
-              <Button type="button" variant="destructive" disabled={deleting} onClick={() => void removeWorkOrder()}>
-                {deleting ? 'جارٍ الحذف…' : 'حذف أمر الشغل'}
-              </Button>
-            )}
-            <Button type="button" variant="secondary" disabled={exportingPdf} onClick={() => void exportPdf()}>
-              {exportingPdf ? 'جارٍ التصدير…' : 'تنزيل PDF'}
-            </Button>
-            <Button type="button" onClick={() => window.print()}>
-              طباعة أمر الشغل
-            </Button>
-          </div>
-        </div>
-        {deleteError && <p className="text-destructive text-sm print:hidden">{deleteError}</p>}
-        <DocumentRenderer
-          snapshot={snapshot}
-          contactIconTheme={branch && !branch.isDefault ? 'blue-pink' : 'red'}
-          documentTypeLabel="أمر شغل"
-          documentNumber={workOrder.workOrderNumber}
-          date={workOrder.createdAt}
-          partnerName={partner ? partner.nameAr : 'عميل'}
-          partnerPhone={partner?.phone}
-          partnerSalutation={partner ? partnerSalutation(partner) : ''}
-          items={items}
-          customerNotes={order.customerNotes}
-        />
-        <ProductionProgressSection workOrderId={workOrder.id} items={workOrder.items} onItemUpdated={handleItemProductionUpdated} />
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-4">
@@ -746,64 +826,18 @@ export function WorkOrderDocumentPage() {
         </div>
       </div>
       {deleteError && <p className="text-destructive text-sm print:hidden">{deleteError}</p>}
-
-      <div className="document-print-root bg-background text-foreground relative mx-auto max-w-4xl overflow-hidden p-8 text-sm">
-        {effectiveLogoUrl && (
-          <img
-            src={effectiveLogoUrl}
-            alt=""
-            aria-hidden
-            className="pointer-events-none absolute left-1/2 top-1/2 max-h-[65%] max-w-[65%] -translate-x-1/2 -translate-y-1/2 object-contain opacity-[0.06] print:opacity-[0.08]"
-          />
-        )}
-        {trackRenderer === 'READY_PRODUCTS_DETAILED' ? (
-          <ReadyProductItemCards
-            items={workOrder.items}
-            partnerName={partner ? partner.nameAr : 'عميل'}
-            supplierNameById={supplierNameById}
-            fallbackSupplierName={fallbackSupplierName}
-            deliveryDate={order.deliveryDate}
-            headerBase={{
-              effectiveName,
-              effectiveLogoUrl,
-              workOrderNumber: workOrder.workOrderNumber,
-              createdAt: workOrder.createdAt,
-              deliveryDate: order.deliveryDate,
-              responsibleStaff,
-            }}
-          />
-        ) : (
-          <OffsetItemCards
-            items={workOrder.items}
-            partnerName={partner ? partner.nameAr : 'عميل'}
-            sizeFamilyLabelByKey={new Map((pricingReference?.sizeFamilies ?? []).map((f) => [f.key, f.label]))}
-            headerBase={{
-              effectiveName,
-              effectiveLogoUrl,
-              workOrderNumber: workOrder.workOrderNumber,
-              createdAt: workOrder.createdAt,
-              deliveryDate: order.deliveryDate,
-              responsibleStaff,
-            }}
-          />
-        )}
-
-        {order.customerNotes && (
-          <section className="mb-3">
-            <div className="text-muted-foreground text-xs">ملاحظات العميل</div>
-            {/* Owner (2026-09-01, "لما بكتب ملاحظات بتطلع كلها في سطر
-                واحد... محتاجين فعلاً نخلي الفونت bold") — same fix as
-                DocumentRenderer.tsx's own customerNotes block. */}
-            <div className="whitespace-pre-line text-xs font-bold">{order.customerNotes}</div>
-          </section>
-        )}
-        {order.internalNotes && (
-          <section className="mb-3">
-            <div className="text-muted-foreground text-xs">ملاحظات داخلية</div>
-            <div className="text-xs">{order.internalNotes}</div>
-          </section>
-        )}
-      </div>
+      <WorkOrderPrintableBody
+        workOrder={workOrder}
+        order={order}
+        partner={partner}
+        business={business}
+        branch={branch}
+        staff={staff}
+        partners={partners}
+        pricingReference={pricingReference}
+        isPrintRoot
+        forcePageBreakBefore={false}
+      />
       <ProductionProgressSection workOrderId={workOrder.id} items={workOrder.items} onItemUpdated={handleItemProductionUpdated} />
     </div>
   );

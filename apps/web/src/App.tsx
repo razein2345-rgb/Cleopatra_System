@@ -56,6 +56,9 @@ const OrderDocumentPage = lazy(() =>
 const WorkOrderDocumentPage = lazy(() =>
   import('@/pages/orders/WorkOrderDocumentPage').then((m) => ({ default: m.WorkOrderDocumentPage })),
 );
+const OrderWorkOrdersDocumentPage = lazy(() =>
+  import('@/pages/orders/OrderWorkOrdersDocumentPage').then((m) => ({ default: m.OrderWorkOrdersDocumentPage })),
+);
 const TreasuryPage = lazy(() => import('@/pages/treasury/TreasuryPage').then((m) => ({ default: m.TreasuryPage })));
 const InventoryPage = lazy(() => import('@/pages/inventory/InventoryPage').then((m) => ({ default: m.InventoryPage })));
 const ProductionBoardPage = lazy(() =>
@@ -154,6 +157,7 @@ function App() {
               {/* FEATURE-006 M10 — Work Order document (print). */}
               <Route element={<ProtectedRoute permission="work-orders.view" />}>
                 <Route path="/work-orders/:id" element={<WorkOrderDocumentPage />} />
+                <Route path="/orders/:orderId/work-orders-pdf" element={<OrderWorkOrdersDocumentPage />} />
               </Route>
 
               {/* FEATURE-006 M4 — Treasury as a first-class module.
