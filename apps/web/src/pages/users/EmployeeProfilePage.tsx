@@ -101,7 +101,27 @@ export function EmployeeProfilePage() {
   }
 
   const totalOutstanding = advances.reduce((sum, a) => sum + a.remainingBalance, 0);
+  // The "حساب المرتب بالساعات — الفترة الحالية" section below is always
+  // about the LIVE current (still-open) period specifically — its own
+  // total must never be swapped for a closed period's frozen number.
   const attendanceAdjustment = payroll?.totalAdjustment ?? 0;
+  // Owner (2026-09-02, "التأخير بتاع الشهر الجديد بيتخصم من الشهر
+  // القديم؟؟") — the "السلف" card's "متبقي من المرتب" is a DIFFERENT
+  // question ("what does this employee still owe/get, right now") and
+  // used to always read the same live `attendanceAdjustment` above, even
+  // while an already-closed-but-unpaid `PayrollPeriod` existed. That made
+  // it silently drift day to day with the new (still-open) month's
+  // attendance, reading exactly like the old month's number was being
+  // recalculated from new data (it wasn't — the frozen row never changed;
+  // this card was just showing the wrong period entirely). Once a month
+  // closes, prefer its frozen numbers here instead — same oldest-unpaid-
+  // closed-period precedence as `getEmployeeAdvanceSummaries` server-side.
+  const pendingPeriod =
+    payrollPeriods
+      .filter((p) => !p.isOpen && p.paidAmount < p.grossDue)
+      .sort((a, b) => new Date(a.periodEnd).getTime() - new Date(b.periodEnd).getTime())[0] ?? null;
+  const salaryDueAdjustment = pendingPeriod ? pendingPeriod.totalAdjustment : attendanceAdjustment;
+  const grossDue = pendingPeriod ? pendingPeriod.grossDue : user.baseSalary != null ? user.baseSalary + salaryDueAdjustment : null;
 
   return (
     <div className="space-y-6">
@@ -127,16 +147,16 @@ export function EmployeeProfilePage() {
             <h2 className="font-semibold">السلف</h2>
             <p className="text-muted-foreground text-sm">
               إجمالي المتبقي: <span className="font-medium">{money(totalOutstanding)}</span>
-              {user.baseSalary != null && (
+              {grossDue != null && (
                 <>
                   {' '}
-                  — متبقي من المرتب:{' '}
-                  <span className="font-medium">{money(user.baseSalary - totalOutstanding + attendanceAdjustment)}</span>
-                  {attendanceAdjustment !== 0 && (
-                    <span className={attendanceAdjustment > 0 ? 'text-success' : 'text-destructive'}>
+                  — متبقي من المرتب ({pendingPeriod ? 'الشهر المقفول' : 'الفترة الحالية'}):{' '}
+                  <span className="font-medium">{money(grossDue - totalOutstanding)}</span>
+                  {salaryDueAdjustment !== 0 && (
+                    <span className={salaryDueAdjustment > 0 ? 'text-success' : 'text-destructive'}>
                       {' '}
-                      ({attendanceAdjustment > 0 ? '+' : ''}
-                      {money(attendanceAdjustment)} حضور)
+                      ({salaryDueAdjustment > 0 ? '+' : ''}
+                      {money(salaryDueAdjustment)} حضور)
                     </span>
                   )}
                 </>
