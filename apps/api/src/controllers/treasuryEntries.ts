@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../lib/prisma.js';
+import { canAccessBranch, forbidBranch, type AuthenticatedUser } from '../services/authContext.js';
 import {
   closeTreasuryDaySchema,
   createTreasuryEntrySchema,
@@ -41,6 +42,7 @@ import { recordAudit } from '../services/auditService.js';
 export async function listTreasuryEntriesHandler(req: Request, res: Response) {
   const auth = req.auth!;
   const canSeeAll = hasPermission(auth.permissions, 'treasury.view');
+  const requestedBranchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
 
   const typeParam = typeof req.query.type === 'string' ? req.query.type : undefined;
   const typeResult = typeParam ? treasuryTypeSchema.safeParse(typeParam) : undefined;
@@ -54,7 +56,7 @@ export async function listTreasuryEntriesHandler(req: Request, res: Response) {
     dateFrom,
     dateTo,
     search,
-    branchId: canSeeAll ? undefined : auth.branchId,
+    branchId: resolveBranchScope(auth, canSeeAll, requestedBranchId),
     partnerId,
   });
   res.json({ success: true, data: entries });
@@ -65,11 +67,45 @@ export async function listTreasuryEntriesHandler(req: Request, res: Response) {
  * `treasury.create`-only caller. `?branchId=` narrows to one branch — the
  * admin's "رؤية كليوباترا بس / برينتنج بس" toggle (2026-08-26); omitted
  * means both branches combined, the pre-existing default.
+ *
+ * Owner (2026-09-07, "عايز افصل أمين خزينة كليوباترا عن أمين خزينة
+ * برينتنج فا ميظهرش ده هنا ولا ده هنا") — 🔴 this used to trust
+ * `?branchId=` outright the moment a caller held `treasury.view` at all,
+ * with zero check on whether they could actually access that branch.
+ * `CASHIER` is seeded with the wildcard `treasury.*` (both create AND
+ * view), so any cashier — meant to be scoped to their own branch, same as
+ * every other branch-scoped role in this codebase — could simply request
+ * `?branchId=<the other branch>` (or an omitted `branchId`, silently
+ * combining both) and see it in full. Only a true Super Admin now bypasses
+ * branch scoping here; everyone else — "sees totals" or not — is clamped
+ * to `accessibleBranchIds` via the same `resolveBranchScope` helper the
+ * entries list above already used this pattern for.
  */
 export async function getTreasuryBalanceHandler(req: Request, res: Response) {
-  const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
-  const balance = await getTreasuryBalance(branchId);
+  const auth = req.auth!;
+  const requestedBranchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+  const balance = await getTreasuryBalance(resolveBranchScope(auth, true, requestedBranchId));
   res.json({ success: true, data: balance });
+}
+
+/**
+ * Shared by `listTreasuryEntriesHandler`/`getTreasuryBalanceHandler` —
+ * `canSeeTotals=false` (reception, `treasury.create` only) is always
+ * clamped to the caller's own home branch regardless of what's requested
+ * (unchanged pre-existing behavior). Otherwise: Super Admin gets whatever
+ * was requested (undefined = every branch, unrestricted — the org-wide
+ * view an actual admin needs); everyone else gets the requested branch
+ * ONLY if it's genuinely in their own `accessibleBranchIds`, and their
+ * full accessible set otherwise (an omitted or a not-allowed branchId
+ * both fall back to "every branch THIS caller may see" — never silently
+ * widening to branches outside that set, never a hard 403 for the
+ * omitted/combined case since that's the normal default view).
+ */
+function resolveBranchScope(auth: AuthenticatedUser, canSeeTotals: boolean, requestedBranchId: string | undefined): string | string[] | undefined {
+  if (!canSeeTotals) return auth.branchId;
+  if (auth.roleNames.includes('SUPER_ADMIN')) return requestedBranchId;
+  if (requestedBranchId && auth.accessibleBranchIds.includes(requestedBranchId)) return requestedBranchId;
+  return auth.accessibleBranchIds;
 }
 
 /** The reception-safe alternative to the balance endpoint above — the caller's own branch total only, never the org-wide figure. */
@@ -87,15 +123,26 @@ export async function getMyCashCustodyHandler(req: Request, res: Response) {
 }
 
 /**
- * A `treasury.view` holder (admin overseeing multiple branches) may target
- * any branch via `?branchId=`/body `branchId`; everyone else — reception,
- * `treasury.create`-only — is always locked to their own assigned branch
- * regardless of what they send, same "one endpoint, permission-shaped by
- * value" precedent as `listTreasuryEntriesHandler`'s `canSeeAll`.
+ * A `treasury.view` holder may target any branch via `?branchId=`/body
+ * `branchId` ONLY if they can actually access it (Super Admin, or an
+ * explicit `UserBranchAccess` grant); everyone else — reception
+ * (`treasury.create`-only), or a branch-scoped cashier requesting a
+ * branch outside their own — is always locked to their own assigned
+ * branch regardless of what they send.
+ *
+ * 🔴 Owner (2026-09-07, "عايز افصل أمين خزينة كليوباترا عن أمين خزينة
+ * برينتنج فا ميظهرش ده هنا ولا ده هنا") — this used to grant the
+ * requested branch to ANY `treasury.view` holder outright, no access
+ * check at all. `CASHIER` is seeded with the `treasury.*` wildcard
+ * (create + view together), so a cashier meant to be scoped to their own
+ * branch could pass the other branch's id here and actually close (or
+ * reopen) ITS day, not just view its balance. Same fix shape as
+ * `resolveBranchScope` above.
  */
 function resolveTargetBranchId(req: Request, requested: string | undefined): string {
   const auth = req.auth!;
-  if (requested && hasPermission(auth.permissions, 'treasury.view')) return requested;
+  if (!hasPermission(auth.permissions, 'treasury.view') || !requested) return auth.branchId;
+  if (auth.roleNames.includes('SUPER_ADMIN') || auth.accessibleBranchIds.includes(requested)) return requested;
   return auth.branchId;
 }
 
@@ -198,9 +245,23 @@ export async function reopenTreasuryDayHandler(req: Request, res: Response) {
   res.json({ success: true, data: closure });
 }
 
+/**
+ * 🔴 Owner (2026-09-07, "عايز افصل أمين خزينة كليوباترا عن أمين خزينة
+ * برينتنج") — this used to trust `input.branchId` outright, unlike
+ * `createAdvanceHandler`/`createSalaryPaymentHandler` which already
+ * checked `canAccessBranch` for the exact same reason. A cashier scoped
+ * to one branch could record a manual income/expense/transfer entry
+ * against the OTHER branch's ledger entirely.
+ */
 export async function createTreasuryEntryHandler(req: Request, res: Response) {
   const auth = req.auth!;
   const input = createTreasuryEntrySchema.parse(req.body);
+
+  if (!canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
+
   const created = await createManualTreasuryEntry(input, auth.staffId);
 
   await recordAudit({
@@ -228,9 +289,26 @@ function handleServiceError(err: unknown, res: Response): boolean {
   return false;
 }
 
+/**
+ * 🔴 Owner (2026-09-07, "عايز افصل أمين خزينة كليوباترا عن أمين خزينة
+ * برينتنج") — checks the entry's CURRENT branch (a cashier editing an
+ * entry that isn't even theirs) and, since `branchId` is itself editable
+ * here ("عايز اقدر اغير الفرع اللي اتباع منه في الخزينه"), the NEW branch
+ * too (moving an entry INTO a branch they can't access).
+ */
 export async function updateTreasuryEntryHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
   const input = updateTreasuryEntrySchema.parse(req.body);
+
+  const existing = await prisma.treasuryEntry.findUnique({ where: { id: req.params.id }, select: { branchId: true, isDeleted: true } });
+  if (!existing || existing.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Treasury entry not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId) || (input.branchId && !canAccessBranch(auth, input.branchId))) {
+    forbidBranch(res);
+    return;
+  }
 
   let updated;
   try {
@@ -268,10 +346,15 @@ export async function updateTreasuryEntryHandler(req: Request<{ id: string }>, r
  * treasury-entry-id-shaped door into that same logic, so the Treasury
  * screen doesn't need to know the underlying inventory item id.
  */
-async function loadQuickSaleMovementId(entryId: string, res: Response): Promise<string | null> {
+/** 🔴 Owner (2026-09-07, "عايز افصل أمين خزينة كليوباترا عن أمين خزينة برينتنج") — same missing branch-access check as the manual-entry handlers above. */
+async function loadQuickSaleMovementId(entryId: string, auth: AuthenticatedUser, res: Response): Promise<string | null> {
   const entry = await prisma.treasuryEntry.findUnique({ where: { id: entryId } });
   if (!entry || entry.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Treasury entry not found' } });
+    return null;
+  }
+  if (!canAccessBranch(auth, entry.branchId)) {
+    forbidBranch(res);
     return null;
   }
   if (entry.sourceType !== 'QUICK_SALE' || !entry.stockMovementId) {
@@ -283,10 +366,14 @@ async function loadQuickSaleMovementId(entryId: string, res: Response): Promise<
 
 export async function updateQuickSaleEntryHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
-  const movementId = await loadQuickSaleMovementId(req.params.id, res);
+  const movementId = await loadQuickSaleMovementId(req.params.id, auth, res);
   if (!movementId) return;
 
   const input = updateStockMovementSchema.parse(req.body);
+  if (input.branchId && !canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   let result;
   try {
     result = await updateStockMovement(movementId, input);
@@ -313,7 +400,7 @@ export async function updateQuickSaleEntryHandler(req: Request<{ id: string }>, 
 
 export async function deleteQuickSaleEntryHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
-  const movementId = await loadQuickSaleMovementId(req.params.id, res);
+  const movementId = await loadQuickSaleMovementId(req.params.id, auth, res);
   if (!movementId) return;
 
   let result;
@@ -339,8 +426,19 @@ export async function deleteQuickSaleEntryHandler(req: Request<{ id: string }>, 
   res.json({ success: true, data: result.reversedTreasuryEntry });
 }
 
+/** 🔴 Owner (2026-09-07, "عايز افصل أمين خزينة كليوباترا عن أمين خزينة برينتنج") — same missing check as create/update above. */
 export async function deleteTreasuryEntryHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+
+  const existing = await prisma.treasuryEntry.findUnique({ where: { id: req.params.id }, select: { branchId: true, isDeleted: true } });
+  if (!existing || existing.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Treasury entry not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existing.branchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   try {
     await deleteManualTreasuryEntry(req.params.id, auth.staffId);

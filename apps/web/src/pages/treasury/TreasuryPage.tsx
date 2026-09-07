@@ -58,6 +58,17 @@ function FullTreasuryView() {
   const [closureBranchId, setClosureBranchId] = useState('');
   const [closureRefreshTick, setClosureRefreshTick] = useState(0);
   const isAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN' || r.name === 'ADMIN') ?? false;
+  // Owner (2026-09-07, "عايز افصل أمين خزينة كليوباترا عن أمين خزينة
+  // برينتنج فا ميظهرش ده هنا ولا ده هنا") — `/api/branches` itself stays
+  // unscoped (branch names are non-sensitive reference data, same as every
+  // other branch dropdown in the app), but the backend now silently clamps
+  // a non-Super-Admin's requested `branchId` to their own accessible set
+  // no matter what they pick. Offering the other branch as a selectable
+  // option that quietly no-ops would just be confusing — this narrower
+  // list is what a cashier scoped to one branch actually sees wherever
+  // THEY are choosing which branch to act on/view.
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
+  const accessibleBranches = isSuperAdmin ? branches : branches.filter((b) => authContext?.user.accessibleBranchIds.includes(b.id));
 
   const [typeFilter, setTypeFilter] = useState<TreasuryType | 'ALL'>('ALL');
   const [search, setSearch] = useState('');
@@ -173,7 +184,7 @@ function FullTreasuryView() {
           "تسجيل بضاعة" form. */}
       {showForm && (
         <NewEntryForm
-          branches={branches}
+          branches={accessibleBranches}
           partners={partners}
           onCreated={() => {
             setShowForm(false);
@@ -222,16 +233,16 @@ function FullTreasuryView() {
       )}
 
       {/* FEATURE-016, rebuilt 2026-08-18 — admins oversee every branch's register, so unlike ReceptionTreasuryView's implicit "my own branch," this view picks which branch's day to review/close/reopen. */}
-      {branches.length > 0 && (
+      {accessibleBranches.length > 0 && (
         <div className="space-y-2">
           <label className="block max-w-xs space-y-1 text-sm">
             <span className="text-muted-foreground">الفرع</span>
             <select
-              value={closureBranchId || branches[0].id}
+              value={closureBranchId || accessibleBranches[0].id}
               onChange={(e) => setClosureBranchId(e.target.value)}
               className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
             >
-              {branches.map((b) => (
+              {accessibleBranches.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
                 </option>
@@ -239,7 +250,7 @@ function FullTreasuryView() {
             </select>
           </label>
           <DailyClosureCard
-            branchId={closureBranchId || branches[0].id}
+            branchId={closureBranchId || accessibleBranches[0].id}
             isAdmin={isAdmin}
             onChanged={refreshAll}
             refreshSignal={closureRefreshTick}
@@ -265,7 +276,7 @@ function FullTreasuryView() {
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         >
           <option value="ALL">كل الفروع</option>
-          {branches.map((b) => (
+          {accessibleBranches.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
             </option>
@@ -408,14 +419,14 @@ function FullTreasuryView() {
                       {canEditEntry ? (
                         <EditableSelectCell
                           value={entry.branchId}
-                          options={branches.map((b) => [b.id, b.name] as const)}
+                          options={accessibleBranches.map((b) => [b.id, b.name] as const)}
                           onSave={(next) => updateEntryField(entry, { branchId: next })}
                           renderValue={branchName}
                         />
                       ) : entry.sourceType === 'QUICK_SALE' && can('inventory.edit') ? (
                         <EditableSelectCell
                           value={entry.branchId}
-                          options={branches.map((b) => [b.id, b.name] as const)}
+                          options={accessibleBranches.map((b) => [b.id, b.name] as const)}
                           onSave={(next) => updateQuickSaleEntryField(entry, { branchId: next })}
                           renderValue={branchName}
                         />

@@ -64,15 +64,28 @@ export async function listTreasuryEntries(filters: {
   dateFrom?: string;
   dateTo?: string;
   search?: string;
-  /** FEATURE-007 M3 (2026-08-13, owner: "الوارد والمنصرف في شاشة الموظف على حسب الفرع بتاعه") — scopes to this branch's entries only (the reception-safe view, never the org-wide list). Branch-scoped, not staff-scoped: everyone assigned to a branch sees that branch's own ledger, not just their own personal entries within it. */
-  branchId?: string;
+  /**
+   * FEATURE-007 M3 (2026-08-13, owner: "الوارد والمنصرف في شاشة الموظف على
+   * حسب الفرع بتاعه") — scopes to this branch's entries only (the
+   * reception-safe view, never the org-wide list). Branch-scoped, not
+   * staff-scoped: everyone assigned to a branch sees that branch's own
+   * ledger, not just their own personal entries within it.
+   * Owner (2026-09-07, "عايز افصل أمين خزينة كليوباترا عن أمين خزينة
+   * برينتنج فا ميظهرش ده هنا ولا ده هنا") — an array scopes to "any of
+   * these branches" (a non-Super-Admin cashier's own accessible set),
+   * distinct from a bare string (one specific branch) or omitted (every
+   * branch — Super Admin only, enforced at the controller).
+   */
+  branchId?: string | string[];
   /** Owner (2026-08-23, "لما يتضاف يتضاف في صفحة الموردين علشان اعرف انا بدفعله كام") — every entry (payment received from OR paid to) linked to one BusinessPartner, for that partner's own profile page. */
   partnerId?: string;
 }): Promise<TreasuryEntry[]> {
   const entries = await prisma.treasuryEntry.findMany({
     where: {
       isDeleted: false,
-      ...(filters.branchId ? { branchId: filters.branchId } : {}),
+      ...(filters.branchId
+        ? { branchId: Array.isArray(filters.branchId) ? { in: filters.branchId } : filters.branchId }
+        : {}),
       ...(filters.partnerId ? { partnerId: filters.partnerId } : {}),
       ...(filters.type ? { type: filters.type } : {}),
       ...(filters.dateFrom || filters.dateTo
@@ -167,11 +180,17 @@ export async function getEmployeeCashCustody(staffId: string): Promise<EmployeeC
  * leaving the admin Treasury screen with no way to narrow the top-line
  * figures to one branch. Undefined (the existing default) still means
  * "both combined" — nothing changes for a caller that never passes it.
+ *
+ * Owner (2026-09-07, "عايز افصل أمين خزينة كليوباترا عن أمين خزينة
+ * برينتنج فا ميظهرش ده هنا ولا ده هنا") — accepts an array too, scoping
+ * to "any of these branches" (a non-Super-Admin caller's own accessible
+ * set) rather than the org-wide total, enforced at the controller.
  */
-export async function getTreasuryBalance(branchId?: string): Promise<TreasuryBalance> {
+export async function getTreasuryBalance(branchId?: string | string[]): Promise<TreasuryBalance> {
+  const branchWhere = Array.isArray(branchId) ? { branchId: { in: branchId } } : branchId ? { branchId } : {};
   const grouped = await prisma.treasuryEntry.groupBy({
     by: ['type'],
-    where: { isDeleted: false, ...(branchId ? { branchId } : {}) },
+    where: { isDeleted: false, ...branchWhere },
     _sum: { amount: true },
   });
   const totals: Record<'INCOME' | 'EXPENSE' | 'TRANSFER', number> = { INCOME: 0, EXPENSE: 0, TRANSFER: 0 };
@@ -179,7 +198,7 @@ export async function getTreasuryBalance(branchId?: string): Promise<TreasuryBal
 
   const groupedByMethod = await prisma.treasuryEntry.groupBy({
     by: ['method', 'type'],
-    where: { isDeleted: false, method: { not: null }, type: { in: ['INCOME', 'EXPENSE'] }, ...(branchId ? { branchId } : {}) },
+    where: { isDeleted: false, method: { not: null }, type: { in: ['INCOME', 'EXPENSE'] }, ...branchWhere },
     _sum: { amount: true },
   });
   const byMethodTotals = new Map<string, number>();
