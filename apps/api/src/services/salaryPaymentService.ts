@@ -72,6 +72,7 @@ export async function createSalaryPayment(input: CreateSalaryPaymentInput, recor
   let periodStart: Date;
   let periodEnd: Date;
   let payrollPeriodId: string | null = null;
+  let periodGrossDue: number | null = null;
 
   if (input.payrollPeriodId) {
     const period = await prisma.payrollPeriod.findUnique({ where: { id: input.payrollPeriodId } });
@@ -81,6 +82,7 @@ export async function createSalaryPayment(input: CreateSalaryPaymentInput, recor
     periodStart = period.periodStart;
     periodEnd = period.periodEnd;
     payrollPeriodId = period.id;
+    periodGrossDue = period.grossDue.toNumber();
   } else {
     const payroll = await computeEmployeePayroll(input.staffId);
     if (!payroll) throw new NoPayrollConfiguredError();
@@ -122,8 +124,76 @@ export async function createSalaryPayment(input: CreateSalaryPaymentInput, recor
       },
     });
 
+    // Owner (2026-09-02, "هي السلفة بتتخصم تلقائي من المرتب وبتتكتب سلفه
+    // الموظف مش بيسددها إلا من مرتبه") — a closed month's advance debt
+    // must be settled as part of paying THAT month, never left to keep
+    // dragging a later month's "متبقي المرتب" down. Only when paying
+    // against a real closed `PayrollPeriod` (the WEEKLY/live-fallback path
+    // keeps its original, unrelated behavior — advances there still go
+    // through the explicit repayment flow exactly as before this
+    // feature), and only on the FIRST payment recorded against this
+    // period (a later top-up/correction on the same period must not
+    // deduct a second time).
+    if (payrollPeriodId && periodGrossDue !== null) {
+      const priorPayments = await tx.salaryPayment.count({
+        where: { payrollPeriodId, isDeleted: false, id: { not: created.id } },
+      });
+      if (priorPayments === 0) {
+        await autoRepayAdvancesFromSalary(tx, input.staffId, periodGrossDue, recordedById, periodStart, periodEnd);
+      }
+    }
+
     return created;
   });
 
   return mapSalaryPaymentToDto(payment);
+}
+
+/**
+ * Deducts outstanding advances (oldest first — FIFO, same ordering
+ * `getEmployeeAdvanceSummaries` sums outstanding balances over) as
+ * `SALARY_DEDUCTION` repayments, up to `maxAmount` (a closed period's own
+ * frozen `grossDue` — a month can never repay more debt than it actually
+ * earned). `SALARY_DEDUCTION` never touches Treasury (see
+ * `createRepayment`'s own handling) — this is a bookkeeping settlement,
+ * not a second cash movement; the reduced take-home already happened via
+ * whatever `amount` was recorded on the `SalaryPayment` itself.
+ */
+async function autoRepayAdvancesFromSalary(
+  tx: Prisma.TransactionClient,
+  staffId: string,
+  maxAmount: number,
+  recordedById: string,
+  periodStart: Date,
+  periodEnd: Date,
+): Promise<void> {
+  let remaining = maxAmount;
+  if (remaining <= 0) return;
+
+  const advances = await tx.employeeAdvance.findMany({
+    where: { staffId, isDeleted: false },
+    include: { repayments: true },
+    orderBy: { date: 'asc' },
+  });
+
+  const periodLabel = `${periodStart.toISOString().slice(0, 10)} – ${periodEnd.toISOString().slice(0, 10)}`;
+  for (const advance of advances) {
+    if (remaining <= 0) break;
+    const repaidSoFar = advance.repayments.reduce((sum, r) => sum + r.amount.toNumber(), 0);
+    const outstanding = advance.amount.toNumber() - repaidSoFar;
+    if (outstanding <= 0) continue;
+
+    const toRepay = Math.min(outstanding, remaining);
+    await tx.employeeAdvanceRepayment.create({
+      data: {
+        advanceId: advance.id,
+        amount: toRepay,
+        date: periodEnd,
+        method: 'SALARY_DEDUCTION',
+        note: `خصم تلقائي من مرتب الفترة ${periodLabel}`,
+        recordedById,
+      },
+    });
+    remaining -= toRepay;
+  }
 }

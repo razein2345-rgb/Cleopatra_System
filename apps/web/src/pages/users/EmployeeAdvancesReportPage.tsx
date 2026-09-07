@@ -188,6 +188,16 @@ function PaySalaryDialog({
               ⚠️ اتصرف بالفعل {money(summary.paidThisPeriod)} ج.م في الفترة دي — تأكد إنك مش بتصرف مرتين.
             </p>
           )}
+          {/* Owner (2026-09-02, "السلفة بتتخصم تلقائي من المرتب وبتتكتب سلفه
+              الموظف مش بيسددها إلا من مرتبه") — only fires for a closed
+              period's FIRST payment (see createSalaryPayment), so only
+              worth flagging here in that exact case. */}
+          {summary.pendingPayrollPeriodId && summary.totalOutstanding > 0 && summary.paidThisPeriod === 0 && (
+            <p className="bg-info/10 text-info rounded-md p-2 text-sm">
+              💡 السلف المستحقة ({money(summary.totalOutstanding)} ج.م) هتتخصم تلقائيًا من المرتب ده كخصم من الراتب،
+              مش من المبلغ اللي هيتصرف فعليًا فقط.
+            </p>
+          )}
           <label className="block space-y-1 text-sm">
             <span className="text-muted-foreground">المبلغ</span>
             <input
