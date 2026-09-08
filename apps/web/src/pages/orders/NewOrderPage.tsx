@@ -2490,6 +2490,15 @@ function NewOrderForm({
   const [showQuickIncome, setShowQuickIncome] = useState(false);
   /** Owner (2026-09-08, "اكتب انا الكلام عشوائي مره واحده وهو يحسبهم كلهم بدل ما تكون عملية الحساب بطيئة لأني بحسبهم بند بند") — see QuickPasteItemsDialog below. */
   const [showQuickPasteItems, setShowQuickPasteItems] = useState(false);
+  /**
+   * Owner (2026-09-09, "ممكن يقترح عليا من ملاحظة التكرار") — the last
+   * successfully-added NOTEBOOK's paper/size/color/sides/binding, offered
+   * as a starting suggestion (never silently applied — still a normal,
+   * fully-editable field) the next time a paste-parsed notebook row needs
+   * these same fields completed, since a batch of pasted notebook lines is
+   * very often all the same paper job.
+   */
+  const [lastNotebookDefaults, setLastNotebookDefaults] = useState<Partial<DraftItem> | null>(null);
   const [partnerId, setPartnerId] = useState(
     editOrder?.partnerId ?? editQuotation?.partnerId ?? presetPartnerId ?? partners[0]?.id ?? '',
   );
@@ -2820,6 +2829,20 @@ function NewOrderForm({
       setEditingKey(null);
     } else {
       setCart((prev) => [...prev, line]);
+    }
+    // Owner (2026-09-09, "ممكن يقترح عليا من ملاحظة التكرار") — remember
+    // this notebook's paper/size/color/sides/binding so the next
+    // paste-parsed notebook row can suggest the same values instead of
+    // starting blank (a pasted batch is very often all the same job).
+    if (draft.kind === 'NOTEBOOK') {
+      setLastNotebookDefaults({
+        sizeFamilyKey: draft.sizeFamilyKey,
+        realSizeLabel: draft.realSizeLabel,
+        inventoryItemId: draft.inventoryItemId,
+        colorCount: draft.colorCount,
+        sides: draft.sides,
+        bindingPricePerNotebook: draft.bindingPricePerNotebook,
+      });
     }
     setPendingGroupKey(null);
     setDraft(emptyDraftItem(activeParent.kind ?? activeSubTab?.kind ?? 'LOOSE_PAPER', extraServiceOptions));
@@ -5457,6 +5480,10 @@ function NewOrderForm({
       )}
       {showQuickPasteItems && (
         <QuickPasteItemsDialog
+          inventoryItems={inventoryItems}
+          ctx={ctx}
+          extraServiceOptions={extraServiceOptions}
+          lastNotebookDefaults={lastNotebookDefaults}
           onAddLines={(lines) => setCart((prev) => [...prev, ...lines])}
           onClose={() => setShowQuickPasteItems(false)}
         />
@@ -5794,102 +5821,385 @@ function QuickSaleDialog({
   );
 }
 
-interface ParsedQuickItemLine {
+interface ParsedManualLine {
+  kind: 'MANUAL';
   lineNumber: number;
+  raw: string;
   name: string;
   quantity: number;
   unitPrice: number;
   error?: string;
 }
 
-/** One item per line — `اسم، كمية، سعر` (comma or tab-separated, so a paste straight from an Excel column also works). Blank lines are dropped. */
-function parseQuickItemLines(text: string): ParsedQuickItemLine[] {
-  return text
-    .split('\n')
-    .map((raw, idx) => ({ raw: raw.trim(), lineNumber: idx + 1 }))
-    .filter(({ raw }) => raw.length > 0)
-    .map(({ raw, lineNumber }) => {
-      const parts = (raw.includes('\t') ? raw.split('\t') : raw.split(/[,،]/)).map((p) => p.trim());
-      const [name = '', qtyRaw = '', priceRaw = ''] = parts;
-      const quantity = Number(qtyRaw);
-      const unitPrice = Number(priceRaw);
+interface ParsedInventoryLine {
+  kind: 'INVENTORY';
+  lineNumber: number;
+  raw: string;
+  name: string;
+  quantity: number;
+  inventoryItemId: string | null;
+  error?: string;
+}
 
-      let error: string | undefined;
-      if (!name) error = 'الاسم مطلوب';
-      else if (parts.length < 3) error = 'الصيغة المطلوبة: اسم الصنف، الكمية، السعر';
-      else if (!Number.isFinite(quantity) || quantity <= 0) error = 'الكمية لازم تكون رقم أكبر من صفر';
-      else if (!Number.isFinite(unitPrice) || unitPrice < 0) error = 'السعر لازم يكون رقم';
+interface ParsedNotebookLine {
+  kind: 'NOTEBOOK';
+  lineNumber: number;
+  raw: string;
+  notebookQuantity: number;
+  contentType: 'ORIGINAL_ONLY' | 'ORIGINAL_PLUS_COPIES';
+  copies: number;
+  /** Detected from "مرقم"/"ترقيم" in the text — when false, the numbering question still has to be asked (never assumed "لا"). */
+  hasNumbering: boolean;
+}
 
-      return {
-        lineNumber,
-        name,
-        quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
-        unitPrice: Number.isFinite(unitPrice) && unitPrice >= 0 ? unitPrice : 0,
-        error,
-      };
-    });
+interface ParsedUnrecognizedLine {
+  kind: 'UNRECOGNIZED';
+  lineNumber: number;
+  raw: string;
+  error: string;
+}
+
+type ParsedQuickLine = ParsedManualLine | ParsedInventoryLine | ParsedNotebookLine | ParsedUnrecognizedLine;
+
+const ARABIC_DIGITS = '٠١٢٣٤٥٦٧٨٩';
+/** Arabic-Indic digits (١٢٣) → ASCII, so `10 دفاتر` and `١٠ دفاتر` both parse — everything else in this parser matches ASCII digits only. */
+function normalizeDigits(s: string): string {
+  return s.replace(/[٠-٩]/g, (d) => String(ARABIC_DIGITS.indexOf(d)));
+}
+
+/** Exact name match first (same as the rest of this file's catalog-matching precedent), falling back to a loose substring match either way — a free-typed paste is never going to hit the stored name byte-for-byte. */
+function findInventoryItemByFreeText(name: string, inventoryItems: InventoryItem[]): InventoryItem | null {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return null;
+  const exact = inventoryItems.find((i) => i.name.trim().toLowerCase() === normalized);
+  if (exact) return exact;
+  return (
+    inventoryItems.find((i) => {
+      const itemName = i.name.trim().toLowerCase();
+      return itemName.includes(normalized) || normalized.includes(itemName);
+    }) ?? null
+  );
 }
 
 /**
  * Owner (2026-09-08, "هل ممكن يكون في Ai مش شرط Ai بالظبط بس اكتب انا
- * الكلام عشوائي مره واحده وهو يحسبهم كلهم بدل ما تكون عملية الحساب بطيئة
- * لأني بحسبهم بند بند") — confirmed over AskUserQuestion: a fast form (not
- * an actual AI/LLM call) where a fixed line format is parsed and reviewed
- * before anything is added. Scoped to MANUAL only — its "pricing" is just
- * `unitPrice × quantity`, so building cart lines directly here (skipping
- * `addToCart`'s full per-kind draft/preview machinery) touches zero pricing
- * formula (rule 3/4 is a non-issue for a kind that has no formula at all).
+ * الكلام عشوائي مره واحده وهو يحسبهم كلهم") + (2026-09-09, "حابب إنه يكون
+ * ذكي مش لازم ترتيب... مخزون يتحسب من المخزون، أوفست يتحسب بالمنطق
+ * الموجود، يدوي بسعره المكتوب") — three line shapes auto-detected by
+ * content, never a required prefix or column order:
+ *
+ * 1. NOTEBOOK — any line mentioning "دفتر/دفاتر" (with a quantity). Free-
+ *    order keyword scan for "أصل"/"صورة"/"كربون"/"مكربن" (→ `contentType`/
+ *    `copies`) and "مرقم"/"ترقيم" (→ numbering already on) — these map
+ *    onto real `notebookPricingInputSchema` fields, never a guess.
+ *    Everything else NOTEBOOK pricing legally needs (مقاس/ورق/لون/وجه/
+ *    تصميم/تجليد) is never inferred from text — owner explicit: "حابب إن
+ *    الحاجات الناقصه يسألني عليها... وبعد ما اجاوب عليها الاقيه ملأ كل
+ *    الحاجات اللي كانت ناقصه". `QuickPasteItemsDialog` asks exactly these
+ *    missing fields inline, per row, then prices for real once answered.
+ * 2. INVENTORY — `اسم، كمية` (2 fields) — matched against the real
+ *    inventory catalog by name; priced from `InventoryItem.salePrice`,
+ *    same as picking it from "بضاعة من المخزون" normally.
+ * 3. MANUAL — `اسم، كمية، سعر` (3 fields, price typed explicitly) — kept
+ *    exactly as before: "لو بند يدوي ومكتوبله سعره يتعامل معاه بشكل مرن
+ *    ويحطه في الفاتورة".
+ *
+ * Blank lines are dropped; anything matching none of the three shapes
+ * becomes an `UNRECOGNIZED` row the user has to fix or drop.
  */
-function QuickPasteItemsDialog({ onAddLines, onClose }: { onAddLines: (lines: CartLine[]) => void; onClose: () => void }) {
+function parseQuickItemLines(text: string, inventoryItems: InventoryItem[]): ParsedQuickLine[] {
+  return text
+    .split('\n')
+    .map((line, idx) => ({ raw: line.trim(), lineNumber: idx + 1 }))
+    .filter(({ raw }) => raw.length > 0)
+    .map(({ raw, lineNumber }): ParsedQuickLine => {
+      const normalized = normalizeDigits(raw);
+
+      // No trailing `\b` — JS regex word boundaries are ASCII-only (`\w`
+      // excludes Arabic letters entirely), so `\b` right after Arabic text
+      // silently never matches.
+      const notebookMatch = normalized.match(/(\d+)\s*دفاتر?/);
+      if (notebookMatch) {
+        const notebookQuantity = Number(notebookMatch[1]);
+        const copyMatch = normalized.match(/(\d+)?\s*صور[ةه]?/);
+        const hasCarbonHint = /مكربن|كربون/.test(normalized);
+        const contentType: 'ORIGINAL_ONLY' | 'ORIGINAL_PLUS_COPIES' =
+          copyMatch || hasCarbonHint ? 'ORIGINAL_PLUS_COPIES' : 'ORIGINAL_ONLY';
+        const copies = contentType === 'ORIGINAL_PLUS_COPIES' ? Number(copyMatch?.[1] ?? 1) || 1 : 0;
+        const hasNumbering = /مرقم|ترقيم/.test(normalized);
+        return { kind: 'NOTEBOOK', lineNumber, raw, notebookQuantity, contentType, copies, hasNumbering };
+      }
+
+      const parts = (raw.includes('\t') ? raw.split('\t') : raw.split(/[,،]/)).map((p) => p.trim());
+
+      if (parts.length >= 3) {
+        const [name = '', qtyRaw = '', priceRaw = ''] = parts;
+        const quantity = Number(normalizeDigits(qtyRaw));
+        const unitPrice = Number(normalizeDigits(priceRaw));
+        let error: string | undefined;
+        if (!name) error = 'الاسم مطلوب';
+        else if (!Number.isFinite(quantity) || quantity <= 0) error = 'الكمية لازم تكون رقم أكبر من صفر';
+        else if (!Number.isFinite(unitPrice) || unitPrice < 0) error = 'السعر لازم يكون رقم';
+        return {
+          kind: 'MANUAL',
+          lineNumber,
+          raw,
+          name,
+          quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+          unitPrice: Number.isFinite(unitPrice) && unitPrice >= 0 ? unitPrice : 0,
+          error,
+        };
+      }
+
+      if (parts.length === 2) {
+        const [name = '', qtyRaw = ''] = parts;
+        const quantity = Number(normalizeDigits(qtyRaw));
+        const matched = findInventoryItemByFreeText(name, inventoryItems);
+        let error: string | undefined;
+        if (!name) error = 'الاسم مطلوب';
+        else if (!Number.isFinite(quantity) || quantity <= 0) error = 'الكمية لازم تكون رقم أكبر من صفر';
+        else if (!matched) error = 'الصنف ده مش موجود في المخزون — اختاره يدوي أو صحح الاسم';
+        return {
+          kind: 'INVENTORY',
+          lineNumber,
+          raw,
+          name,
+          quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+          inventoryItemId: matched?.id ?? null,
+          error,
+        };
+      }
+
+      return {
+        kind: 'UNRECOGNIZED',
+        lineNumber,
+        raw,
+        error: 'مش قادر أفهم السطر ده — دفتر (اكتب "دفاتر")، أو صنف من المخزون (اسم، كمية)، أو بند يدوي (اسم، كمية، سعر)',
+      };
+    });
+}
+
+/** One notebook row's answers to the inline questions — `''` means "not answered yet" for every field, tri-state for the yes/no ones. */
+interface NotebookAnswers {
+  sizeFamilyKey: string;
+  realSizeLabel: string;
+  inventoryItemId: string;
+  colorCount: string;
+  sides: '1' | '2' | '';
+  isNewDesign: '1' | '0' | '';
+  numberingAnswer: '1' | '0' | '';
+  bindingPricePerNotebook: string;
+}
+
+const EMPTY_NOTEBOOK_ANSWERS: NotebookAnswers = {
+  sizeFamilyKey: '',
+  realSizeLabel: '',
+  inventoryItemId: '',
+  colorCount: '',
+  sides: '',
+  isNewDesign: '',
+  numberingAnswer: '',
+  bindingPricePerNotebook: '',
+};
+
+/** Owner (2026-09-09, "ممكن يقترح عليا من ملاحظة التكرار") — a fresh row starts from the last successfully-added notebook's paper/size/color/sides/binding as an editable suggestion, never silently applied. */
+function initialNotebookAnswers(defaults: Partial<DraftItem> | null): NotebookAnswers {
+  if (!defaults) return { ...EMPTY_NOTEBOOK_ANSWERS };
+  return {
+    ...EMPTY_NOTEBOOK_ANSWERS,
+    sizeFamilyKey: defaults.sizeFamilyKey ?? '',
+    realSizeLabel: defaults.realSizeLabel ?? '',
+    inventoryItemId: defaults.inventoryItemId ?? '',
+    colorCount: defaults.colorCount ?? '',
+    sides: defaults.sides ?? '',
+    bindingPricePerNotebook: defaults.bindingPricePerNotebook ?? '',
+  };
+}
+
+/**
+ * Owner (2026-09-08, "هل ممكن يكون في Ai مش شرط Ai بالظبط بس اكتب انا
+ * الكلام عشوائي مره واحده وهو يحسبهم كلهم") + (2026-09-09, "حابب إنه يكون
+ * ذكي مش لازم ترتيب... لا انا عايز الأسألة تطلع قدامي وبعد ما اجاوب عليها
+ * الاقيه ملأ كل الحاجات اللي كانت ناقصه... في حالة إني كاتبله كل حاجه
+ * خلاص تمام هيضيف البند عادي") — three line shapes auto-detected by
+ * content (see `parseQuickItemLines`'s doc comment). MANUAL/INVENTORY
+ * rows are priced right here with zero questions (MANUAL has no formula
+ * at all; INVENTORY is a direct catalog-price lookup — zero new pricing
+ * logic either way). NOTEBOOK rows ask, inline, only for whatever the
+ * text didn't already resolve (مقاس/ورق/لون/وجه/تصميم/تجليد, ترقيم only if
+ * not already detected) — once every question for a row is answered it
+ * prices for real through the exact same `previewItemTotal` the normal
+ * one-by-one composer uses, no formula duplicated or approximated, and is
+ * ready to add alongside everything else in one batch.
+ */
+function QuickPasteItemsDialog({
+  inventoryItems,
+  ctx,
+  extraServiceOptions,
+  lastNotebookDefaults,
+  onAddLines,
+  onClose,
+}: {
+  inventoryItems: InventoryItem[];
+  ctx: PricingCtx;
+  extraServiceOptions: ExtraServiceOption[];
+  lastNotebookDefaults: Partial<DraftItem> | null;
+  onAddLines: (lines: CartLine[]) => void;
+  onClose: () => void;
+}) {
   const [text, setText] = useState('');
-  const [rows, setRows] = useState<(ParsedQuickItemLine & { included: boolean })[] | null>(null);
+  const [rows, setRows] = useState<ParsedQuickLine[] | null>(null);
+  const [included, setIncluded] = useState<Set<number>>(new Set());
+  const [notebookAnswers, setNotebookAnswers] = useState<Record<number, NotebookAnswers>>({});
+
+  const paperInventoryItems = inventoryItems.filter((i) => i.sheetPrice !== null);
+  const allSizeEntries = ctx.families.flatMap((f) => f.entries.map((en) => ({ familyKey: f.key, familyLabel: f.label, label: en.label })));
 
   const parse = () => {
-    const parsed = parseQuickItemLines(text);
-    setRows(parsed.map((r) => ({ ...r, included: !r.error })));
+    const parsed = parseQuickItemLines(text, inventoryItems);
+    setRows(parsed);
+    setIncluded(
+      new Set(
+        parsed
+          .filter((r): r is ParsedManualLine | ParsedInventoryLine => (r.kind === 'MANUAL' || r.kind === 'INVENTORY') && !r.error)
+          .map((r) => r.lineNumber),
+      ),
+    );
+    setNotebookAnswers(
+      Object.fromEntries(
+        parsed.filter((r): r is ParsedNotebookLine => r.kind === 'NOTEBOOK').map((r) => [r.lineNumber, initialNotebookAnswers(lastNotebookDefaults)]),
+      ),
+    );
   };
 
-  const updateRow = (lineNumber: number, patch: Partial<ParsedQuickItemLine & { included: boolean }>) => {
-    setRows((prev) => prev?.map((r) => (r.lineNumber === lineNumber ? { ...r, ...patch } : r)) ?? prev);
+  const updateManualOrInventoryRow = (lineNumber: number, patch: Record<string, unknown>) => {
+    setRows((prev) => prev?.map((r) => (r.lineNumber === lineNumber ? ({ ...r, ...patch } as ParsedQuickLine) : r)) ?? prev);
   };
 
-  const included = (rows ?? []).filter((r) => r.included && r.quantity > 0);
-  const grandTotal = included.reduce((sum, r) => sum + r.quantity * r.unitPrice, 0);
+  const updateNotebookAnswer = (lineNumber: number, patch: Partial<NotebookAnswers>) => {
+    setNotebookAnswers((prev) => ({ ...prev, [lineNumber]: { ...(prev[lineNumber] ?? EMPTY_NOTEBOOK_ANSWERS), ...patch } }));
+  };
 
-  const confirmAdd = () => {
-    const lines: CartLine[] = included.map((r) => {
+  const notebookRows = (rows ?? []).filter((r): r is ParsedNotebookLine => r.kind === 'NOTEBOOK');
+  const priceableRows = (rows ?? []).filter(
+    (r): r is ParsedManualLine | ParsedInventoryLine => r.kind === 'MANUAL' || r.kind === 'INVENTORY',
+  );
+  const includedRows = priceableRows.filter((r) => included.has(r.lineNumber));
+
+  const rowUnitPrice = (row: ParsedManualLine | ParsedInventoryLine): number => {
+    if (row.kind === 'MANUAL') return row.unitPrice;
+    const item = inventoryItems.find((i) => i.id === row.inventoryItemId);
+    return item?.salePrice ?? 0;
+  };
+
+  /** Builds the exact same `DraftItem` shape the real composer would, from a notebook row's parsed + answered fields — then reuses `previewItemTotal` verbatim (rule 5), never a shortcut formula. */
+  const buildNotebookDraft = (row: ParsedNotebookLine, answers: NotebookAnswers): DraftItem => ({
+    ...emptyDraftItem('NOTEBOOK', extraServiceOptions),
+    itemType: row.raw,
+    notebookQuantity: String(row.notebookQuantity),
+    contentType: row.contentType,
+    copies: row.contentType === 'ORIGINAL_PLUS_COPIES' ? String(row.copies) : '',
+    numberingStartNumber: row.hasNumbering || answers.numberingAnswer === '1' ? '1' : '',
+    sizeFamilyKey: answers.sizeFamilyKey,
+    realSizeLabel: answers.realSizeLabel,
+    inventoryItemId: answers.inventoryItemId,
+    colorCount: answers.colorCount,
+    sides: (answers.sides || '1') as '1' | '2',
+    isNewDesign: answers.isNewDesign === '1',
+    bindingPricePerNotebook: answers.bindingPricePerNotebook,
+  });
+
+  const notebookRowStatus = (row: ParsedNotebookLine) => {
+    const answers = notebookAnswers[row.lineNumber] ?? EMPTY_NOTEBOOK_ANSWERS;
+    const missing: string[] = [];
+    if (!answers.sizeFamilyKey || !answers.realSizeLabel || !answers.inventoryItemId) missing.push('المقاس ونوع الورق');
+    if (!answers.colorCount || Number(answers.colorCount) <= 0) missing.push('عدد الألوان');
+    if (!answers.sides) missing.push('وجه واحد ولا وجهين');
+    if (!answers.isNewDesign) missing.push('تصميم جديد؟');
+    if (!row.hasNumbering && !answers.numberingAnswer) missing.push('ترقيم؟');
+    if (!answers.bindingPricePerNotebook) missing.push('سعر التجليد للدفتر');
+    if (missing.length > 0) return { ready: false as const, missing, answers };
+    const draft = buildNotebookDraft(row, answers);
+    const preview = previewItemTotal(draft, ctx);
+    if (preview.error) return { ready: false as const, missing: [preview.error], answers };
+    return { ready: true as const, draft, preview, answers };
+  };
+
+  const readyNotebookRows = notebookRows
+    .map((row) => ({ row, status: notebookRowStatus(row) }))
+    .filter((r): r is { row: ParsedNotebookLine; status: { ready: true; draft: DraftItem; preview: ReturnType<typeof previewItemTotal>; answers: NotebookAnswers } } => r.status.ready);
+
+  const grandTotal =
+    includedRows.reduce((sum, r) => sum + r.quantity * rowUnitPrice(r), 0) + readyNotebookRows.reduce((sum, r) => sum + r.status.preview.total, 0);
+
+  const buildLines = (): CartLine[] => {
+    const manualOrInventoryLines: CartLine[] = includedRows.map((r) => {
       draftKeySeq += 1;
+      if (r.kind === 'MANUAL') {
+        return {
+          key: `item-${draftKeySeq}`,
+          itemType: r.name,
+          summary: `${r.name} × ${r.quantity}`,
+          pricing: { kind: 'MANUAL', unitPrice: r.unitPrice, quantity: r.quantity },
+          total: r.unitPrice * r.quantity,
+          productionTrack: null,
+        };
+      }
+      const item = inventoryItems.find((i) => i.id === r.inventoryItemId)!;
       return {
         key: `item-${draftKeySeq}`,
-        itemType: r.name,
-        summary: `${r.name} × ${r.quantity}`,
-        pricing: { kind: 'MANUAL', unitPrice: r.unitPrice, quantity: r.quantity },
-        total: r.unitPrice * r.quantity,
+        itemType: item.name,
+        summary: `${item.name} × ${r.quantity}`,
+        pricing: { kind: 'INVENTORY_RETAIL', inventoryItemId: item.id, quantity: r.quantity },
+        total: (item.salePrice ?? 0) * r.quantity,
         productionTrack: null,
       };
     });
-    onAddLines(lines);
+    const notebookLines: CartLine[] = readyNotebookRows.map(({ row, status }) => {
+      draftKeySeq += 1;
+      const pricing = buildPricingInput(status.draft)!;
+      return {
+        key: `item-${draftKeySeq}`,
+        itemType: row.raw,
+        summary: describeDraft(status.draft, [], [], []),
+        pricing,
+        total: status.preview.total,
+        productionTrack: 'OFFSET',
+        breakdown: status.preview.result ?? undefined,
+      };
+    });
+    return [...manualOrInventoryLines, ...notebookLines];
+  };
+
+  const readyLineCount = includedRows.length + readyNotebookRows.length;
+
+  const confirmAdd = () => {
+    const lines = buildLines();
+    if (lines.length) onAddLines(lines);
     onClose();
   };
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>لصق قائمة أصناف — بند يدوي</DialogTitle>
+          <DialogTitle>لصق قائمة أصناف</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           {!rows && (
             <>
-              <p className="text-muted-foreground text-xs">
-                سطر لكل صنف — الاسم، الكمية، السعر (افصل بينهم بفاصلة، أو الصق مباشرة من عمود إكسيل). مثال:
-              </p>
+              <p className="text-muted-foreground text-xs">سطر لكل صنف — مش لازم ترتيب ثابت، النظام بيعرف نوع كل سطر بنفسه:</p>
+              <ul className="text-muted-foreground list-inside list-disc text-xs">
+                <li>دفتر — أي سطر فيه "دفاتر" (مثال: 10 دفاتر اصل + 3 صور مرقم) — هيسألك بس على اللي ناقص</li>
+                <li>صنف من المخزون — الاسم، الكمية (يتسعّر تلقائي من سعر البيع)</li>
+                <li>بند يدوي بسعر — الاسم، الكمية، السعر</li>
+              </ul>
               <textarea
                 autoFocus
                 rows={10}
                 value={text}
                 onChange={(e) => setText(e.target.value)}
-                placeholder={'ورق A4 80 جرام, 5, 120\nشريط لاصق, 10, 15'}
+                placeholder={'10 دفاتر اصل + 3 صور مرقم\nورق A4 80 جرام, 5\nشريط لاصق, 10, 15'}
                 className="border-input bg-background w-full rounded-md border px-3 py-2 font-mono text-sm"
                 dir="rtl"
               />
@@ -5906,77 +6216,239 @@ function QuickPasteItemsDialog({ onAddLines, onClose }: { onAddLines: (lines: Ca
 
           {rows && (
             <>
-              <div className="border-border max-h-80 overflow-y-auto rounded-md border">
-                <table className="w-full text-xs">
-                  <thead className="bg-muted sticky top-0">
-                    <tr className="*:p-2 *:text-start">
-                      <th></th>
-                      <th>الاسم</th>
-                      <th>الكمية</th>
-                      <th>السعر</th>
-                      <th>الإجمالي</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <tr key={row.lineNumber} className={`border-border border-t ${row.error ? 'bg-destructive/10' : ''}`}>
-                        <td className="p-2">
-                          <input
-                            type="checkbox"
-                            title={row.error}
-                            checked={row.included}
-                            onChange={(e) => updateRow(row.lineNumber, { included: e.target.checked })}
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            value={row.name}
-                            onChange={(e) => updateRow(row.lineNumber, { name: e.target.value })}
-                            className="border-input bg-background w-full rounded border px-2 py-1"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="number"
-                            min={1}
-                            dir="ltr"
-                            value={row.quantity}
-                            onChange={(e) => updateRow(row.lineNumber, { quantity: Number(e.target.value) || 0 })}
-                            className="border-input bg-background w-full rounded border px-2 py-1"
-                          />
-                        </td>
-                        <td className="p-1">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            dir="ltr"
-                            value={row.unitPrice}
-                            onChange={(e) => updateRow(row.lineNumber, { unitPrice: Number(e.target.value) || 0 })}
-                            className="border-input bg-background w-full rounded border px-2 py-1"
-                          />
-                        </td>
-                        <td className="text-muted-foreground p-1">
-                          {(row.quantity * row.unitPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </td>
+              {notebookRows.map((row) => {
+                const status = notebookRowStatus(row);
+                const answers = status.answers;
+                return (
+                  <div key={row.lineNumber} className="border-border bg-muted/20 space-y-3 rounded-lg border p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium" dir="rtl">
+                        📓 {row.raw}
+                      </p>
+                      {status.ready ? (
+                        <span className="text-success text-sm font-semibold">
+                          جاهز — {status.preview.total.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م
+                        </span>
+                      ) : (
+                        <span className="text-warning-foreground text-xs">محتاج: {status.missing.join('، ')}</span>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div>
+                        <span className="text-muted-foreground text-xs">المقاس</span>
+                        <Combobox
+                          items={answers.sizeFamilyKey ? allSizeEntries.filter((en) => en.familyKey === answers.sizeFamilyKey) : allSizeEntries}
+                          value={answers.realSizeLabel ? `${answers.sizeFamilyKey}::${answers.realSizeLabel}` : ''}
+                          getKey={(en) => `${en.familyKey}::${en.label}`}
+                          getLabel={(en) => en.label}
+                          getSubLabel={(en) => en.familyLabel}
+                          onChange={(en) => updateNotebookAnswer(row.lineNumber, { sizeFamilyKey: en.familyKey, realSizeLabel: en.label })}
+                          placeholder="اكتب المقاس، مثال: 23"
+                          searchPlaceholder="اكتب المقاس للبحث…"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground text-xs">نوع الورق</span>
+                        <InventoryItemCombobox
+                          items={paperInventoryItems}
+                          value={answers.inventoryItemId}
+                          onChange={(p) => updateNotebookAnswer(row.lineNumber, { inventoryItemId: p.id })}
+                          placeholder="— اختر الورق —"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <label className="space-y-1 text-xs">
+                        <span className="text-muted-foreground">عدد الألوان</span>
+                        <input
+                          type="number"
+                          min={1}
+                          dir="ltr"
+                          value={answers.colorCount}
+                          onChange={(e) => updateNotebookAnswer(row.lineNumber, { colorCount: e.target.value })}
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+                        />
+                      </label>
+                      <label className="space-y-1 text-xs">
+                        <span className="text-muted-foreground">سعر التجليد للدفتر</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          dir="ltr"
+                          value={answers.bindingPricePerNotebook}
+                          onChange={(e) => updateNotebookAnswer(row.lineNumber, { bindingPricePerNotebook: e.target.value })}
+                          className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+                        />
+                      </label>
+                      <div className="space-y-1 text-xs">
+                        <span className="text-muted-foreground block">وجه واحد ولا وجهين؟</span>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => updateNotebookAnswer(row.lineNumber, { sides: '1' })}
+                            className={`flex-1 rounded-md border px-2 py-1.5 ${answers.sides === '1' ? 'bg-primary text-primary-foreground border-primary' : 'border-input'}`}
+                          >
+                            وجه واحد
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateNotebookAnswer(row.lineNumber, { sides: '2' })}
+                            className={`flex-1 rounded-md border px-2 py-1.5 ${answers.sides === '2' ? 'bg-primary text-primary-foreground border-primary' : 'border-input'}`}
+                          >
+                            وجهين
+                          </button>
+                        </div>
+                      </div>
+                      <div className="space-y-1 text-xs">
+                        <span className="text-muted-foreground block">في تصميم جديد؟</span>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => updateNotebookAnswer(row.lineNumber, { isNewDesign: '1' })}
+                            className={`flex-1 rounded-md border px-2 py-1.5 ${answers.isNewDesign === '1' ? 'bg-primary text-primary-foreground border-primary' : 'border-input'}`}
+                          >
+                            نعم
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateNotebookAnswer(row.lineNumber, { isNewDesign: '0' })}
+                            className={`flex-1 rounded-md border px-2 py-1.5 ${answers.isNewDesign === '0' ? 'bg-primary text-primary-foreground border-primary' : 'border-input'}`}
+                          >
+                            لا
+                          </button>
+                        </div>
+                      </div>
+                      {!row.hasNumbering && (
+                        <div className="space-y-1 text-xs">
+                          <span className="text-muted-foreground block">مرقم؟</span>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => updateNotebookAnswer(row.lineNumber, { numberingAnswer: '1' })}
+                              className={`flex-1 rounded-md border px-2 py-1.5 ${answers.numberingAnswer === '1' ? 'bg-primary text-primary-foreground border-primary' : 'border-input'}`}
+                            >
+                              نعم
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateNotebookAnswer(row.lineNumber, { numberingAnswer: '0' })}
+                              className={`flex-1 rounded-md border px-2 py-1.5 ${answers.numberingAnswer === '0' ? 'bg-primary text-primary-foreground border-primary' : 'border-input'}`}
+                            >
+                              لا
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {priceableRows.length > 0 && (
+                <div className="border-border max-h-80 overflow-y-auto rounded-md border">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted sticky top-0">
+                      <tr className="*:p-2 *:text-start">
+                        <th></th>
+                        <th>النوع</th>
+                        <th>الاسم</th>
+                        <th>الكمية</th>
+                        <th>السعر</th>
+                        <th>الإجمالي</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {rows.some((r) => r.error) && (
+                    </thead>
+                    <tbody>
+                      {priceableRows.map((row) => (
+                        <tr key={row.lineNumber} className={`border-border border-t ${row.error ? 'bg-destructive/10' : ''}`}>
+                          <td className="p-2">
+                            <input
+                              type="checkbox"
+                              title={row.error}
+                              checked={included.has(row.lineNumber)}
+                              onChange={(e) =>
+                                setIncluded((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(row.lineNumber);
+                                  else next.delete(row.lineNumber);
+                                  return next;
+                                })
+                              }
+                            />
+                          </td>
+                          <td className="text-muted-foreground p-1">{row.kind === 'MANUAL' ? 'يدوي' : 'مخزون'}</td>
+                          <td className="p-1">
+                            {row.kind === 'INVENTORY' ? (
+                              <InventoryItemCombobox
+                                items={inventoryItems}
+                                value={row.inventoryItemId ?? ''}
+                                onChange={(item) => updateManualOrInventoryRow(row.lineNumber, { inventoryItemId: item.id, error: undefined })}
+                                placeholder={row.name}
+                              />
+                            ) : (
+                              <input
+                                value={row.name}
+                                onChange={(e) => updateManualOrInventoryRow(row.lineNumber, { name: e.target.value })}
+                                className="border-input bg-background w-full rounded border px-2 py-1"
+                              />
+                            )}
+                          </td>
+                          <td className="p-1">
+                            <input
+                              type="number"
+                              min={1}
+                              dir="ltr"
+                              value={row.quantity}
+                              onChange={(e) => updateManualOrInventoryRow(row.lineNumber, { quantity: Number(e.target.value) || 0 })}
+                              className="border-input bg-background w-full rounded border px-2 py-1"
+                            />
+                          </td>
+                          {row.kind === 'MANUAL' ? (
+                            <td className="p-1">
+                              <input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                dir="ltr"
+                                value={row.unitPrice}
+                                onChange={(e) => updateManualOrInventoryRow(row.lineNumber, { unitPrice: Number(e.target.value) || 0 })}
+                                className="border-input bg-background w-full rounded border px-2 py-1"
+                              />
+                            </td>
+                          ) : (
+                            <td className="text-muted-foreground p-1" dir="ltr">
+                              {rowUnitPrice(row).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </td>
+                          )}
+                          <td className="text-muted-foreground p-1" dir="ltr">
+                            {(row.quantity * rowUnitPrice(row)).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {(rows ?? []).some((r) => r.kind === 'UNRECOGNIZED') && (
                 <p className="text-destructive text-xs">
-                  الصفوف المُلوّنة فيها مشكلة (اسم/كمية/سعر) — صححها من الجدول لو عايز تضيفها، أو سيبها مستبعدة.
+                  {(rows ?? [])
+                    .filter((r) => r.kind === 'UNRECOGNIZED')
+                    .map((r) => `صف ${r.lineNumber}: ${r.error}`)
+                    .join(' — ')}
                 </p>
               )}
+
               <div className="flex items-center justify-between">
                 <Button type="button" variant="secondary" onClick={() => setRows(null)}>
                   رجوع
                 </Button>
                 <div className="flex items-center gap-3">
                   <span className="text-sm">الإجمالي: {grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م</span>
-                  <Button type="button" onClick={confirmAdd} disabled={included.length === 0}>
-                    إضافة للسلة ({included.length})
+                  <Button type="button" onClick={confirmAdd} disabled={readyLineCount === 0}>
+                    إضافة ({readyLineCount})
                   </Button>
                 </div>
               </div>
