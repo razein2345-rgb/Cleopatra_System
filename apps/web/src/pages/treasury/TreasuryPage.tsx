@@ -4,6 +4,7 @@ import type {
   BusinessPartner,
   CompanyFinancialSummary,
   CreateTreasuryEntryInput,
+  FixedMonthlyExpense,
   MyTreasurySummary,
   PaymentMethod,
   TreasuryBalance,
@@ -32,6 +33,7 @@ import {
 import { useAuth } from '@/state/AuthContext';
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 import { TREASURY_TYPE_LABELS, TREASURY_TYPE_OPTIONS, treasuryTypeTone, WALLET_COLORS } from './treasuryLabels';
+import { FixedMonthlyExpensesEditor } from './FixedMonthlyExpensesEditor';
 
 /**
  * FEATURE-006 M4 — "الخزينة والنقدية," a real, first-class module (not a
@@ -100,13 +102,24 @@ function FullTreasuryView() {
   const [branchSummary, setBranchSummary] = useState<CompanyFinancialSummary | null>(null);
   const canSeeBranchSummary = can('reports.view');
 
-  useEffect(() => {
+  const loadBranchSummary = () => {
     if (!canSeeBranchSummary) return;
     apiGet<CompanyFinancialSummary>('/api/reports/branch-summary')
       .then(setBranchSummary)
       .catch(() => setBranchSummary(null));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canSeeBranchSummary]);
+  };
+  useEffect(loadBranchSummary, [canSeeBranchSummary]);
+
+  // Owner (2026-09-08, "محتاج قسم خاص بالخزينة يكون فيه المصروفات الشهرية
+  // الدائمة") — Super-Admin-only, same restriction as the endpoint itself.
+  const [fixedExpenses, setFixedExpenses] = useState<FixedMonthlyExpense[] | null>(null);
+  const loadFixedExpenses = () => {
+    if (!isSuperAdmin) return;
+    apiGet<FixedMonthlyExpense[]>('/api/fixed-monthly-expenses')
+      .then(setFixedExpenses)
+      .catch(() => setFixedExpenses(null));
+  };
+  useEffect(loadFixedExpenses, [isSuperAdmin]);
 
   const loadList = () => {
     const params = new URLSearchParams();
@@ -264,6 +277,23 @@ function FullTreasuryView() {
           <p className="mb-3 text-sm font-bold">صافي الربح والخزينة بالفرع</p>
           {branchSummary ? (
             <BranchFinancialSummaryTable summary={branchSummary} />
+          ) : (
+            <p className="text-muted-foreground text-sm">جارٍ التحميل…</p>
+          )}
+        </Card>
+      )}
+
+      {isSuperAdmin && (
+        <Card className="p-4">
+          {fixedExpenses ? (
+            <FixedMonthlyExpensesEditor
+              items={fixedExpenses}
+              branches={branches}
+              onChanged={() => {
+                loadFixedExpenses();
+                loadBranchSummary();
+              }}
+            />
           ) : (
             <p className="text-muted-foreground text-sm">جارٍ التحميل…</p>
           )}

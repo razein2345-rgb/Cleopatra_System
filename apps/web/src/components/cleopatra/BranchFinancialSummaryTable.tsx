@@ -25,6 +25,8 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
               <th>رصيد الخزينة</th>
               <th>إجمالي المبيعات</th>
               <th>صافي الربح</th>
+              <th title="مصاريف شهرية ثابتة وأصلها الشهري (إيجار/رواتب...) مقسّمة على 30 يوم">المصاريف الثابتة يوميًا</th>
+              <th>الصافي بعد المصاريف اليومية</th>
             </tr>
           </thead>
           <tbody>
@@ -43,13 +45,17 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
                     </span>
                   )}
                 </td>
+                <td className="text-muted-foreground">{fmt(b.dailyFixedCost)}</td>
+                <td className={b.netAfterDailyFixedCost < 0 ? 'text-destructive font-medium' : 'font-medium'}>
+                  {fmt(b.netAfterDailyFixedCost)}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       {summary.branches.length > 1 && (
-        <div className="border-border grid grid-cols-3 gap-3 border-t pt-3">
+        <div className="border-border grid grid-cols-2 gap-3 border-t pt-3 sm:grid-cols-3 lg:grid-cols-5">
           <div>
             <p className="text-muted-foreground text-xs">إجمالي رصيد الخزينة (كل الفروع)</p>
             <p className={`text-lg font-bold ${summary.totalTreasuryBalance < 0 ? 'text-destructive' : ''}`}>
@@ -65,6 +71,16 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
             <p className="text-lg font-bold">
               {fmt(summary.totalNetProfit)}
               {summary.hasUnknownProfitItems && <span className="text-warning ms-1 text-xs">⚠ تقديري</span>}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">إجمالي المصاريف الثابتة يوميًا</p>
+            <p className="text-lg font-bold">{fmt(summary.totalDailyFixedCost)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">الصافي العام بعد المصاريف اليومية</p>
+            <p className={`text-lg font-bold ${summary.totalNetAfterDailyFixedCost < 0 ? 'text-destructive' : ''}`}>
+              {fmt(summary.totalNetAfterDailyFixedCost)}
             </p>
           </div>
         </div>

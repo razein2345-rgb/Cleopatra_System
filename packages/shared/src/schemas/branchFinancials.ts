@@ -30,6 +30,19 @@ export const branchFinancialSummarySchema = z.object({
   netProfit: z.number(),
   /** true when at least one item counted toward `salesTotal` had no computable cost basis — `netProfit` is a partial/lower-bound figure, not the full picture, whenever this is true. */
   hasUnknownProfitItems: z.boolean(),
+  /**
+   * Owner (2026-09-08, "محتاج قسم خاص بالخزينة يكون فيه المصروفات الشهرية
+   * الدائمة علشان يخصمها من الربح يومياً... علشان أعرف انا معايا صافي
+   * كام أقدر اتصرف فيه") — this branch's own recurring monthly overhead
+   * (`FixedMonthlyExpense` rows scoped to it, plus every company-wide one)
+   * divided by 30, PLUS this branch's own staff's real payroll cost
+   * (`StaffProfile.baseSalary`, prorated to each employee's own pay-cycle
+   * day count — WEEKLY ÷ 7, MONTHLY ÷ 30 — not a blanket ÷30 for everyone).
+   * See `getDailyFixedCostByBranch`'s own doc comment for the exact split.
+   */
+  dailyFixedCost: z.number(),
+  /** `netProfit - dailyFixedCost` — what's actually left to spend today. */
+  netAfterDailyFixedCost: z.number(),
 });
 
 export const companyFinancialSummarySchema = z.object({
@@ -38,6 +51,8 @@ export const companyFinancialSummarySchema = z.object({
   totalSales: z.number(),
   totalNetProfit: z.number(),
   hasUnknownProfitItems: z.boolean(),
+  totalDailyFixedCost: z.number(),
+  totalNetAfterDailyFixedCost: z.number(),
 });
 
 export type BranchFinancialSummary = z.infer<typeof branchFinancialSummarySchema>;

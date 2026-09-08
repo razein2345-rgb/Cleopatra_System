@@ -1,5 +1,6 @@
 import type { BranchFinancialSummary, CompanyFinancialSummary } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
+import { getDailyFixedCostByBranch } from './fixedExpensesService.js';
 
 /**
  * Owner (2026-08-26, "افصل تماماً بين أمين خزينة كليوباترا و أمين خزينة
@@ -184,7 +185,7 @@ export function resolveItemProfit(
 export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<CompanyFinancialSummary> {
   const branchWhere = branchIds ? { id: { in: branchIds } } : {};
   const entryBranchWhere = branchIds ? { branchId: { in: branchIds } } : {};
-  const [branches, treasuryGrouped, orders, inventoryItems, readyProducts, paperInventoryItems, setting] = await Promise.all([
+  const [branches, treasuryGrouped, orders, inventoryItems, readyProducts, paperInventoryItems, setting, dailyFixedCost] = await Promise.all([
     prisma.branch.findMany({ where: { isDeleted: false, ...branchWhere }, select: { id: true, name: true } }),
     prisma.treasuryEntry.groupBy({
       by: ['branchId', 'type'],
@@ -218,6 +219,7 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
       select: { id: true, sheetType: { select: { costPrice: true } } },
     }),
     prisma.setting.findFirst({ select: { zincSupplierCost: true } }),
+    getDailyFixedCostByBranch(),
   ]);
 
   const costPriceByInventoryItemId = new Map(inventoryItems.map((i) => [i.id, i.costPrice?.toNumber() ?? null]));
@@ -281,6 +283,11 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
 
   const branchSummaries: BranchFinancialSummary[] = branches.map((branch) => {
     const entry = ensure(branch.id);
+    // Owner (2026-09-08) — this branch's OWN overhead only (its scoped
+    // `FixedMonthlyExpense` rows + its own staff's payroll), never a
+    // company-wide expense — see `getDailyFixedCostByBranch`'s doc comment
+    // for why that's added into the grand total separately instead.
+    const branchDailyFixedCost = dailyFixedCost.perBranch.get(branch.id) ?? 0;
     return {
       branchId: branch.id,
       branchName: branch.name,
@@ -291,14 +298,25 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
       salesCount: entry.salesCount,
       netProfit: entry.netProfit,
       hasUnknownProfitItems: entry.hasUnknown,
+      dailyFixedCost: branchDailyFixedCost,
+      netAfterDailyFixedCost: entry.netProfit - branchDailyFixedCost,
     };
   });
+
+  const totalNetProfit = branchSummaries.reduce((sum, b) => sum + b.netProfit, 0);
+  // Owner (2026-09-08) — the grand total additionally carries every
+  // company-wide `FixedMonthlyExpense` (`branchId: null`) exactly once,
+  // on top of each branch's own already-summed overhead — never per
+  // branch (that would double- or triple-count it once more per branch).
+  const totalDailyFixedCost = branchSummaries.reduce((sum, b) => sum + b.dailyFixedCost, 0) + dailyFixedCost.companyWideDaily;
 
   return {
     branches: branchSummaries,
     totalTreasuryBalance: branchSummaries.reduce((sum, b) => sum + b.treasuryBalance, 0),
     totalSales: branchSummaries.reduce((sum, b) => sum + b.salesTotal, 0),
-    totalNetProfit: branchSummaries.reduce((sum, b) => sum + b.netProfit, 0),
+    totalNetProfit,
     hasUnknownProfitItems: branchSummaries.some((b) => b.hasUnknownProfitItems),
+    totalDailyFixedCost,
+    totalNetAfterDailyFixedCost: totalNetProfit - totalDailyFixedCost,
   };
 }
