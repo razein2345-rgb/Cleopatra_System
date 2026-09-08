@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Ban, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
+import { Ban, GripVertical, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
 import type {
   BusinessPartner,
   Department,
@@ -24,7 +24,8 @@ import { ConfirmStageActionDialog } from './ConfirmStageActionDialog';
 import { EditQueueItemDialog } from './EditQueueItemDialog';
 import { ProductionBoardOrdersTab } from './ProductionBoardOrdersTab';
 import { useQueueActions } from './useQueueActions';
-import { DragHandle, QueueDndContext, useQueueSortableItem } from './QueueDnd';
+import { ColumnDndContext, ColumnResizeHandle, DragHandle, QueueDndContext, useQueueSortableItem } from './QueueDnd';
+import { useColumnLayout } from './useColumnLayout';
 import {
   PRIORITY_LABELS,
   PRIORITY_OPTIONS,
@@ -658,18 +659,51 @@ function WaitingReasonCell({ item, updateField, disabled }: { item: WorkflowQueu
   );
 }
 
-function SortableQueueTableRow({
-  item,
-  employees,
-  supplierName,
-  updateField,
-  canEditFields,
-  timelineLink,
-  canEdit,
-  completeCheckbox,
-  secondaryActions,
-}: {
-  item: WorkflowQueueItem;
+/**
+ * Owner (2026-09-08, "عايز اقدر اتحكم في مكان العمود يعني احركه اصغر
+ * مساحته شوية وهكذا") — the "الأقسام" table's own data columns, as a
+ * plain ordered list instead of hardcoded per-row JSX, so reordering them
+ * (see `useColumnLayout`/`ColumnDndContext`) actually changes what renders
+ * where. The drag-handle and "الإجراءات" columns stay fixed at the very
+ * start/end — they're structural, not "data" the owner would want to move.
+ */
+type QueueColumnId =
+  | 'item'
+  | 'customer'
+  | 'workOrderNumber'
+  | 'stage'
+  | 'status'
+  | 'priority'
+  | 'delay'
+  | 'dueDate'
+  | 'since'
+  | 'assignee'
+  | 'supplier'
+  | 'waitingReason'
+  | 'timeline';
+
+const QUEUE_TABLE_COLUMNS: { id: QueueColumnId; label: string; defaultWidth: number }[] = [
+  { id: 'item', label: 'الصنف', defaultWidth: 240 },
+  { id: 'customer', label: 'العميل', defaultWidth: 160 },
+  { id: 'workOrderNumber', label: 'أمر التشغيل', defaultWidth: 150 },
+  { id: 'stage', label: 'المرحلة', defaultWidth: 120 },
+  { id: 'status', label: 'الحالة', defaultWidth: 110 },
+  { id: 'priority', label: 'الأولوية', defaultWidth: 110 },
+  { id: 'delay', label: 'التأخير', defaultWidth: 100 },
+  { id: 'dueDate', label: 'تاريخ الاستحقاق', defaultWidth: 140 },
+  { id: 'since', label: 'منذ', defaultWidth: 90 },
+  { id: 'assignee', label: 'الموظف المسؤول', defaultWidth: 150 },
+  { id: 'supplier', label: 'المورد', defaultWidth: 130 },
+  { id: 'waitingReason', label: 'سبب الانتظار', defaultWidth: 150 },
+  { id: 'timeline', label: 'المسار', defaultWidth: 110 },
+];
+const QUEUE_TABLE_COLUMN_IDS = QUEUE_TABLE_COLUMNS.map((c) => c.id);
+const QUEUE_TABLE_COLUMN_LABELS = Object.fromEntries(QUEUE_TABLE_COLUMNS.map((c) => [c.id, c.label])) as Record<
+  QueueColumnId,
+  string
+>;
+
+interface QueueColumnCtx {
   employees: User[];
   supplierName: (id: string | null) => string;
   updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>;
@@ -677,6 +711,72 @@ function SortableQueueTableRow({
   timelineLink: (item: WorkflowQueueItem) => ReactNode;
   canEdit: boolean;
   completeCheckbox: (item: WorkflowQueueItem) => ReactNode;
+}
+
+function renderQueueColumnCell(colId: QueueColumnId, item: WorkflowQueueItem, ctx: QueueColumnCtx): ReactNode {
+  switch (colId) {
+    case 'item':
+      // Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم الفاتورة") + owner
+      // (2026-09-08, "عايز الcheckbox يكون جمب إسم الصنف") — both together.
+      return (
+        <div className="flex items-center gap-2">
+          {ctx.canEdit && ctx.completeCheckbox(item)}
+          <span>{item.itemNames.join('، ') || '—'}</span>
+        </div>
+      );
+    case 'customer':
+      return item.customerName ?? '—';
+    case 'workOrderNumber':
+      return item.workOrderNumber ?? '—';
+    case 'stage':
+      return item.stageName;
+    case 'status':
+      return (
+        <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
+          {STAGE_STATUS_LABELS[item.status]}
+        </StatusBadge>
+      );
+    case 'priority':
+      return <PriorityCell item={item} updateField={ctx.updateField} disabled={!ctx.canEditFields} />;
+    case 'delay':
+      return item.isDelayed ? <StatusBadge tone="danger">متأخرة</StatusBadge> : <StatusBadge tone="success">في الموعد</StatusBadge>;
+    case 'dueDate':
+      return <DueDateCell item={item} updateField={ctx.updateField} disabled={!ctx.canEditFields} />;
+    case 'since':
+      return formatTimeInStage(item.startedAt, item.createdAt);
+    case 'assignee':
+      return <AssigneeCell item={item} employees={ctx.employees} updateField={ctx.updateField} disabled={!ctx.canEditFields} />;
+    case 'supplier':
+      return ctx.supplierName(item.assignedSupplierId);
+    case 'waitingReason':
+      return <WaitingReasonCell item={item} updateField={ctx.updateField} disabled={!ctx.canEditFields} />;
+    case 'timeline':
+      return ctx.timelineLink(item);
+  }
+}
+
+const QUEUE_COLUMN_MUTED: Partial<Record<QueueColumnId, boolean>> = {
+  dueDate: true,
+  since: true,
+  assignee: true,
+  supplier: true,
+  waitingReason: true,
+};
+const QUEUE_COLUMN_BOLD: Partial<Record<QueueColumnId, boolean>> = { item: true, customer: true };
+
+function SortableQueueTableRow({
+  item,
+  columnOrder,
+  columnWidth,
+  ctx,
+  canEdit,
+  secondaryActions,
+}: {
+  item: WorkflowQueueItem;
+  columnOrder: QueueColumnId[];
+  columnWidth: (id: QueueColumnId) => number;
+  ctx: QueueColumnCtx;
+  canEdit: boolean;
   secondaryActions: (item: WorkflowQueueItem) => ReactNode;
 }) {
   const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(item.id);
@@ -685,45 +785,54 @@ function SortableQueueTableRow({
       <TableCell className="w-8">
         <DragHandle attributes={attributes} listeners={listeners} />
       </TableCell>
-      {/* Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم الفاتورة علشان اعرف
-          هي ايه من برة") — the item's own name is the primary identifier
-          now, first column, ahead of the customer/order number. Owner
-          (2026-09-08, "عايز الcheckbox يكون جمب إسم الصنف") — "إنهاء"
-          checkbox sits right next to it, not only in "الإجراءات". */}
-      <TableCell className="font-medium">
-        <div className="flex items-center gap-2">
-          {canEdit && completeCheckbox(item)}
-          <span>{item.itemNames.join('، ') || '—'}</span>
-        </div>
-      </TableCell>
-      <TableCell className="font-medium">{item.customerName ?? '—'}</TableCell>
-      <TableCell>{item.workOrderNumber ?? '—'}</TableCell>
-      <TableCell>{item.stageName}</TableCell>
-      <TableCell>
-        <StatusBadge tone={item.status === 'IN_PROGRESS' ? 'info' : 'neutral'}>
-          {STAGE_STATUS_LABELS[item.status]}
-        </StatusBadge>
-      </TableCell>
-      <TableCell>
-        <PriorityCell item={item} updateField={updateField} disabled={!canEditFields} />
-      </TableCell>
-      <TableCell>
-        {item.isDelayed ? <StatusBadge tone="danger">متأخرة</StatusBadge> : <StatusBadge tone="success">في الموعد</StatusBadge>}
-      </TableCell>
-      <TableCell className="text-muted-foreground">
-        <DueDateCell item={item} updateField={updateField} disabled={!canEditFields} />
-      </TableCell>
-      <TableCell className="text-muted-foreground">{formatTimeInStage(item.startedAt, item.createdAt)}</TableCell>
-      <TableCell className="text-muted-foreground">
-        <AssigneeCell item={item} employees={employees} updateField={updateField} disabled={!canEditFields} />
-      </TableCell>
-      <TableCell className="text-muted-foreground">{supplierName(item.assignedSupplierId)}</TableCell>
-      <TableCell className="text-muted-foreground">
-        <WaitingReasonCell item={item} updateField={updateField} disabled={!canEditFields} />
-      </TableCell>
-      <TableCell>{timelineLink(item)}</TableCell>
+      {columnOrder.map((colId) => (
+        <TableCell
+          key={colId}
+          style={{ width: columnWidth(colId), minWidth: columnWidth(colId), maxWidth: columnWidth(colId) }}
+          className={cn(
+            'truncate',
+            QUEUE_COLUMN_BOLD[colId] && 'font-medium',
+            QUEUE_COLUMN_MUTED[colId] && 'text-muted-foreground',
+          )}
+        >
+          {renderQueueColumnCell(colId, item, ctx)}
+        </TableCell>
+      ))}
       {canEdit && <TableCell>{secondaryActions(item)}</TableCell>}
     </TableRow>
+  );
+}
+
+/**
+ * Owner (2026-09-08, "عايز اقدر اتحكم في مكان العمود... احركه اصغر
+ * مساحته") — a draggable, resizable column header. The whole cell is the
+ * drag handle (a `<th>` has no other interactive content to protect,
+ * unlike a data row), and `ColumnResizeHandle` sits on its trailing edge
+ * for width.
+ */
+function SortableColumnHead({
+  id,
+  label,
+  width,
+  onResize,
+}: {
+  id: QueueColumnId;
+  label: string;
+  width: number;
+  onResize: (deltaPx: number) => void;
+}) {
+  const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(id);
+  return (
+    <TableHead
+      ref={setNodeRef}
+      style={{ ...style, width, minWidth: width, maxWidth: width }}
+      {...attributes}
+      {...listeners}
+      className="relative cursor-grab touch-none select-none truncate active:cursor-grabbing"
+    >
+      {label}
+      <ColumnResizeHandle onResize={onResize} />
+    </TableHead>
   );
 }
 
@@ -823,6 +932,15 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
   >(null);
   const [printError, setPrintError] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
+  // Owner (2026-09-08, "عايز اقدر اتحكم في مكان العمود يعني احركه اصغر
+  // مساحته شوية وهكذا") — personal column order/width, one shared layout
+  // for the whole "الأقسام" table (same columns regardless of which
+  // track tab is open).
+  const columns = useColumnLayout(
+    'departmentsTable',
+    QUEUE_TABLE_COLUMN_IDS,
+    Object.fromEntries(QUEUE_TABLE_COLUMNS.map((c) => [c.id, c.defaultWidth])),
+  );
 
   useEffect(() => {
     apiGet<Department[]>('/api/departments')
@@ -1095,59 +1213,68 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                 `SortableContext` (zero DOM of its own) still only needs to
                 reach the actual sortable rows inside `<TableBody>`. */}
             <QueueDndContext items={filteredQueue} onReorder={(newOrder, movedId) => void persistStageOrder(newOrder, movedId)}>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    {/* Owner (2026-09-08, "عايز اقدر احرك الصفوف بأريحية
-                        شبه صفوف نوشن") — drag-handle column, empty header
-                        label. */}
-                    <TableHead className="w-8" />
-                    <TableHead>الصنف</TableHead>
-                    <TableHead>العميل</TableHead>
-                    <TableHead>أمر التشغيل</TableHead>
-                    <TableHead>المرحلة</TableHead>
-                    <TableHead>الحالة</TableHead>
-                    <TableHead>الأولوية</TableHead>
-                    <TableHead>التأخير</TableHead>
-                    <TableHead>تاريخ الاستحقاق</TableHead>
-                    <TableHead>منذ</TableHead>
-                    <TableHead>الموظف المسؤول</TableHead>
-                    {/* Owner (2026-09-08, "عايز يظهرلي مين المورد بتاع
-                        الصنف في قسم مورد خارجي") — "—" for tracks that
-                        never assign a supplier, so shown unconditionally
-                        rather than a per-tab column count to keep. */}
-                    <TableHead>المورد</TableHead>
-                    <TableHead>سبب الانتظار</TableHead>
-                    <TableHead>المسار</TableHead>
-                    {canEdit && <TableHead>الإجراءات</TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredQueue.map((item) => (
-                    <SortableQueueTableRow
-                      key={item.id}
-                      item={item}
-                      employees={employees}
-                      supplierName={supplierName}
-                      updateField={updateField}
-                      canEditFields={canEdit}
-                      timelineLink={timelineLink}
-                      canEdit={canEdit}
-                      completeCheckbox={completeCheckbox}
-                      secondaryActions={secondaryActions}
-                    />
-                  ))}
-                  {filteredQueue.length === 0 && (
+              {/* Owner (2026-09-08, "عايز اقدر اتحكم في مكان العمود...
+                  احركه اصغر مساحته") — a SEPARATE, nested `ColumnDndContext`
+                  for horizontal column reordering (rows sort vertically by
+                  item id in the context above; columns sort horizontally by
+                  plain column id here — two disjoint id sets, two
+                  independent dnd-kit contexts, same "wrap the whole
+                  `<Table>`, never just `<TableBody>`/`<TableRow>`" fix as
+                  the row-context's own hydration bug above applies here
+                  too — a hidden accessibility `<div>` inside `<tr>` is
+                  just as invalid as one inside `<tbody>`). */}
+              <ColumnDndContext order={columns.order as QueueColumnId[]} onReorder={(next) => columns.setOrder(next)}>
+                <Table>
+                  <TableHeader>
                     <TableRow>
-                      <TableCell colSpan={canEdit ? 15 : 14} className="text-muted-foreground text-center">
-                        {queue && queue.length > 0
-                          ? 'لا توجد مهام مطابقة لعوامل التصفية الحالية.'
-                          : 'لا توجد مهام في قائمة الانتظار لهذا القسم.'}
-                      </TableCell>
+                      {/* Owner (2026-09-08, "عايز اقدر احرك الصفوف بأريحية
+                          شبه صفوف نوشن") — drag-handle column, empty header
+                          label. Fixed — not part of the reorderable set. */}
+                      <TableHead className="w-8" />
+                      {(columns.order as QueueColumnId[]).map((colId) => (
+                        <SortableColumnHead
+                          key={colId}
+                          id={colId}
+                          label={QUEUE_TABLE_COLUMN_LABELS[colId]}
+                          width={columns.widthOf(colId)}
+                          onResize={(delta) => columns.resizeColumn(colId, delta)}
+                        />
+                      ))}
+                      {canEdit && <TableHead>الإجراءات</TableHead>}
                     </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredQueue.map((item) => (
+                      <SortableQueueTableRow
+                        key={item.id}
+                        item={item}
+                        columnOrder={columns.order as QueueColumnId[]}
+                        columnWidth={columns.widthOf}
+                        ctx={{
+                          employees,
+                          supplierName,
+                          updateField,
+                          canEditFields: canEdit,
+                          timelineLink,
+                          canEdit,
+                          completeCheckbox,
+                        }}
+                        canEdit={canEdit}
+                        secondaryActions={secondaryActions}
+                      />
+                    ))}
+                    {filteredQueue.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={canEdit ? 15 : 14} className="text-muted-foreground text-center">
+                          {queue && queue.length > 0
+                            ? 'لا توجد مهام مطابقة لعوامل التصفية الحالية.'
+                            : 'لا توجد مهام في قائمة الانتظار لهذا القسم.'}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </ColumnDndContext>
             </QueueDndContext>
           </div>
 
@@ -1267,6 +1394,145 @@ function SortableKanbanCard({
       {timelineLink(item)}
       {canEdit && secondaryActions(item)}
     </Card>
+  );
+}
+
+/**
+ * Owner (2026-09-08, "عايز اقدر اتحكم في مكان العمود... زي نوشن") — the
+ * Kanban counterpart of `SortableColumnHead` (the desktop table's draggable/
+ * resizable header): the WHOLE stage column can't be the drag target like a
+ * table `<th>` is (it's full of interactive cards), so only the header strip
+ * carries `attributes`/`listeners`, same split as `DragHandle` uses for rows.
+ * The resize handle sits fully INSIDE the column's own box
+ * (`insetInlineEnd: 0`, not straddling the edge) — see `ColumnResizeHandle`'s
+ * doc comment for why a handle that pokes outside its container gets half
+ * its hit area silently clipped by any ancestor `overflow: hidden`.
+ */
+function SortableKanbanColumn({
+  id,
+  label,
+  count,
+  width,
+  onResize,
+  children,
+}: {
+  id: string;
+  label: string;
+  count: number;
+  width: number;
+  onResize: (deltaPx: number) => void;
+  children: ReactNode;
+}) {
+  const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(id);
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ ...style, width, minWidth: width, maxWidth: width }}
+      className="border-border bg-muted/20 relative flex shrink-0 flex-col gap-2 rounded-2xl border p-2"
+    >
+      <div className="flex items-center justify-between gap-1 px-1 pt-1">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          title="اسحب لتغيير ترتيب الأعمدة"
+          className="text-muted-foreground hover:text-foreground flex min-w-0 flex-1 cursor-grab items-center gap-1 truncate text-start active:cursor-grabbing"
+        >
+          <GripVertical className="size-3.5 shrink-0" />
+          <h3 className="truncate text-sm font-semibold">{label}</h3>
+        </button>
+        <span className="text-muted-foreground shrink-0 text-xs">{count}</span>
+      </div>
+      {children}
+      <ColumnResizeHandle onResize={onResize} />
+    </div>
+  );
+}
+
+/**
+ * Owner (2026-09-08, same request) — column order/width for the Kanban
+ * board, scoped per workflow template (`kanban.${templateId}` — different
+ * templates have entirely different stages, so a saved layout from one
+ * means nothing for another). Mounted with `key={selectedTemplate.id}` by
+ * the caller so switching templates gives `useColumnLayout` a clean remount
+ * (its own `useState` initializer only reads `localStorage` once per
+ * mount) instead of carrying over a stale order from the previous template.
+ */
+function KanbanColumns({
+  templateId,
+  stages,
+  byStage,
+  employees,
+  updateField,
+  canEdit,
+  timelineLink,
+  completeCheckbox,
+  secondaryActions,
+  persistStageOrder,
+}: {
+  templateId: string;
+  stages: WorkflowTemplate['stages'];
+  byStage: Map<string, WorkflowQueueItem[]>;
+  employees: User[];
+  updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>;
+  canEdit: boolean;
+  timelineLink: (item: WorkflowQueueItem) => ReactNode;
+  completeCheckbox: (item: WorkflowQueueItem) => ReactNode;
+  secondaryActions: (item: WorkflowQueueItem) => ReactNode;
+  persistStageOrder: (newFullOrder: WorkflowQueueItem[], movedId: string) => Promise<void>;
+}) {
+  const columns = useColumnLayout(
+    `kanban.${templateId}`,
+    stages.map((s) => s.id),
+    288,
+  );
+  const stageById = new Map(stages.map((s) => [s.id, s]));
+
+  return (
+    <ColumnDndContext order={columns.order} onReorder={columns.setOrder}>
+      <div className="flex gap-3 overflow-x-auto pb-2">
+        {columns.order.map((stageId) => {
+          const stage = stageById.get(stageId);
+          if (!stage) return null;
+          const items = byStage.get(stage.id) ?? [];
+          return (
+            <SortableKanbanColumn
+              key={stage.id}
+              id={stage.id}
+              label={stage.name}
+              count={items.length}
+              width={columns.widthOf(stage.id)}
+              onResize={(delta) => columns.resizeColumn(stage.id, delta)}
+            >
+              <div className="flex flex-col gap-2">
+                {items.length === 0 && (
+                  <div className="text-muted-foreground rounded-xl border border-dashed p-3 text-center text-xs">
+                    لا يوجد شغل في هذه المرحلة
+                  </div>
+                )}
+                {items.length > 0 && (
+                  <QueueDndContext items={items} onReorder={(newOrder, movedId) => void persistStageOrder(newOrder, movedId)}>
+                    {items.map((item) => (
+                      <SortableKanbanCard
+                        key={item.id}
+                        item={item}
+                        employees={employees}
+                        updateField={updateField}
+                        canEditFields={canEdit}
+                        timelineLink={timelineLink}
+                        canEdit={canEdit}
+                        completeCheckbox={completeCheckbox}
+                        secondaryActions={secondaryActions}
+                      />
+                    ))}
+                  </QueueDndContext>
+                )}
+              </div>
+            </SortableKanbanColumn>
+          );
+        })}
+      </div>
+    </ColumnDndContext>
   );
 }
 
@@ -1432,46 +1698,19 @@ function WorkflowKanbanTab() {
       {!filteredQueue || !selectedTemplate ? (
         <div className="text-muted-foreground">جارٍ التحميل…</div>
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-2">
-          {selectedTemplate.stages.map((stage) => {
-            const items = byStage.get(stage.id) ?? [];
-            return (
-              <div
-                key={stage.id}
-                className="border-border bg-muted/20 flex w-72 shrink-0 flex-col gap-2 rounded-2xl border p-2"
-              >
-                <div className="flex items-center justify-between px-1 pt-1">
-                  <h3 className="text-sm font-semibold">{stage.name}</h3>
-                  <span className="text-muted-foreground text-xs">{items.length}</span>
-                </div>
-                <div className="flex flex-col gap-2">
-                  {items.length === 0 && (
-                    <div className="text-muted-foreground rounded-xl border border-dashed p-3 text-center text-xs">
-                      لا يوجد شغل في هذه المرحلة
-                    </div>
-                  )}
-                  {items.length > 0 && (
-                    <QueueDndContext items={items} onReorder={(newOrder, movedId) => void persistStageOrder(newOrder, movedId)}>
-                      {items.map((item) => (
-                        <SortableKanbanCard
-                          key={item.id}
-                          item={item}
-                          employees={employees}
-                          updateField={updateField}
-                          canEditFields={canEdit}
-                          timelineLink={timelineLink}
-                          canEdit={canEdit}
-                          completeCheckbox={completeCheckbox}
-                          secondaryActions={secondaryActions}
-                        />
-                      ))}
-                    </QueueDndContext>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <KanbanColumns
+          key={selectedTemplate.id}
+          templateId={selectedTemplate.id}
+          stages={selectedTemplate.stages}
+          byStage={byStage}
+          employees={employees}
+          updateField={updateField}
+          canEdit={canEdit}
+          timelineLink={timelineLink}
+          completeCheckbox={completeCheckbox}
+          secondaryActions={secondaryActions}
+          persistStageOrder={persistStageOrder}
+        />
       )}
 
       {dialogs}
