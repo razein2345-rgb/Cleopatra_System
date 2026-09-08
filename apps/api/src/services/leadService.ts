@@ -1,6 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '../generated/prisma/client.js';
-import type { CreateLeadInput, Lead, UpdateLeadInput } from '@cleopatra/shared';
+import { createLeadSchema, type CreateLeadInput, type Lead, type LeadImportRow, type LeadImportRowResult, type LeadSource, type UpdateLeadInput } from '@cleopatra/shared';
 import { mapPartnerToDto } from './businessPartnerService.js';
 
 /**
@@ -34,6 +34,7 @@ export function mapLeadToDto(lead: LeadRecord): Lead {
     name: lead.name,
     phone: lead.phone,
     email: lead.email,
+    facebookUrl: lead.facebookUrl,
     source: lead.source,
     stage: lead.stage,
     notes: lead.notes,
@@ -65,6 +66,7 @@ export async function createLead(input: CreateLeadInput, recordedById: string): 
       name: input.name,
       phone: input.phone,
       email: input.email ?? null,
+      facebookUrl: input.facebookUrl ?? null,
       source: input.source ?? null,
       notes: input.notes ?? null,
       branchId: input.branchId,
@@ -74,6 +76,44 @@ export async function createLead(input: CreateLeadInput, recordedById: string): 
     },
   });
   return mapLeadToDto(created);
+}
+
+/**
+ * Owner (2026-09-08, Excel/CSV import) — creates one Lead per already-parsed
+ * row, reusing `createLead` as-is (rule 5: no duplicate creation logic)
+ * rather than a bulk `createMany` — each row goes through the exact same
+ * `createLeadSchema` validation a manually-typed Lead would, and a bad row
+ * (missing name, malformed email, ...) only fails that one row instead of
+ * the whole batch.
+ */
+export async function bulkCreateLeads(
+  rows: LeadImportRow[],
+  branchId: string,
+  source: LeadSource | undefined,
+  recordedById: string,
+): Promise<LeadImportRowResult[]> {
+  const results: LeadImportRowResult[] = [];
+  for (const row of rows) {
+    const parsed = createLeadSchema.safeParse({
+      name: row.name,
+      phone: row.phone,
+      email: row.email || undefined,
+      facebookUrl: row.facebookUrl || undefined,
+      branchId,
+      source,
+    });
+    if (!parsed.success) {
+      results.push({ rowNumber: row.rowNumber, success: false, error: parsed.error.issues[0]?.message ?? 'بيانات غير صالحة' });
+      continue;
+    }
+    try {
+      const lead = await createLead(parsed.data, recordedById);
+      results.push({ rowNumber: row.rowNumber, success: true, lead });
+    } catch (err) {
+      results.push({ rowNumber: row.rowNumber, success: false, error: err instanceof Error ? err.message : 'تعذر إنشاء الـLead' });
+    }
+  }
+  return results;
 }
 
 async function loadOpenLead(id: string): Promise<LeadRecord> {

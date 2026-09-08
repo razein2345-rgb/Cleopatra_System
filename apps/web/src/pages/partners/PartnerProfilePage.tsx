@@ -12,7 +12,7 @@ import type {
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Combobox, useConfirm } from '@/components/cleopatra';
+import { Combobox, ContactLinks, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { LEAD_SOURCE_OPTIONS, PARTNER_ROLE_OPTIONS, PARTNER_STATUS_OPTIONS } from './partnerLabels';
 import { ContactsTab } from './ContactsTab';
@@ -105,7 +105,10 @@ export function PartnerProfilePage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{partner.nameAr}</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">{partner.nameAr}</h1>
+          <ContactLinks phone={partner.phone} email={partner.email} />
+        </div>
         {can('partners.delete') && (
           <Button variant="destructive" onClick={() => void removePartner()}>
             حذف العميل

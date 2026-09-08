@@ -1263,6 +1263,10 @@ model Lead {
   name  String
   phone String
   email String?
+  /// Owner (2026-09-08, "لو في بيانات زي لينك فيسبوك مثلا... بيوصلني بردو
+  /// اول ما اضغط على... صفحاتهم") — optional, opened directly from the
+  /// leads list the same one-click way the WhatsApp/call/email links are.
+  facebookUrl String?
 
   source LeadSource?
   stage  LeadStage   @default(NEW)

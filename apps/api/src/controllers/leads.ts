@@ -1,9 +1,10 @@
 import type { Request, Response } from 'express';
-import { advanceLeadStageSchema, createLeadSchema, rejectLeadSchema, updateLeadSchema } from '@cleopatra/shared';
+import { advanceLeadStageSchema, createLeadSchema, importLeadsSchema, rejectLeadSchema, updateLeadSchema } from '@cleopatra/shared';
 import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 import { recordAudit } from '../services/auditService.js';
 import {
   advanceLeadStage,
+  bulkCreateLeads,
   convertLeadToPartner,
   createLead,
   deleteLead,
@@ -14,6 +15,7 @@ import {
   rejectLead,
   updateLead,
 } from '../services/leadService.js';
+import { LeadImportParseError, parseLeadImportFile } from '../services/leadImportParser.js';
 
 function handleServiceError(err: unknown, res: Response): boolean {
   if (err instanceof LeadNotFoundError) {
@@ -164,6 +166,55 @@ export async function convertLeadHandler(req: Request<{ id: string }>, res: Resp
   });
 
   res.status(201).json({ success: true, data: result });
+}
+
+/** Step 1 of the Excel/CSV import flow — parses the uploaded file into rows only, writes nothing to the DB, so the user can review/fix rows in the UI first (see `leadImportRowSchema`'s doc comment). */
+export async function parseLeadImportHandler(req: Request, res: Response) {
+  const file = (req as Request & { file?: Express.Multer.File }).file;
+  if (!file) {
+    res.status(400).json({ success: false, error: { message: 'لم يتم رفع أي ملف' } });
+    return;
+  }
+
+  try {
+    const rows = await parseLeadImportFile(file.buffer, file.originalname);
+    res.json({ success: true, data: { rows } });
+  } catch (err) {
+    if (err instanceof LeadImportParseError) {
+      res.status(400).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
+}
+
+/** Step 2 of the Excel/CSV import flow — the user-reviewed rows are actually created, one Lead per row, one branch/source applied to the whole batch. */
+export async function importLeadsHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const input = importLeadsSchema.parse(req.body);
+
+  if (!canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
+
+  const results = await bulkCreateLeads(input.rows, input.branchId, input.source, auth.staffId);
+
+  for (const result of results) {
+    if (result.success && result.lead) {
+      await recordAudit({
+        entityType: 'Lead',
+        entityId: result.lead.id,
+        action: 'CREATE',
+        performedById: auth.staffId,
+        branchId: result.lead.branchId,
+        newValue: { name: result.lead.name, phone: result.lead.phone, source: result.lead.source, importedRow: result.rowNumber },
+      });
+    }
+  }
+
+  const successCount = results.filter((r) => r.success).length;
+  res.status(201).json({ success: true, data: { successCount, failCount: results.length - successCount, results } });
 }
 
 export async function deleteLeadHandler(req: Request<{ id: string }>, res: Response) {

@@ -28,6 +28,7 @@ export const leadSchema = z.object({
   name: z.string().min(1),
   phone: z.string().min(1),
   email: z.string().email().nullable(),
+  facebookUrl: z.string().nullable(),
   source: leadSourceSchema.nullable(),
   stage: leadStageSchema,
   notes: z.string().nullable(),
@@ -45,6 +46,7 @@ export const createLeadSchema = z.object({
   name: z.string().trim().min(1).max(200),
   phone: z.string().trim().min(1).max(50),
   email: z.string().email().optional(),
+  facebookUrl: z.string().trim().min(1).max(500).optional(),
   source: leadSourceSchema.optional(),
   notes: z.string().trim().min(1).max(2000).optional(),
   branchId: z.string().uuid(),
@@ -57,6 +59,7 @@ export const updateLeadSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   phone: z.string().trim().min(1).max(50).optional(),
   email: z.string().email().nullable().optional(),
+  facebookUrl: z.string().trim().min(1).max(500).nullable().optional(),
   source: leadSourceSchema.nullable().optional(),
   notes: z.string().trim().min(1).max(2000).nullable().optional(),
   branchId: z.string().uuid().optional(),
@@ -73,9 +76,53 @@ export const rejectLeadSchema = z.object({
   reason: z.string().trim().min(1).max(1000).optional(),
 });
 
+/**
+ * Owner (2026-09-08, "عايز اقدر ادخل sheet excell للصفحه بتاعت الليدز") —
+ * bulk import from an uploaded Excel/CSV file. Two-step flow: the file is
+ * parsed server-side first (`/leads/import/parse`) into these rows so the
+ * user can review/fix bad rows in the UI before anything is committed to
+ * the DB (same "never silently commit a risky parse" convention as the
+ * rest of this app's file-import surfaces) — the actual creation
+ * (`/leads/import`) re-validates each row through the same
+ * `createLeadSchema` shape `createLead` already uses, one row at a time,
+ * so one bad row never blocks the rest of the batch.
+ */
+export const leadImportRowSchema = z.object({
+  rowNumber: z.number().int().positive(),
+  name: z.string().trim().min(1).max(200),
+  phone: z.string().trim().min(1).max(50),
+  email: z.string().trim().max(200).optional(),
+  facebookUrl: z.string().trim().max(500).optional(),
+});
+
+export const importLeadsSchema = z.object({
+  branchId: z.string().uuid(),
+  source: leadSourceSchema.optional(),
+  rows: z.array(leadImportRowSchema).min(1).max(500),
+});
+
+export interface ParsedLeadImportRow {
+  rowNumber: number;
+  name: string;
+  phone: string;
+  email?: string;
+  facebookUrl?: string;
+  /** Set when this row is missing a required field — surfaced in the UI so the user can fix or drop it before importing. */
+  error?: string;
+}
+
+export interface LeadImportRowResult {
+  rowNumber: number;
+  success: boolean;
+  lead?: Lead;
+  error?: string;
+}
+
 export type LeadStage = z.infer<typeof leadStageSchema>;
 export type Lead = z.infer<typeof leadSchema>;
 export type CreateLeadInput = z.infer<typeof createLeadSchema>;
 export type UpdateLeadInput = z.infer<typeof updateLeadSchema>;
 export type AdvanceLeadStageInput = z.infer<typeof advanceLeadStageSchema>;
 export type RejectLeadInput = z.infer<typeof rejectLeadSchema>;
+export type LeadImportRow = z.infer<typeof leadImportRowSchema>;
+export type ImportLeadsInput = z.infer<typeof importLeadsSchema>;

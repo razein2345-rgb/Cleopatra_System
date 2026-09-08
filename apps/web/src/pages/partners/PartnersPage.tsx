@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type { BranchSummary, BusinessPartner, CreateBusinessPartnerInput, UpdateBusinessPartnerInput } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { EditableSelectCell, EditableTextCell, paginate, Pagination, StatusBadge } from '@/components/cleopatra';
+import { ContactLinks, EditableSelectCell, EditableTextCell, paginate, Pagination, StatusBadge } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PARTNER_ROLE_LABELS, PARTNER_STATUS_LABELS, PARTNER_STATUS_OPTIONS, PARTNER_STATUS_TONES } from './partnerLabels';
 
@@ -92,6 +92,7 @@ export function PartnersPage() {
               <th className="p-3">الفرع</th>
               <th className="p-3">الحالة</th>
               <th className="p-3">الهاتف</th>
+              <th className="p-3">تواصل مباشر</th>
             </tr>
           </thead>
           <tbody>
@@ -163,11 +164,14 @@ export function PartnersPage() {
                     (partner.phone ?? '—')
                   )}
                 </td>
+                <td className="p-3">
+                  <ContactLinks phone={partner.phone} email={partner.email} />
+                </td>
               </tr>
             ))}
             {partners.length === 0 && (
               <tr>
-                <td className="text-muted-foreground p-3" colSpan={5}>
+                <td className="text-muted-foreground p-3" colSpan={6}>
                   لا يوجد شركاء أعمال بعد.
                 </td>
               </tr>

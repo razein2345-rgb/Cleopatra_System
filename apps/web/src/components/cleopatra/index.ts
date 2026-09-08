@@ -1,4 +1,5 @@
 export { StatusBadge } from './StatusBadge';
+export { ContactLinks } from './ContactLinks';
 export { BranchFinancialSummaryTable } from './BranchFinancialSummaryTable';
 export { PartnerCombobox } from './PartnerCombobox';
 export { InventoryItemCombobox } from './InventoryItemCombobox';
