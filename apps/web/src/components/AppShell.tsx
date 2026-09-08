@@ -20,6 +20,7 @@ import {
   UserPlus,
   Truck,
   FileBarChart,
+  MessageCircle,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -55,6 +56,12 @@ const NAV_ITEMS: NavEntry[] = [
     label: 'الإدارة والتجارة',
     icon: Briefcase,
     items: [
+      // Owner (2026-09-08, "افتح كل وسائل التواصل بتاعتي من السيستم...
+      // عايز الموظف بتاع الإستقبال يتابع كل حاجه") — open to everyone
+      // (no `permission`), unlike every other link in this group, since
+      // it's exactly the reception/sales staff replying to customers who
+      // need this daily, not just roles holding a specific module grant.
+      { kind: 'link', to: '/communication-hub', label: 'مركز التواصل', icon: MessageCircle },
       { kind: 'link', to: '/leads', label: 'العملاء المحتملون', icon: UserPlus, permission: 'leads.view' },
       { kind: 'link', to: '/partners', label: 'العملاء', icon: Building2, permission: 'partners.view' },
       { kind: 'link', to: '/suppliers', label: 'الموردين', icon: Truck, permission: 'suppliers.view' },

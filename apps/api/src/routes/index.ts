@@ -42,6 +42,7 @@ import { boardsCatalogItemsRouter } from './boardsCatalogItems.js';
 import { purchaseRequestsRouter } from './purchaseRequests.js';
 import { fixedMonthlyExpensesRouter } from './fixedMonthlyExpenses.js';
 import { itemSupplierTasksRouter } from './itemSupplierTasks.js';
+import { communicationHubLinksRouter } from './communicationHubLinks.js';
 
 export const apiRouter = Router();
 
@@ -65,6 +66,7 @@ api.use('/reorder-overrides', reorderOverridesRouter);
 api.use('/reports', reportsRouter);
 api.use('/fixed-monthly-expenses', fixedMonthlyExpensesRouter);
 api.use('/item-supplier-tasks', itemSupplierTasksRouter);
+api.use('/communication-hub-links', communicationHubLinksRouter);
 api.use('/suppliers', suppliersRouter);
 api.use('/leads', leadsRouter);
 api.use('/partner-categories', partnerCategoriesRouter);

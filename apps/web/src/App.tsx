@@ -32,6 +32,9 @@ const RolesPage = lazy(() => import('@/pages/roles/RolesPage').then((m) => ({ de
 const PermissionsPage = lazy(() => import('@/pages/permissions/PermissionsPage').then((m) => ({ default: m.PermissionsPage })));
 const PartnersPage = lazy(() => import('@/pages/partners/PartnersPage').then((m) => ({ default: m.PartnersPage })));
 const LeadsPage = lazy(() => import('@/pages/leads/LeadsPage').then((m) => ({ default: m.LeadsPage })));
+const CommunicationHubPage = lazy(() =>
+  import('@/pages/communication-hub/CommunicationHubPage').then((m) => ({ default: m.CommunicationHubPage })),
+);
 const PartnerProfilePage = lazy(() =>
   import('@/pages/partners/PartnerProfilePage').then((m) => ({ default: m.PartnerProfilePage })),
 );
@@ -91,6 +94,13 @@ function App() {
           <Route element={<ProtectedRoute />}>
             <Route element={<AppShell />}>
               <Route path="/" element={<RoleHome />} />
+
+              {/* Owner (2026-09-08, "افتح كل وسائل التواصل بتاعتي من
+                  السيستم... عايز الموظف بتاع الإستقبال يتابع كل حاجه") —
+                  open to every logged-in staff member, no `permission`
+                  prop, same as the dashboard above (managing the link
+                  list itself is gated inside the page via `settings.edit`). */}
+              <Route path="/communication-hub" element={<CommunicationHubPage />} />
 
               <Route element={<ProtectedRoute permission="settings.view" />}>
                 <Route path="/settings" element={<SettingsPage />} />

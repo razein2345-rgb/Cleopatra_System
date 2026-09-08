@@ -2905,6 +2905,34 @@ model FixedMonthlyExpense {
   @@index([branchId])
 }
 
+/// Owner (2026-09-08, "عايز صفحة يكون عندي قابلية فيها إني اعمل Embed
+/// للمواقع فيها زي نوشن يعني اعمل Embed لوتساب وافتحه من داخل السيستم فا
+/// افتح كل وسائل التواصل بتاعتي من السيستم") — true iframe embedding of
+/// WhatsApp Web/Facebook/Instagram is blocked by those sites' own
+/// X-Frame-Options/CSP (a security control on THEIR side, not something
+/// this app can or should try to bypass — doing so would also be a
+/// clickjacking-adjacent anti-pattern); owner accepted "open in a new tab"
+/// as the working alternative once this was explained ("تمام مفيش
+/// مشكلة"). This is that alternative: an admin-managed list of quick-
+/// launch links (label + URL), company-wide (no branchId — these are
+/// shared company social/communication accounts, not per-branch data),
+/// ordered by `sortOrder`.
+model CommunicationHubLink {
+  id        String @id @default(uuid()) @db.Uuid
+  label     String
+  url       String
+  sortOrder Int    @default(0)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+}
+
 /// UX_PRODUCT_AUDIT.md § مشكلة 7.3 ("تصنيف مصروفات خزينة قابل للإدارة") —
 /// an admin-managed canonical list for `TreasuryEntry.category`, so
 /// reporting can group reliably instead of relying on free text. Mirrors

@@ -1,10 +1,6 @@
 import { ExternalLink, Mail, MessageCircle, Phone } from 'lucide-react';
 import { whatsappLink } from '@/lib/whatsapp';
-
-/** `facebookUrl` (or any external link) is stored however typed (with or without a scheme) — normalized here so a bare "facebook.com/..." still opens correctly. */
-function normalizeExternalUrl(url: string): string {
-  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
-}
+import { normalizeExternalUrl } from '@/lib/url';
 
 /**
  * Owner (2026-09-08, "زرار اتصال بالعميل دايركت... وكذلك عند العملا إمكانية
