@@ -41,6 +41,7 @@ export * from './schemas/attachment.js';
 export * from './schemas/treasuryEntry.js';
 export * from './schemas/branchFinancials.js';
 export * from './schemas/fixedMonthlyExpense.js';
+export * from './schemas/itemSupplierTask.js';
 export * from './schemas/supplier.js';
 export * from './schemas/reportsOverview.js';
 export * from './schemas/boardsCatalogItem.js';

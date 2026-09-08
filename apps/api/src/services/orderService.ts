@@ -6,6 +6,7 @@ import type {
   Order,
   OrderItem,
   OrderItemReturn,
+  OrderItemSupplierTaskInput,
   Payment,
   ProductionTrack,
   SalesSummary,
@@ -21,6 +22,48 @@ import { createWorkOrderForTrack, softDeleteWorkOrderTx, tryAutoCreateWorkOrders
 import { assertBranchDayNotClosed, reopenDayIfClosed } from './treasuryService.js';
 
 export { PricingInputError } from './pricingEngineService.js';
+
+/**
+ * Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند يدوي...
+ * عدد 2 مورد الاول بتاع السيرل والتاني اللي هشتري منه الختم بالمقاس ده")
+ * — creates this item's own ad-hoc supplier-leg rows (`ItemSupplierTask`),
+ * same "created alongside the item, in the same transaction" shape
+ * `OrderItemMaterial` already uses. Confirmed to apply to any item
+ * kind/track, not just MANUAL — called unconditionally for every item that
+ * has any, in both `createOrder` and `updateOrder`.
+ *
+ * `oldProgressByKey` (only ever passed from `updateOrder`) carries real
+ * progress (status/dates) forward across the edit's full item replace —
+ * 🐛 found live (2026-09-08): without this, re-saving an order whose item
+ * had a task already marked SENT/RECEIVED silently reset it back to
+ * WAITING, even when the edit never touched that item at all, since the
+ * task row (like its parent `OrderItem`) is deleted and recreated from
+ * scratch every time. Matched by `(label, supplierId)` — the only
+ * correlation available since no id survives the replace.
+ */
+async function createItemSupplierTasksTx(
+  tx: Prisma.TransactionClient,
+  orderItemId: string,
+  tasks: OrderItemSupplierTaskInput[] | undefined,
+  oldProgressByKey?: Map<
+    string,
+    { status: 'WAITING' | 'SENT' | 'RECEIVED'; sentDate: Date | null; expectedReturnDate: Date | null; actualReturnDate: Date | null }
+  >,
+): Promise<void> {
+  if (!tasks?.length) return;
+  await tx.itemSupplierTask.createMany({
+    data: tasks.map((t, index) => {
+      const oldProgress = oldProgressByKey?.get(`${t.label}::${t.supplierId ?? ''}`);
+      return {
+        orderItemId,
+        label: t.label,
+        supplierId: t.supplierId ?? null,
+        sortOrder: index,
+        ...(oldProgress ?? {}),
+      };
+    }),
+  });
+}
 
 /**
  * "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — `productionTrack` is
@@ -136,6 +179,11 @@ export const ORDER_INCLUDE = {
       // always compute `returnedTotal`/`netTotal`, same pattern as
       // `payments` below.
       returns: { orderBy: { createdAt: 'asc' } },
+      // Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند
+      // يدوي") — needed so re-opening an order for edit can restore each
+      // item's existing ad-hoc supplier tasks (see `orderItemSchema`'s own
+      // doc comment for why — a full edit deletes/recreates every item).
+      supplierTasks: { where: { isDeleted: false }, orderBy: { sortOrder: 'asc' } },
     },
   },
   quotationOrigin: { select: { id: true } },
@@ -149,7 +197,7 @@ export const ORDER_INCLUDE = {
 } satisfies Prisma.OrderInclude;
 
 type OrderRecord = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
-type OrderItemRecord = Prisma.OrderItemGetPayload<{ include: { materials: true; returns: true } }>;
+type OrderItemRecord = Prisma.OrderItemGetPayload<{ include: { materials: true; returns: true; supplierTasks: true } }>;
 type PaymentRecord = Prisma.PaymentGetPayload<object>;
 type OrderItemReturnRecord = Prisma.OrderItemReturnGetPayload<object>;
 
@@ -205,6 +253,13 @@ export function mapOrderItemToDto(item: OrderItemRecord, canSeeInternal: boolean
       paperName: m.paperName,
       sheetPrice: m.sheetPrice.toNumber(),
       sheetsConsumed: m.sheetsConsumed.toNumber(),
+    })),
+    supplierTasks: item.supplierTasks.map((t) => ({
+      id: t.id,
+      label: t.label,
+      supplierId: t.supplierId,
+      status: t.status,
+      sortOrder: t.sortOrder,
     })),
     groupId: item.groupId,
     requiredQuantity: item.requiredQuantity,
@@ -714,6 +769,8 @@ export async function createOrder(
         });
       }
 
+      await createItemSupplierTasksTx(tx, createdItem.id, item.supplierTasks);
+
       createdItemRows.push({ ...createdItem, groupId: resolvedGroupId });
 
       // Part 3 of the supplier-linkage initiative (owner, 2026-08-27,
@@ -866,7 +923,18 @@ export async function updateOrder(
     include: {
       // Multi-material pricing (2026-08-17) — `materials` needed for the
       // restock-on-edit loop below (`materialsToRestock`).
-      items: { include: { materials: true } },
+      items: {
+        include: {
+          materials: true,
+          // Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق
+          // بند يدوي") — an edit deletes/recreates every OrderItem, which
+          // would otherwise silently reset any already-SENT/RECEIVED task
+          // back to WAITING even when the edit didn't touch this item at
+          // all. Read here so the create step below can carry real
+          // progress forward by matching `(label, supplierId)`.
+          supplierTasks: { where: { isDeleted: false } },
+        },
+      },
       // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16) — needed to
       // reconcile Work Orders per track after the item set changes (see
       // the reconciliation block below): which tracks already have an
@@ -878,6 +946,24 @@ export async function updateOrder(
   });
   if (!existing || existing.isDeleted) {
     throw new OrderNotFoundError();
+  }
+
+  // Owner (2026-09-08) — see the `supplierTasks` include's own doc comment
+  // above. Keyed by `(label, supplierId)` — the only correlation available
+  // across a full item replace (no stable per-item id survives an edit).
+  const oldSupplierTaskProgressByKey = new Map<
+    string,
+    { status: 'WAITING' | 'SENT' | 'RECEIVED'; sentDate: Date | null; expectedReturnDate: Date | null; actualReturnDate: Date | null }
+  >();
+  for (const oldItem of existing.items) {
+    for (const t of oldItem.supplierTasks) {
+      oldSupplierTaskProgressByKey.set(`${t.label}::${t.supplierId ?? ''}`, {
+        status: t.status,
+        sentDate: t.sentDate,
+        expectedReturnDate: t.expectedReturnDate,
+        actualReturnDate: t.actualReturnDate,
+      });
+    }
   }
 
   assertDeliveryDateNotBeforeOrderDate(
@@ -1022,6 +1108,8 @@ export async function updateOrder(
           })),
         });
       }
+
+      await createItemSupplierTasksTx(tx, createdItem.id, item.supplierTasks, oldSupplierTaskProgressByKey);
 
       newItemRows.push({ ...createdItem, groupId: resolvedGroupId });
 
@@ -1220,7 +1308,7 @@ export async function updateOrderItemProduction(
       productionUpdatedAt: new Date(),
       productionUpdatedById: updatedById,
     },
-    include: { materials: true, returns: true },
+    include: { materials: true, returns: true, supplierTasks: { where: { isDeleted: false }, orderBy: { sortOrder: 'asc' } } },
   });
   // Reached only via `work-orders.edit` (route-level gate, see workOrders.ts) — same bar `canSeeInternal` already enforces elsewhere, so it's trivially satisfied here.
   return mapOrderItemToDto(updated, true);

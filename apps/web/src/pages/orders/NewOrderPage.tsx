@@ -404,6 +404,8 @@ interface DraftItem {
   // only (shown for the "منتجات جاهزة" tab specifically); pre-fills the
   // "الإحضار من المورد" stage's assigned supplier once production reaches it.
   preferredSupplierId: string;
+  /** Owner (2026-09-08) — see `CartLine.supplierTasks`'s own doc comment. Every kind. */
+  supplierTasks: { label: string; supplierId: string }[];
 }
 
 let draftKeySeq = 0;
@@ -498,6 +500,7 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     unitPrice: '',
     discountPercent: '0',
     preferredSupplierId: '',
+    supplierTasks: [],
   };
 }
 
@@ -855,6 +858,7 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
   d.attachmentFileName = line.attachmentUrl ? d.attachmentFileName : '';
   d.discountPercent = line.discountPercent ? String(line.discountPercent) : '0';
   d.preferredSupplierId = line.preferredSupplierId ?? '';
+  d.supplierTasks = (line.supplierTasks ?? []).map((t) => ({ label: t.label, supplierId: t.supplierId ?? '' }));
 
   // extraServiceFields's inverse — matches stored entries back to the
   // current catalog by label. A stored entry whose label no longer exists
@@ -1877,7 +1881,7 @@ interface ReconstructedLine {
 
 /** Shared by both edit-Order and edit-Quotation modes — the two item shapes carry the same fields relevant here. */
 function reconstructCartLine(
-  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; boardsCatalogItemId?: string | null; productionTrack?: ProductionTrack | null; groupId?: string | null; discountAmount?: number },
+  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; boardsCatalogItemId?: string | null; productionTrack?: ProductionTrack | null; groupId?: string | null; discountAmount?: number; supplierTasks?: { label: string; supplierId: string | null }[] },
   readyProducts: ReadyProduct[],
   services: Service[],
   inventoryItems: InventoryItem[],
@@ -1949,6 +1953,11 @@ function reconstructCartLine(
       // which is all `resolveOrderItemGroups`/`resolveQuotationItemGroups`
       // need to re-link them into a fresh group row on save.
       groupKey: item.groupId ?? undefined,
+      // Owner (2026-09-08) — restore this item's existing ad-hoc supplier
+      // tasks so re-saving the order (which deletes/recreates every item)
+      // doesn't silently drop them — see `orderItemSchema`'s own doc
+      // comment for why the server sends these back at all.
+      supplierTasks: item.supplierTasks,
     },
     warning: null,
   };
@@ -2401,6 +2410,15 @@ interface CartLine {
   discountPercent?: number;
   /** Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — READY_PRODUCTS only. */
   preferredSupplierId?: string;
+  /**
+   * Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند
+   * يدوي... عدد 2 مورد") — an open-ended, ad-hoc list of extra supplier
+   * legs this specific item needs (any kind/track, not just MANUAL — e.g.
+   * "السيرل" + "شراء الختم مقاس 4×4" for a rare stamp size). Each becomes
+   * its own `ItemSupplierTask` row, tracked separately in the Production
+   * Board.
+   */
+  supplierTasks?: { label: string; supplierId: string | null }[];
 }
 
 interface PaymentRow {
@@ -2778,6 +2796,9 @@ function NewOrderForm({
       // the treasury/suppliers initiative), so they reuse this exact field.
       preferredSupplierId:
         draft.kind === 'PRODUCT' || draft.kind === 'BOARDS' ? draft.preferredSupplierId || undefined : undefined,
+      supplierTasks: draft.supplierTasks
+        .filter((t) => t.label.trim())
+        .map((t) => ({ label: t.label.trim(), supplierId: t.supplierId || null })),
     };
     if (editingKey) {
       setCart((prev) => prev.map((l) => (l.key === editingKey ? line : l)));
@@ -2950,6 +2971,7 @@ function NewOrderForm({
       groupKey: line.groupKey,
       discountPercent: line.discountPercent,
       preferredSupplierId: line.preferredSupplierId,
+      supplierTasks: line.supplierTasks,
     }));
 
     setSubmitting(intent);
@@ -5213,6 +5235,63 @@ function NewOrderForm({
               )}
             </div>
           )}
+
+          {/* Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق
+              بند يدوي... عميل جايلي عايز يعمل ختم مقاس 4*4... هحتاج اختار
+              إنه الطلب ده ليه عدد 2 مورد الاول بتاع السيرل والتاني اللي
+              هشتري منه الختم بالمقاس ده") — universal, any kind/track, an
+              open-ended list (2, 3, أو أكتر) of extra supplier legs this
+              specific item needs, each tracked separately in لوحة
+              الإنتاج (WAITING → SENT → RECEIVED). */}
+          <div className="border-border space-y-2 rounded-lg border p-2">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground text-xs font-medium">
+                موردين إضافيين للبند ده (اختياري — لحالات نادرة محتاجة أكتر من مورد)
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => updateDraft({ supplierTasks: [...draft.supplierTasks, { label: '', supplierId: '' }] })}
+              >
+                + إضافة مورد
+              </Button>
+            </div>
+            {draft.supplierTasks.map((task, taskIndex) => (
+              <div key={taskIndex} className="flex flex-wrap items-center gap-2">
+                <input
+                  value={task.label}
+                  onChange={(e) => {
+                    const next = draft.supplierTasks.slice();
+                    next[taskIndex] = { ...next[taskIndex]!, label: e.target.value };
+                    updateDraft({ supplierTasks: next });
+                  }}
+                  placeholder="إيه اللي هيتجاب من المورد ده (مثال: السيرل)"
+                  className="border-input bg-background min-w-[200px] flex-1 rounded-md border px-2 py-1.5 text-sm"
+                />
+                <div className="w-44">
+                  <PartnerCombobox
+                    partners={partners}
+                    value={task.supplierId}
+                    onChange={(id) => {
+                      const next = draft.supplierTasks.slice();
+                      next[taskIndex] = { ...next[taskIndex]!, supplierId: id };
+                      updateDraft({ supplierTasks: next });
+                    }}
+                    placeholder="اختر المورد"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateDraft({ supplierTasks: draft.supplierTasks.filter((_, i) => i !== taskIndex) })}
+                  className="text-destructive text-xs"
+                  aria-label="حذف المورد"
+                >
+                  🗑
+                </button>
+              </div>
+            ))}
+          </div>
 
           {/* Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة")، نسبة % بدل الجنيه (2026-08-26) — على هذا البند بس، مستقل عن نسبة الخصم % على مستوى الفاتورة كلها. */}
           {!draftPreview.error && (

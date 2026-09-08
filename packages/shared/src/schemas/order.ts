@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { createPaymentSchema, paymentSchema } from './payment.js';
 import { orderItemPricingInputSchema } from './orderItemPricing.js';
 import { orderItemReturnSchema } from './orderItemReturn.js';
+import { itemSupplierTaskStatusSchema, orderItemSupplierTaskInputSchema } from './itemSupplierTask.js';
 
 export const orderStatusSchema = z.enum([
   'DRAFT',
@@ -164,6 +165,24 @@ export const orderItemSchema = z.object({
   // schema, not inside `pricing`" convention as readyProductId/serviceId
   // above.
   boardsCatalogItemId: z.string().uuid().nullable(),
+  // Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند
+  // يدوي... عدد 2 مورد") — see `ItemSupplierTask`'s own doc comment. Empty
+  // for the overwhelming majority of items (this stays a rare, ad-hoc
+  // escape hatch); returned here so re-opening an order/quotation for
+  // edit can restore each item's existing tasks instead of silently
+  // dropping them (a full edit deletes and recreates every `OrderItem`,
+  // cascading away any task the composer doesn't resend).
+  supplierTasks: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        label: z.string(),
+        supplierId: z.string().uuid().nullable(),
+        status: itemSupplierTaskStatusSchema,
+        sortOrder: z.number().int(),
+      }),
+    )
+    .optional(),
   createdAt: z.string(),
 });
 
@@ -295,6 +314,10 @@ export const createOrderItemSchema = z.object({
   // Owner (2026-08-23, "اكتب اسم المورد منين وانا بطلب؟") — see
   // orderItemSchema's own doc comment on this same field.
   preferredSupplierId: z.string().uuid().optional(),
+  // Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند
+  // يدوي... عدد 2 مورد") — see `ItemSupplierTask`'s own doc comment.
+  // Applies to any item kind/track, not just MANUAL.
+  supplierTasks: z.array(orderItemSupplierTaskInputSchema).max(10).optional(),
 });
 
 /**

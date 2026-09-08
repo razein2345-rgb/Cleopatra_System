@@ -1232,6 +1232,8 @@ model BusinessPartner {
   convertedFromLead                    Lead?
   /// Reverse of `OrderItem.preferredSupplierId` — every item whose staff picked this partner as the intended external supplier at composition time.
   preferredSupplierForItems            OrderItem[]               @relation("OrderItemPreferredSupplier")
+  /// Reverse of `ItemSupplierTask.supplierId` — every ad-hoc per-item supplier leg assigned to this partner.
+  itemSupplierTasks                    ItemSupplierTask[]
   /// Reverse of `InventoryItem.supplierId` — every stock item whose usual/default supplier is this partner.
   suppliedInventoryItems               InventoryItem[]           @relation("InventoryItemSupplier")
   /// Reverse of `PurchaseRequest.supplierId` — every shortfall event routed to this partner.
@@ -1953,6 +1955,10 @@ model OrderItem {
   preferredSupplierId String?          @db.Uuid
   preferredSupplier   BusinessPartner? @relation("OrderItemPreferredSupplier", fields: [preferredSupplierId], references: [id])
 
+  /// Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند يدوي")
+  /// — see `ItemSupplierTask`'s own doc comment.
+  supplierTasks ItemSupplierTask[]
+
   createdAt DateTime @default(now())
 
   @@index([inventoryItemId])
@@ -1962,6 +1968,63 @@ model OrderItem {
   @@index([readyProductId])
   @@index([serviceId])
   @@index([boardsCatalogItemId])
+}
+
+enum ItemSupplierTaskStatus {
+  WAITING
+  SENT
+  RECEIVED
+}
+
+/// Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند يدوي
+/// يعني مثلا: عميل جايلي عايز يعمل ختم مقاس 4*4 المقاس ده موجود بس نادر
+/// لما بيتعمل فا هحتاج اختار إنه الطلب ده ليه عدد 2 مورد الاول بتاع
+/// السيرل والتاني اللي هشتري منه الختم بالمقاس ده. مثلا عميل تاني عايز
+/// يعمل أكياس فا هحتاج أكستم بنفس الطريقة") — an ad-hoc, per-item,
+/// open-ended list of extra supplier legs a rare/custom item needs (2, 3,
+/// or more — confirmed explicitly, never a fixed count), staff-typed at
+/// order-composition time. Deliberately NOT modeled as real
+/// WorkflowStage/StageInstance rows (rule 14, no hardcoded production
+/// steps) — a pre-defined WorkflowTemplate can't anticipate every one-off
+/// combination a rare custom item might need. Always ADDITIONAL to (never
+/// a replacement for) the item's own normal `productionTrack`/`WorkOrder`
+/// routing, and confirmed to apply to ANY item kind/track, not just
+/// `MANUAL` lines. Owner confirmed explicitly: wants real stage-like
+/// tracking in the Production Board (WAITING → SENT → RECEIVED, same
+/// shape as `StageInstance`'s own External Supplier fields below), with
+/// the order/customer/item always clearly visible alongside each task.
+model ItemSupplierTask {
+  id          String    @id @default(uuid()) @db.Uuid
+  orderItemId String    @db.Uuid
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  /// Free text describing what this specific supplier leg covers — e.g.
+  /// "السيرل"، "شراء الختم مقاس 4×4" — never a fixed enum, matching the
+  /// genuinely ad-hoc nature of this feature.
+  label String
+
+  supplierId String?          @db.Uuid
+  supplier   BusinessPartner? @relation(fields: [supplierId], references: [id])
+
+  status             ItemSupplierTaskStatus @default(WAITING)
+  sentDate           DateTime?
+  expectedReturnDate DateTime?
+  actualReturnDate   DateTime?
+
+  /// Owner-orderable among a single item's own tasks (2, 3, ...) — same
+  /// "free manual position" concept as `StageInstance.manualSortOrder`.
+  sortOrder Int @default(0)
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderItemId])
+  @@index([supplierId])
+  @@index([isDeleted])
 }
 
 /// Owner (2026-08-23, "مرتجعات" — عمل مرتجع لبضاعة جاهزة بيعت غلط، رجّع

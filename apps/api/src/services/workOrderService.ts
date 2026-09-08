@@ -12,7 +12,16 @@ import { getLatestPublishedTemplate } from './workflowTemplateService.js';
 import { mapOrderItemToDto } from './orderService.js';
 
 export const WORK_ORDER_INCLUDE = {
-  items: { include: { materials: { orderBy: { sortOrder: 'asc' } }, returns: { orderBy: { createdAt: 'asc' } } } },
+  items: {
+    include: {
+      materials: { orderBy: { sortOrder: 'asc' } },
+      returns: { orderBy: { createdAt: 'asc' } },
+      // Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند
+      // يدوي") — see `ItemSupplierTask`'s own doc comment; `mapOrderItemToDto`
+      // (reused here, see ORDER_INCLUDE's own identical field) requires it.
+      supplierTasks: { where: { isDeleted: false }, orderBy: { sortOrder: 'asc' } },
+    },
+  },
   workflowInstance: { include: WORKFLOW_INSTANCE_INCLUDE },
 } satisfies Prisma.WorkOrderInclude;
 
