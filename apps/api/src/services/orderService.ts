@@ -961,10 +961,11 @@ export async function updateOrder(
     // (not a nested bulk `items: { create: [...] }`), same reasoning as
     // `createOrder`: each item's real id must be known immediately to link
     // its own `OrderItemMaterial` rows correctly.
-    const newItemRows: { id: string; productionTrack: ProductionTrack | null }[] = [];
+    const newItemRows: { id: string; productionTrack: ProductionTrack | null; groupId: string | null }[] = [];
     for (let index = 0; index < input.items.length; index++) {
       const item = input.items[index]!;
       const result = priced[index]!;
+      const resolvedGroupId = item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null;
       const createdItem = await tx.orderItem.create({
         data: {
           orderId,
@@ -979,7 +980,7 @@ export async function updateOrder(
             boardsCatalogItemId: item.boardsCatalogItemId,
             boardsCatalogItemName: item.boardsCatalogItemId ? (itemNames.get(item.boardsCatalogItemId) ?? null) : null,
             itemTotal: result.total,
-            groupId: item.groupKey ? (groupKeyToId.get(item.groupKey) ?? null) : null,
+            groupId: resolvedGroupId,
             requiredQuantity: resolveRequiredQuantity(item.pricing),
             discountAmount: itemDiscountAmounts[index],
             preferredSupplierId: item.preferredSupplierId,
@@ -1022,7 +1023,7 @@ export async function updateOrder(
         });
       }
 
-      newItemRows.push(createdItem);
+      newItemRows.push({ ...createdItem, groupId: resolvedGroupId });
 
       // Part 3 of the supplier-linkage initiative — same unconditional
       // "دائمًا بالطلب" booking `createOrder` does above.
@@ -1050,32 +1051,53 @@ export async function updateOrder(
     // Orders against the new item set. `updateOrder` never touched Work
     // Orders at all before this change (a pre-existing gap, not a
     // regression) — now it has to, since a track can be added or removed
-    // entirely by an edit. Three cases per track:
-    //   1. Existed before AND still has items → keep the same WorkOrder
-    //      (its WorkflowInstance/stage progress is untouched), just
-    //      re-link the freshly-recreated items to it.
-    //   2. Existed before, has zero items now → soft-delete it, same as
-    //      the manual "حذف أمر الشغل" flow.
-    //   3. Didn't exist before, has items now → create it fresh.
-    const newItemIdsByTrack = new Map<ProductionTrack, string[]>();
+    // entirely by an edit.
+    //
+    // 🔴 Owner (2026-09-08, found live via a real MTSC order — "1000 كارت
+    // اوفست وجهين" + "300 كارت ديجيتال وجهين", both `productionTrack:
+    // READY_PRODUCTS`, landed on the same WorkOrder with zero shared
+    // `groupId` between them) — this used to key purely by `track`,
+    // exactly the bug `tryAutoCreateWorkOrders` (workOrderService.ts) was
+    // already fixed for on the CREATE path (تكملة 64): any edit that left
+    // (or newly put) two unrelated ungrouped items on the same track
+    // re-bundled them into one Job. The group key is now the same
+    // `(track, groupId ?? item.id)` `tryAutoCreateWorkOrders` uses — an
+    // ungrouped item always gets its own key via its own id, so it can
+    // never collide with another ungrouped item on the same track.
+    //
+    // A full edit deletes and recreates every `OrderItem` (no stable id
+    // across edits — see this function's own item-replace loop above), so
+    // there is no way to know which NEW group "is" which OLD one beyond
+    // track. Reconciliation is therefore, per track: reuse the existing
+    // WorkOrder for AT MOST ONE of the new groups (the first encountered —
+    // preserves its real WorkflowInstance/stage progress for the common,
+    // unchanged case where a track's composition didn't fracture into
+    // several independent items); every OTHER group on that track is
+    // guaranteed a fresh WorkOrder, so the post-edit state can never leave
+    // two unrelated items bundled together again, even in the rare case an
+    // edit adds a second independent item to a track that already had one.
+    const newGroups = new Map<string, { track: ProductionTrack; itemIds: string[] }>();
     for (const item of newItemRows) {
       if (!item.productionTrack) continue;
-      const list = newItemIdsByTrack.get(item.productionTrack) ?? [];
-      list.push(item.id);
-      newItemIdsByTrack.set(item.productionTrack, list);
+      const key = `${item.productionTrack}::${item.groupId ?? item.id}`;
+      const group = newGroups.get(key) ?? { track: item.productionTrack, itemIds: [] };
+      group.itemIds.push(item.id);
+      newGroups.set(key, group);
     }
 
-    const existingWorkOrderByTrack = new Map(existing.workOrders.map((wo) => [wo.productionTrack, wo]));
-
+    const tracksStillPresent = new Set([...newGroups.values()].map((g) => g.track));
     for (const workOrder of existing.workOrders) {
-      if (!newItemIdsByTrack.has(workOrder.productionTrack)) {
+      if (!tracksStillPresent.has(workOrder.productionTrack)) {
         await softDeleteWorkOrderTx(tx, workOrder.id, workOrder.workflowInstance, performedById);
       }
     }
 
-    for (const [track, itemIds] of newItemIdsByTrack) {
-      const existingWorkOrder = existingWorkOrderByTrack.get(track);
+    const unclaimedExistingWorkOrderByTrack = new Map(existing.workOrders.map((wo) => [wo.productionTrack, wo]));
+    for (const { track, itemIds } of newGroups.values()) {
+      const existingWorkOrder = unclaimedExistingWorkOrderByTrack.get(track);
       if (existingWorkOrder) {
+        // Claimed — the next group on this same track (if any) falls through to a fresh WorkOrder below.
+        unclaimedExistingWorkOrderByTrack.delete(track);
         await tx.orderItem.updateMany({ where: { id: { in: itemIds } }, data: { workOrderId: existingWorkOrder.id } });
       } else {
         await createWorkOrderForTrack(tx, {

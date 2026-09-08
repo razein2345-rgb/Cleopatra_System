@@ -106,7 +106,7 @@ function FinancialOverviewWidgetComponent() {
         ) : closures.length === 0 ? (
           <p className="text-muted-foreground text-xs">لا توجد فروع.</p>
         ) : (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-3">
             {closures.map(({ branch, closure }) => (
               <div key={branch.id} className="flex items-center gap-1.5 text-xs">
                 <span>{branch.name}</span>
@@ -115,7 +115,20 @@ function FinancialOverviewWidgetComponent() {
                 ) : closure.isOpen ? (
                   <StatusBadge tone="danger">اتفتح تاني</StatusBadge>
                 ) : (
-                  <StatusBadge tone="success">مقفول</StatusBadge>
+                  <>
+                    <StatusBadge tone="success">مقفول</StatusBadge>
+                    {/* Owner (2026-09-08, "لما بيقفل الفرع مش بيبان عندي قفل
+                        على كام بالظبط") — the badge alone said "closed" but
+                        threw away the actual number; `actualCountedCash` is
+                        the same figure the Treasury page's own closure card
+                        calls "النقدية الفعلية". */}
+                    <span className="font-medium">{fmt(closure.actualCountedCash)}</span>
+                    {closure.difference !== 0 && (
+                      <span className={closure.difference < 0 ? 'text-destructive' : 'text-success'}>
+                        (فرق {fmt(closure.difference)})
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
             ))}

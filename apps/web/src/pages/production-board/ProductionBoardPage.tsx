@@ -1319,9 +1319,16 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
     {/* Owner (2026-09-08, "عايز اقدر اطبعها... يطبع فيها اسم الصنف وإسم
         المورد وعنوانه") — `hidden print:block`, the exact mirror of the
         normal UI's `print:hidden` above: only this shows when the browser
-        print dialog actually renders the page. */}
+        print dialog actually renders the page.
+        🐛 Fixed (2026-09-08, "بتظهرلي بيضاء خالص") — `print:block` only
+        toggles `display`; the app-wide print stylesheet (`index.css`)
+        separately sets `body * { visibility: hidden }` and only opts a
+        `.document-print-root` (and its children) back into `visibility:
+        visible` — every other printable block in the app already carries
+        that class (see `CustomerStatementTab.tsx`), this one never did, so
+        it occupied layout at print time but rendered fully invisible. */}
     {pickupPrintRows && (
-      <div className="hidden p-8 print:block">
+      <div className="document-print-root hidden p-8 print:block">
         <h1 className="mb-4 text-xl font-bold">قائمة استلام من الموردين</h1>
         <table className="w-full border-collapse text-sm">
           <thead>
