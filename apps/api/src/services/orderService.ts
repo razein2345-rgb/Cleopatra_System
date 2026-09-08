@@ -47,7 +47,13 @@ async function createItemSupplierTasksTx(
   tasks: OrderItemSupplierTaskInput[] | undefined,
   oldProgressByKey?: Map<
     string,
-    { status: 'WAITING' | 'SENT' | 'RECEIVED'; sentDate: Date | null; expectedReturnDate: Date | null; actualReturnDate: Date | null }
+    {
+      status: 'WAITING' | 'SENT' | 'RECEIVED';
+      sentDate: Date | null;
+      expectedReturnDate: Date | null;
+      actualReturnDate: Date | null;
+      cost: Prisma.Decimal | null;
+    }
   >,
 ): Promise<void> {
   if (!tasks?.length) return;
@@ -58,8 +64,13 @@ async function createItemSupplierTasksTx(
         orderItemId,
         label: t.label,
         supplierId: t.supplierId ?? null,
+        // Owner (2026-09-09, "وفين السعر اللي هدفعه للمورد؟") — a
+        // freshly-typed cost on this edit wins; otherwise carry the old
+        // row's cost forward across the delete/recreate cycle, same as
+        // status/dates below (tekmila 74's "correlate by value, not id").
+        cost: t.cost !== undefined ? t.cost : (oldProgress?.cost ?? null),
         sortOrder: index,
-        ...(oldProgress ?? {}),
+        ...(oldProgress ? { status: oldProgress.status, sentDate: oldProgress.sentDate, expectedReturnDate: oldProgress.expectedReturnDate, actualReturnDate: oldProgress.actualReturnDate } : {}),
       };
     }),
   });
@@ -145,22 +156,35 @@ export function assertPartnerPresentUnlessWalkIn(partnerId: string | null | unde
   throw new PartnerRequiredError();
 }
 
-const UNAMBIGUOUS_TRACK_BY_KIND: Partial<Record<string, ProductionTrack>> = {
-  LOOSE_PAPER: 'OFFSET',
-  NOTEBOOK: 'OFFSET',
-  FOLDER: 'OFFSET',
-  ENVELOPE: 'OFFSET',
-  DIGITAL: 'DIGITAL',
-  BOARDS: 'BOARDS_SIGNAGE',
-  SERVICE: 'SERVICES',
-  INVENTORY_RETAIL: undefined, // must resolve to no track at all
-  MANUAL: undefined, // same — a manual/custom line is never a production job
+const ALLOWED_TRACKS_BY_KIND: Partial<Record<string, (ProductionTrack | null)[]>> = {
+  LOOSE_PAPER: ['OFFSET'],
+  NOTEBOOK: ['OFFSET'],
+  FOLDER: ['OFFSET'],
+  ENVELOPE: ['OFFSET'],
+  DIGITAL: ['DIGITAL'],
+  BOARDS: ['BOARDS_SIGNAGE'],
+  SERVICE: ['SERVICES'],
+  INVENTORY_RETAIL: [null], // must resolve to no track at all
+  // Owner (2026-09-09, "معنى كده إنها هتمر بردو بمرحلة التصميم وهتظهر في
+  // قائمة الطلبات وهتظهر في الأقسام") — a manual line stays trackless by
+  // default (free-text entries like "إيداع"/"تصوير" never need
+  // production), but the moment it carries real ad-hoc supplier work
+  // (`OrderItem.supplierTasks` — see that model's own doc comment) it
+  // needs a genuine production job like any other item. `OTHER_PRODUCTS`
+  // is the existing track already built for exactly this shape (its
+  // seeded template is literally for stamps/acrylic needing
+  // per-piece supplier work) — reused as-is, no new track/migration.
+  // The client decides which of the two applies (same pattern
+  // `sourceType`-based PRODUCT routing already uses); this only guards
+  // against an unrelated track (OFFSET, DIGITAL, ...) being forced onto
+  // a manual line.
+  MANUAL: [null, 'OTHER_PRODUCTS'],
 };
 
 function assertProductionTrackConsistentWithKind(kind: string, productionTrack: ProductionTrack | null | undefined): void {
-  if (!(kind in UNAMBIGUOUS_TRACK_BY_KIND)) return; // PRODUCT — genuinely ambiguous, no check possible
-  const expected = UNAMBIGUOUS_TRACK_BY_KIND[kind];
-  if ((productionTrack ?? undefined) !== expected) {
+  if (!(kind in ALLOWED_TRACKS_BY_KIND)) return; // PRODUCT — genuinely ambiguous, no check possible
+  const allowed = ALLOWED_TRACKS_BY_KIND[kind]!;
+  if (!allowed.includes(productionTrack ?? null)) {
     throw new InconsistentProductionTrackError(kind, productionTrack ?? 'null');
   }
 }
@@ -258,6 +282,7 @@ export function mapOrderItemToDto(item: OrderItemRecord, canSeeInternal: boolean
       id: t.id,
       label: t.label,
       supplierId: t.supplierId,
+      cost: t.cost?.toNumber() ?? null,
       status: t.status,
       sortOrder: t.sortOrder,
     })),
@@ -953,7 +978,13 @@ export async function updateOrder(
   // across a full item replace (no stable per-item id survives an edit).
   const oldSupplierTaskProgressByKey = new Map<
     string,
-    { status: 'WAITING' | 'SENT' | 'RECEIVED'; sentDate: Date | null; expectedReturnDate: Date | null; actualReturnDate: Date | null }
+    {
+      status: 'WAITING' | 'SENT' | 'RECEIVED';
+      sentDate: Date | null;
+      expectedReturnDate: Date | null;
+      actualReturnDate: Date | null;
+      cost: Prisma.Decimal | null;
+    }
   >();
   for (const oldItem of existing.items) {
     for (const t of oldItem.supplierTasks) {
@@ -962,6 +993,7 @@ export async function updateOrder(
         sentDate: t.sentDate,
         expectedReturnDate: t.expectedReturnDate,
         actualReturnDate: t.actualReturnDate,
+        cost: t.cost,
       });
     }
   }

@@ -17,6 +17,14 @@ export const itemSupplierTaskSchema = z.object({
   label: z.string(),
   supplierId: z.string().uuid().nullable(),
   supplierName: z.string().nullable(),
+  /**
+   * Owner (2026-09-09, "وفين السعر اللي هدفعه للمورد؟ علشان تعرف تحسب
+   * صافي الربح") — optional real cost for this leg, feeding profit
+   * reports only (see the model's own schema.prisma doc comment). Null =
+   * not entered yet, same "honest gap, never a guess" discipline every
+   * other real-supplier-cost field in this app already follows.
+   */
+  cost: z.number().nullable(),
   status: itemSupplierTaskStatusSchema,
   sentDate: z.string().nullable(),
   expectedReturnDate: z.string().nullable(),
@@ -36,11 +44,13 @@ export const itemSupplierTaskSchema = z.object({
 export const orderItemSupplierTaskInputSchema = z.object({
   label: z.string().trim().min(1).max(200),
   supplierId: z.string().uuid().nullable().optional(),
+  cost: z.number().nonnegative().nullable().optional(),
 });
 
 export const updateItemSupplierTaskSchema = z.object({
   label: z.string().trim().min(1).max(200).optional(),
   supplierId: z.string().uuid().nullable().optional(),
+  cost: z.number().nonnegative().nullable().optional(),
   status: itemSupplierTaskStatusSchema.optional(),
   sentDate: z.string().nullable().optional(),
   expectedReturnDate: z.string().nullable().optional(),

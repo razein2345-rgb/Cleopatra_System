@@ -405,7 +405,7 @@ interface DraftItem {
   // "الإحضار من المورد" stage's assigned supplier once production reaches it.
   preferredSupplierId: string;
   /** Owner (2026-09-08) — see `CartLine.supplierTasks`'s own doc comment. Every kind. */
-  supplierTasks: { label: string; supplierId: string }[];
+  supplierTasks: { label: string; supplierId: string; cost: string }[];
 }
 
 let draftKeySeq = 0;
@@ -858,7 +858,11 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
   d.attachmentFileName = line.attachmentUrl ? d.attachmentFileName : '';
   d.discountPercent = line.discountPercent ? String(line.discountPercent) : '0';
   d.preferredSupplierId = line.preferredSupplierId ?? '';
-  d.supplierTasks = (line.supplierTasks ?? []).map((t) => ({ label: t.label, supplierId: t.supplierId ?? '' }));
+  d.supplierTasks = (line.supplierTasks ?? []).map((t) => ({
+    label: t.label,
+    supplierId: t.supplierId ?? '',
+    cost: t.cost != null ? String(t.cost) : '',
+  }));
 
   // extraServiceFields's inverse — matches stored entries back to the
   // current catalog by label. A stored entry whose label no longer exists
@@ -1881,7 +1885,7 @@ interface ReconstructedLine {
 
 /** Shared by both edit-Order and edit-Quotation modes — the two item shapes carry the same fields relevant here. */
 function reconstructCartLine(
-  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; boardsCatalogItemId?: string | null; productionTrack?: ProductionTrack | null; groupId?: string | null; discountAmount?: number; supplierTasks?: { label: string; supplierId: string | null }[] },
+  item: { id: string; kind: string | null; modelName: string | null; breakdown?: unknown; itemTotal: number | null; sizeFamilyKey: string | null; realSizeLabel: string | null; inventoryItemId?: string | null; readyProductId?: string | null; serviceId?: string | null; boardsCatalogItemId?: string | null; productionTrack?: ProductionTrack | null; groupId?: string | null; discountAmount?: number; supplierTasks?: { label: string; supplierId: string | null; cost?: number | null }[] },
   readyProducts: ReadyProduct[],
   services: Service[],
   inventoryItems: InventoryItem[],
@@ -2418,7 +2422,7 @@ interface CartLine {
    * its own `ItemSupplierTask` row, tracked separately in the Production
    * Board.
    */
-  supplierTasks?: { label: string; supplierId: string | null }[];
+  supplierTasks?: { label: string; supplierId: string | null; cost?: number | null }[];
 }
 
 interface PaymentRow {
@@ -2770,6 +2774,15 @@ function NewOrderForm({
         productionTrack = 'OTHER_PRODUCTS';
       }
     }
+    // Owner (2026-09-09, "معنى كده إنها هتمر بردو بمرحلة التصميم وهتظهر في
+    // قائمة الطلبات وهتظهر في الأقسام") — a manual line with real ad-hoc
+    // supplier work attached needs an actual production job, not silence
+    // (see `ALLOWED_TRACKS_BY_KIND` in orderService.ts for the server-side
+    // half of this). `OTHER_PRODUCTS` is the existing track already built
+    // for exactly this shape — no new track, no new template.
+    if (draft.kind === 'MANUAL' && draft.supplierTasks.some((t) => t.label.trim())) {
+      productionTrack = 'OTHER_PRODUCTS';
+    }
     const line: CartLine = {
       key: draft.key,
       itemType: label,
@@ -2800,7 +2813,7 @@ function NewOrderForm({
         draft.kind === 'PRODUCT' || draft.kind === 'BOARDS' ? draft.preferredSupplierId || undefined : undefined,
       supplierTasks: draft.supplierTasks
         .filter((t) => t.label.trim())
-        .map((t) => ({ label: t.label.trim(), supplierId: t.supplierId || null })),
+        .map((t) => ({ label: t.label.trim(), supplierId: t.supplierId || null, cost: t.cost.trim() ? Number(t.cost) : null })),
     };
     if (editingKey) {
       setCart((prev) => prev.map((l) => (l.key === editingKey ? line : l)));
@@ -5271,7 +5284,7 @@ function NewOrderForm({
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => updateDraft({ supplierTasks: [...draft.supplierTasks, { label: '', supplierId: '' }] })}
+                onClick={() => updateDraft({ supplierTasks: [...draft.supplierTasks, { label: '', supplierId: '', cost: '' }] })}
               >
                 + إضافة مورد
               </Button>
@@ -5300,6 +5313,27 @@ function NewOrderForm({
                     placeholder="اختر المورد"
                   />
                 </div>
+                {/* Owner (2026-09-09, "وفين السعر اللي هدفعه للمورد؟ علشان
+                    تعرف تحسب صافي الربح") — real cost for THIS leg, feeds
+                    profit reports only, never the price charged to the
+                    customer (see resolveItemProfit's own doc comment) —
+                    same `inventory.costPrice` visibility gate every other
+                    real-supplier-cost field in the composer already uses. */}
+                {can('inventory.costPrice') && (
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={task.cost}
+                    onChange={(e) => {
+                      const next = draft.supplierTasks.slice();
+                      next[taskIndex] = { ...next[taskIndex]!, cost: e.target.value };
+                      updateDraft({ supplierTasks: next });
+                    }}
+                    placeholder="تكلفة المورد"
+                    className="border-input bg-background w-28 rounded-md border px-2 py-1.5 text-sm"
+                  />
+                )}
                 <button
                   type="button"
                   onClick={() => updateDraft({ supplierTasks: draft.supplierTasks.filter((_, i) => i !== taskIndex) })}

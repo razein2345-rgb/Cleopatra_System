@@ -21,7 +21,10 @@ import { getDailyFixedCostByBranch } from './fixedExpensesService.js';
  *    older orders fall back to a best-effort `modelName` match against the
  *    current ReadyProduct catalog, same fragile-but-useful discipline
  *    `ReorderPredictionTab.tsx` already established for this exact gap.
- * 4. BOARDS/SERVICE/MANUAL, or a retail/ready-product item with no cost
+ * 4. A MANUAL item with `ItemSupplierTask.cost` recorded on every one of
+ *    its ad-hoc supplier legs (owner, 2026-09-09, "وفين السعر اللي هدفعه
+ *    للمورد؟") — profit is `itemTotal - sum(supplierTasks.cost)`.
+ * 5. BOARDS/SERVICE/MANUAL, or a retail/ready-product item with no cost
  *    price recorded — no cost basis exists yet. Contributes to `salesTotal`
  *    but *not* to `netProfit`, and flips `hasUnknownProfitItems` — a wrong
  *    guess would be worse than an honest gap here.
@@ -107,6 +110,14 @@ export function resolveItemProfit(
     inventoryItemId: string | null;
     readyProductId: string | null;
     modelName: string | null;
+    /**
+     * Owner (2026-09-09, "وفين السعر اللي هدفعه للمورد؟ علشان تعرف تحسب
+     * صافي الربح") — sum of a MANUAL item's `ItemSupplierTask.cost` rows,
+     * only when every recorded leg has a cost (see the caller's own doc
+     * comment). `null`/undefined = no known cost basis via this path,
+     * same as before this field existed.
+     */
+    supplierTasksCost?: number | null;
   },
   orderDiscountFactor: number,
   costPriceByInventoryItemId: Map<string, number | null>,
@@ -165,7 +176,15 @@ export function resolveItemProfit(
     return { revenue, profit: revenue - costBasis };
   }
 
-  // 5. SERVICE/MANUAL, or a BOARDS item with no supplier cost recorded — no cost basis concept yet.
+  // 5. MANUAL with real ad-hoc supplier costs recorded (owner, 2026-09-09,
+  // "وفين السعر اللي هدفعه للمورد؟") — same "real cost, never a guess"
+  // discipline as BOARDS above.
+  if (item.supplierTasksCost != null) {
+    const costBasis = item.supplierTasksCost * orderDiscountFactor;
+    return { revenue, profit: revenue - costBasis };
+  }
+
+  // 6. SERVICE/MANUAL, or a BOARDS item with no supplier cost recorded — no cost basis concept yet.
   return { revenue, profit: null };
 }
 
@@ -206,6 +225,11 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
             inventoryItemId: true,
             readyProductId: true,
             modelName: true,
+            // Owner (2026-09-09, "وفين السعر اللي هدفعه للمورد؟ علشان تعرف
+            // تحسب صافي الربح") — real per-leg supplier cost for a manual
+            // item with ad-hoc supplier work (see `resolveItemProfit`'s
+            // step 3.5).
+            supplierTasks: { where: { isDeleted: false }, select: { cost: true } },
           },
         },
       },
@@ -257,6 +281,13 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
     entry.salesCount += 1;
     const orderDiscountFactor = 1 - order.discountPercent.toNumber() / 100;
     for (const item of order.items) {
+      // Owner (2026-09-09) — a known cost basis only when EVERY recorded
+      // supplier leg has a cost typed in; a partial cost would understate
+      // the real spend and overstate profit, worse than an honest gap.
+      const supplierTasksCost =
+        item.supplierTasks.length > 0 && item.supplierTasks.every((t) => t.cost != null)
+          ? item.supplierTasks.reduce((sum, t) => sum + t.cost!.toNumber(), 0)
+          : null;
       const { profit } = resolveItemProfit(
         {
           itemTotal: item.itemTotal?.toNumber() ?? null,
@@ -265,6 +296,7 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
           inventoryItemId: item.inventoryItemId,
           readyProductId: item.readyProductId,
           modelName: item.modelName,
+          supplierTasksCost,
         },
         orderDiscountFactor,
         costPriceByInventoryItemId,

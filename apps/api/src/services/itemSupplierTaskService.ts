@@ -30,6 +30,7 @@ function toDto(row: Row): ItemSupplierTask {
     label: row.label,
     supplierId: row.supplierId,
     supplierName: row.supplier?.nameAr ?? null,
+    cost: row.cost?.toNumber() ?? null,
     status: row.status,
     sentDate: row.sentDate?.toISOString() ?? null,
     expectedReturnDate: row.expectedReturnDate?.toISOString() ?? null,
@@ -67,6 +68,7 @@ export async function updateItemSupplierTask(id: string, input: UpdateItemSuppli
     data: {
       ...(input.label !== undefined ? { label: input.label } : {}),
       ...(input.supplierId !== undefined ? { supplierId: input.supplierId } : {}),
+      ...(input.cost !== undefined ? { cost: input.cost } : {}),
       ...(input.status !== undefined ? { status: input.status } : {}),
       ...(input.sentDate !== undefined ? { sentDate: input.sentDate ? new Date(input.sentDate) : null } : {}),
       ...(input.expectedReturnDate !== undefined

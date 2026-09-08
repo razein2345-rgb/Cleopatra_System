@@ -178,6 +178,7 @@ export const orderItemSchema = z.object({
         id: z.string().uuid(),
         label: z.string(),
         supplierId: z.string().uuid().nullable(),
+        cost: z.number().nullable(),
         status: itemSupplierTaskStatusSchema,
         sortOrder: z.number().int(),
       }),

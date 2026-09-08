@@ -2010,6 +2010,17 @@ model ItemSupplierTask {
   supplierId String?          @db.Uuid
   supplier   BusinessPartner? @relation(fields: [supplierId], references: [id])
 
+  /// Owner (2026-09-09, "وفين السعر اللي هدفعه للمورد؟ علشان تعرف تحسب
+  /// صافي الربح") — optional real cost for this specific supplier leg,
+  /// same "تكلفة المورد الحقيقية منفصلة عمدًا عن أرقام معادلة التسعير"
+  /// discipline as `SheetType.costPrice`/`Setting.zincSupplierCost`/
+  /// `Setting.boardsXxxSupplierCost`: feeds `branchFinancialsService.ts`'s
+  /// profit report ONLY, never the price charged to the customer. Null
+  /// (the common case until someone fills it in) means this leg simply
+  /// has no known cost basis yet — resolveItemProfit falls back to its
+  /// existing "no cost basis" gap, never a fabricated number.
+  cost Decimal? @db.Decimal(12, 2)
+
   status             ItemSupplierTaskStatus @default(WAITING)
   sentDate           DateTime?
   expectedReturnDate DateTime?

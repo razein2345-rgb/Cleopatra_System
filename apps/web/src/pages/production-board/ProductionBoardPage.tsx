@@ -4,8 +4,6 @@ import { Ban, GripVertical, Pencil, RefreshCw, Route as RouteIcon, SkipForward }
 import type {
   BusinessPartner,
   Department,
-  ItemSupplierTask,
-  ItemSupplierTaskStatus,
   Machine,
   PartnerAddress,
   ProductionTrack,
@@ -15,11 +13,11 @@ import type {
   WorkflowQueueItem,
   WorkflowTemplate,
 } from '@cleopatra/shared';
-import { apiDelete, apiGet, apiPut } from '@/lib/api';
+import { apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/table';
-import { EditableDateCell, EditableSelectCell, EditableTextCell, StatusBadge, useConfirm } from '@/components/cleopatra';
+import { EditableDateCell, EditableSelectCell, EditableTextCell, StatusBadge } from '@/components/cleopatra';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/state/AuthContext';
 import { ConfirmStageActionDialog } from './ConfirmStageActionDialog';
@@ -100,8 +98,8 @@ const SUMMARY_TRACK_ORDER = TRACK_TAB_ORDER.filter((key): key is Exclude<TrackTa
  * queue, unchanged behaviorally — see `DepartmentsTab` below, previously
  * this whole file's default export).
  */
-type TopTab = 'OVERVIEW' | 'MY_TASKS' | 'ORDERS' | 'DEPARTMENTS' | 'WORKFLOW' | 'SUPPLIER_TASKS';
-const TOP_TAB_ORDER: TopTab[] = ['OVERVIEW', 'MY_TASKS', 'ORDERS', 'DEPARTMENTS', 'WORKFLOW', 'SUPPLIER_TASKS'];
+type TopTab = 'OVERVIEW' | 'MY_TASKS' | 'ORDERS' | 'DEPARTMENTS' | 'WORKFLOW';
+const TOP_TAB_ORDER: TopTab[] = ['OVERVIEW', 'MY_TASKS', 'ORDERS', 'DEPARTMENTS', 'WORKFLOW'];
 const TOP_TAB_LABELS: Record<TopTab, string> = {
   OVERVIEW: 'نظرة عامة',
   MY_TASKS: 'مهامي اليوم',
@@ -113,36 +111,54 @@ const TOP_TAB_LABELS: Record<TopTab, string> = {
   // unified "الكل" tab above shipped (owner's own choice: "ملحق بعد ما
   // الشاشة الموحدة تخلص").
   WORKFLOW: 'حسب الوركفلو',
-  // Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند
-  // يدوي... عدد 2 مورد") — ad-hoc extra supplier legs a rare/custom item
-  // needed (e.g. a stamp's cliché from one supplier + its base from
-  // another), tracked here across every order — see `ItemSupplierTask`'s
-  // own schema.prisma doc comment.
-  SUPPLIER_TASKS: 'موردين إضافيين',
 };
+
+/** Owner (2026-09-09, "عايز اقدر احرك التابات من مكانها وارتبها بمزاجي") — the whole button is draggable (no separate handle, matching `SortableColumnHead`'s pattern), while a plain click still switches tabs — dnd-kit's distance-based activation constraint (see `useQueueSortableItem`'s `PointerSensor`) tells the two apart. */
+function SortableTopTabButton({ id, label, isActive, onClick }: { id: TopTab; label: string; isActive: boolean; onClick: () => void }) {
+  const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(id);
+  return (
+    <button
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'cursor-grab touch-none rounded-md px-3 py-1.5 text-sm font-medium active:cursor-grabbing',
+        isActive ? 'bg-background shadow-sm' : 'text-muted-foreground',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
 
 export function ProductionBoardPage() {
   const [tab, setTab] = useState<TopTab>('OVERVIEW');
   const [departmentsTrackTab, setDepartmentsTrackTab] = useState<TrackTabKey>('DESIGN');
+  // Owner (2026-09-09, "عايز اقدر احرك التابات من مكانها وارتبها بمزاجي")
+  // — same personal drag-to-reorder preference `useColumnLayout` already
+  // gives table/Kanban columns (تكملة 68), applied to the top-level tab
+  // strip itself. Per-viewer localStorage, not shared business data.
+  const tabLayout = useColumnLayout('topTabs', TOP_TAB_ORDER);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">لوحة الإنتاج</h1>
         <div className="border-border bg-muted/40 flex gap-1 rounded-lg border p-1">
-          {TOP_TAB_ORDER.map((key) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setTab(key)}
-              className={cn(
-                'rounded-md px-3 py-1.5 text-sm font-medium',
-                tab === key ? 'bg-background shadow-sm' : 'text-muted-foreground',
-              )}
-            >
-              {TOP_TAB_LABELS[key]}
-            </button>
-          ))}
+          <ColumnDndContext order={tabLayout.order} onReorder={tabLayout.setOrder}>
+            {tabLayout.order.map((key) => (
+              <SortableTopTabButton
+                key={key}
+                id={key as TopTab}
+                label={TOP_TAB_LABELS[key as TopTab]}
+                isActive={tab === key}
+                onClick={() => setTab(key as TopTab)}
+              />
+            ))}
+          </ColumnDndContext>
         </div>
       </div>
 
@@ -158,7 +174,6 @@ export function ProductionBoardPage() {
       {tab === 'ORDERS' && <ProductionBoardOrdersTab />}
       {tab === 'DEPARTMENTS' && <DepartmentsTab initialTrackTab={departmentsTrackTab} />}
       {tab === 'WORKFLOW' && <WorkflowKanbanTab />}
-      {tab === 'SUPPLIER_TASKS' && <ItemSupplierTasksTab />}
     </div>
   );
 }
@@ -1799,125 +1814,4 @@ function WorkflowKanbanTab() {
   );
 }
 
-const ITEM_SUPPLIER_TASK_STATUS_LABELS: Record<ItemSupplierTaskStatus, string> = {
-  WAITING: 'قيد الانتظار',
-  SENT: 'اتبعت للمورد',
-  RECEIVED: 'اتستلمت',
-};
-const ITEM_SUPPLIER_TASK_STATUS_OPTIONS: [ItemSupplierTaskStatus, string][] = [
-  ['WAITING', ITEM_SUPPLIER_TASK_STATUS_LABELS.WAITING],
-  ['SENT', ITEM_SUPPLIER_TASK_STATUS_LABELS.SENT],
-  ['RECEIVED', ITEM_SUPPLIER_TASK_STATUS_LABELS.RECEIVED],
-];
 
-/**
- * Owner (2026-09-08, "احياناً هحتاج اكستم انا وورك فلو عن طريق بند يدوي...
- * عميل جايلي عايز يعمل ختم مقاس 4*4... هحتاج اختار إنه الطلب ده ليه عدد 2
- * مورد الاول بتاع السيرل والتاني اللي هشتري منه الختم بالمقاس ده") — every
- * open (WAITING/SENT) ad-hoc supplier task across every order, in one
- * combined list — same "one request, never one per order" shape the "الكل"
- * unified departments view already uses. Owner confirmed explicitly:
- * "يكون واضح إسم المورد وايه اللي هيتجاب من عنده بالظبط بخصوص إنهو طلب
- * وتبع عميل مين" — every row always shows the item/order/customer context
- * alongside the task itself, never just the task in isolation.
- */
-function ItemSupplierTasksTab() {
-  const confirm = useConfirm();
-  const [tasks, setTasks] = useState<ItemSupplierTask[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    apiGet<ItemSupplierTask[]>('/api/item-supplier-tasks')
-      .then(setTasks)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل الموردين الإضافيين'));
-  }, []);
-  useEffect(load, [load]);
-
-  const setStatus = async (task: ItemSupplierTask, status: ItemSupplierTaskStatus) => {
-    setError(null);
-    try {
-      await apiPut(`/api/item-supplier-tasks/${task.id}`, { status });
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر تحديث الحالة');
-    }
-  };
-
-  const remove = async (task: ItemSupplierTask) => {
-    if (!(await confirm({ title: `حذف "${task.label}"؟`, destructive: true }))) return;
-    setError(null);
-    try {
-      await apiDelete(`/api/item-supplier-tasks/${task.id}`);
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر الحذف');
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-muted-foreground text-sm">
-          موردين إضافيين اتضافوا يدويًا لبنود نادرة/مخصّصة (زي ختم بمقاس نادر محتاج مورد للسيرل ومورد تاني
-          للماكينة نفسها) — كل واحد بيتتبّع لوحده هنا لغاية ما يوصل.
-        </p>
-        <Button type="button" variant="secondary" size="icon" onClick={load} aria-label="تحديث">
-          <RefreshCw className="size-4" />
-        </Button>
-      </div>
-
-      {error && <div className="border-destructive/40 bg-destructive/10 text-destructive rounded-lg border p-3 text-sm">{error}</div>}
-
-      {!tasks ? (
-        <div className="text-muted-foreground">جارٍ التحميل…</div>
-      ) : tasks.length === 0 ? (
-        <div className="text-muted-foreground rounded-xl border border-dashed p-6 text-center text-sm">
-          مفيش موردين إضافيين مفتوحين دلوقتي.
-        </div>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>الصنف</TableHead>
-              <TableHead>أمر التشغيل</TableHead>
-              <TableHead>العميل</TableHead>
-              <TableHead>المطلوب من المورد</TableHead>
-              <TableHead>المورد</TableHead>
-              <TableHead>الحالة</TableHead>
-              <TableHead>حذف</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {tasks.map((task) => (
-              <TableRow key={task.id}>
-                <TableCell className="font-medium">{task.itemName ?? '—'}</TableCell>
-                <TableCell className="text-muted-foreground">{task.workOrderNumber ?? '—'}</TableCell>
-                <TableCell className="text-muted-foreground">{task.customerName ?? '—'}</TableCell>
-                <TableCell>{task.label}</TableCell>
-                <TableCell>{task.supplierName ?? '—'}</TableCell>
-                <TableCell>
-                  <select
-                    value={task.status}
-                    onChange={(e) => void setStatus(task, e.target.value as ItemSupplierTaskStatus)}
-                    className="border-input bg-background rounded-md border px-2 py-1 text-sm"
-                  >
-                    {ITEM_SUPPLIER_TASK_STATUS_OPTIONS.map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                </TableCell>
-                <TableCell>
-                  <button type="button" onClick={() => void remove(task)} className="text-destructive text-xs" aria-label="حذف">
-                    🗑
-                  </button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </div>
-  );
-}
