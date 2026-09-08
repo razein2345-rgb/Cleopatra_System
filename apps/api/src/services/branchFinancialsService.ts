@@ -168,16 +168,31 @@ export function resolveItemProfit(
   return { revenue, profit: null };
 }
 
-export async function getCompanyFinancialSummary(): Promise<CompanyFinancialSummary> {
+/**
+ * Owner (2026-09-08, "ليه معملش دورين... افصلي الإتنين عن بعض وانا بس اللي
+ * اقدر اشوف الحسابات بتاعت كل فرع على حده... ولو عايز اشوفه الإتنين مع
+ * بعض تمام") — 🔴 this always computed and returned EVERY branch, with
+ * zero scoping, to anyone holding `reports.view` — including a plain SALES
+ * role (seeded with `reports.view` for its own unrelated reports), so a
+ * cashier who also happens to carry SALES (e.g. one branch's front-desk
+ * person) could see this widget with the OTHER branch's treasury/profit in
+ * full. `branchIds` restricts every underlying query to that set — omitted
+ * (the controller's SUPER_ADMIN case) keeps the original "every branch"
+ * behavior unchanged; same "omit for admin, filter otherwise" shape as
+ * `resolveBranchScope` in `treasuryEntries.ts`.
+ */
+export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<CompanyFinancialSummary> {
+  const branchWhere = branchIds ? { id: { in: branchIds } } : {};
+  const entryBranchWhere = branchIds ? { branchId: { in: branchIds } } : {};
   const [branches, treasuryGrouped, orders, inventoryItems, readyProducts, paperInventoryItems, setting] = await Promise.all([
-    prisma.branch.findMany({ where: { isDeleted: false }, select: { id: true, name: true } }),
+    prisma.branch.findMany({ where: { isDeleted: false, ...branchWhere }, select: { id: true, name: true } }),
     prisma.treasuryEntry.groupBy({
       by: ['branchId', 'type'],
-      where: { isDeleted: false },
+      where: { isDeleted: false, ...entryBranchWhere },
       _sum: { amount: true },
     }),
     prisma.order.findMany({
-      where: { isDeleted: false, status: { not: 'CANCELLED' } },
+      where: { isDeleted: false, status: { not: 'CANCELLED' }, ...entryBranchWhere },
       select: {
         branchId: true,
         finalTotal: true,

@@ -8,9 +8,20 @@ import { getReportsOverview } from '../services/reportsOverviewService.js';
  * `reports.view` permission existed in the catalog already, unused —
  * see permissions.ts). More reports land here as the rest of the "فصل
  * الخزينة/الربح بالفرع" initiative ships (docs/AI/PROJECT_STATUS.md § 6).
+ *
+ * 🔴 Owner (2026-09-08, same complaint resurfacing: "ليه معملش دورين...
+ * افصلي الإتنين عن بعض وانا بس اللي اقدر اشوف") — this ignored the request
+ * entirely (`_req`) and always returned every branch, because `reports.view`
+ * is also granted to the plain SALES role for its own unrelated reports —
+ * so a branch-scoped cashier who also carries SALES saw the other branch's
+ * treasury/profit in full here. Same fix shape as `resolveBranchScope` in
+ * `treasuryEntries.ts`: only a true Super Admin gets the unscoped, every-
+ * branch view; everyone else is clamped to `accessibleBranchIds`.
  */
-export async function getBranchFinancialSummaryHandler(_req: Request, res: Response) {
-  const summary = await getCompanyFinancialSummary();
+export async function getBranchFinancialSummaryHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const branchIds = auth.roleNames.includes('SUPER_ADMIN') ? undefined : auth.accessibleBranchIds;
+  const summary = await getCompanyFinancialSummary(branchIds);
   res.json({ success: true, data: summary });
 }
 
