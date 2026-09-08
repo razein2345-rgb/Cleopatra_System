@@ -90,14 +90,23 @@ export function useQueueActions(reload: () => void) {
   // FEATURE-010 (2026-08-14, owner: "في الورك فلو متقسم ويدجيتز بتنتقل
   // دايركت لما ادوس على الـchek box اللي جمب الطلب إلى المرحلة اللي بعدها")
   // — a single checkbox replaces the "إنهاء" button: ticking it immediately
-  // completes the current stage. تخطي/فشل/تعديل stay available as small
-  // secondary icons next to it — less common actions, not gone.
-  const actionButtons = (item: WorkflowQueueItem) => (
+  // completes the current stage.
+  //
+  // Owner (2026-09-08, "عايز الcheckbox يكون جمب إسم الصنف") — split out
+  // from the rest of the actions (تخطي/فشل/تعديل below) so the caller can
+  // place it right next to the item name instead of only in a trailing
+  // "الإجراءات" column.
+  const completeCheckbox = (item: WorkflowQueueItem) => (
+    <label className="flex items-center gap-1.5 text-xs" title="إنهاء المرحلة والانتقال للتالية">
+      <input type="checkbox" checked={false} onChange={() => void advance(item, 'COMPLETE')} />
+      إنهاء
+    </label>
+  );
+
+  // تخطي/فشل/تعديل — less common actions, kept together wherever they
+  // already lived (the "الإجراءات" column / card footer).
+  const secondaryActions = (item: WorkflowQueueItem) => (
     <div className="flex items-center gap-2">
-      <label className="flex items-center gap-1.5 text-xs" title="إنهاء المرحلة والانتقال للتالية">
-        <input type="checkbox" checked={false} onChange={() => void advance(item, 'COMPLETE')} />
-        إنهاء
-      </label>
       <button
         type="button"
         title="تخطي"
@@ -122,6 +131,13 @@ export function useQueueActions(reload: () => void) {
       >
         <Pencil className="size-4" />
       </button>
+    </div>
+  );
+
+  const actionButtons = (item: WorkflowQueueItem) => (
+    <div className="flex items-center gap-2">
+      {completeCheckbox(item)}
+      {secondaryActions(item)}
     </div>
   );
 
@@ -151,5 +167,14 @@ export function useQueueActions(reload: () => void) {
     </>
   );
 
-  return { actionError, reorderError, actionButtons, dialogs, persistStageOrder, updateField };
+  return {
+    actionError,
+    reorderError,
+    actionButtons,
+    completeCheckbox,
+    secondaryActions,
+    dialogs,
+    persistStageOrder,
+    updateField,
+  };
 }

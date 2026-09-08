@@ -666,7 +666,8 @@ function SortableQueueTableRow({
   canEditFields,
   timelineLink,
   canEdit,
-  actionButtons,
+  completeCheckbox,
+  secondaryActions,
 }: {
   item: WorkflowQueueItem;
   employees: User[];
@@ -675,7 +676,8 @@ function SortableQueueTableRow({
   canEditFields: boolean;
   timelineLink: (item: WorkflowQueueItem) => ReactNode;
   canEdit: boolean;
-  actionButtons: (item: WorkflowQueueItem) => ReactNode;
+  completeCheckbox: (item: WorkflowQueueItem) => ReactNode;
+  secondaryActions: (item: WorkflowQueueItem) => ReactNode;
 }) {
   const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(item.id);
   return (
@@ -685,8 +687,15 @@ function SortableQueueTableRow({
       </TableCell>
       {/* Owner (2026-09-07, "لازم اشوف إسم الصنف مش رقم الفاتورة علشان اعرف
           هي ايه من برة") — the item's own name is the primary identifier
-          now, first column, ahead of the customer/order number. */}
-      <TableCell className="font-medium">{item.itemNames.join('، ') || '—'}</TableCell>
+          now, first column, ahead of the customer/order number. Owner
+          (2026-09-08, "عايز الcheckbox يكون جمب إسم الصنف") — "إنهاء"
+          checkbox sits right next to it, not only in "الإجراءات". */}
+      <TableCell className="font-medium">
+        <div className="flex items-center gap-2">
+          {canEdit && completeCheckbox(item)}
+          <span>{item.itemNames.join('، ') || '—'}</span>
+        </div>
+      </TableCell>
       <TableCell className="font-medium">{item.customerName ?? '—'}</TableCell>
       <TableCell>{item.workOrderNumber ?? '—'}</TableCell>
       <TableCell>{item.stageName}</TableCell>
@@ -713,7 +722,7 @@ function SortableQueueTableRow({
         <WaitingReasonCell item={item} updateField={updateField} disabled={!canEditFields} />
       </TableCell>
       <TableCell>{timelineLink(item)}</TableCell>
-      {canEdit && <TableCell>{actionButtons(item)}</TableCell>}
+      {canEdit && <TableCell>{secondaryActions(item)}</TableCell>}
     </TableRow>
   );
 }
@@ -727,7 +736,8 @@ function SortableQueueCard({
   canEditFields,
   timelineLink,
   canEdit,
-  actionButtons,
+  completeCheckbox,
+  secondaryActions,
 }: {
   item: WorkflowQueueItem;
   employees: User[];
@@ -736,7 +746,8 @@ function SortableQueueCard({
   canEditFields: boolean;
   timelineLink: (item: WorkflowQueueItem) => ReactNode;
   canEdit: boolean;
-  actionButtons: (item: WorkflowQueueItem) => ReactNode;
+  completeCheckbox: (item: WorkflowQueueItem) => ReactNode;
+  secondaryActions: (item: WorkflowQueueItem) => ReactNode;
 }) {
   const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(item.id);
   return (
@@ -745,7 +756,11 @@ function SortableQueueCard({
         <div className="flex min-w-0 items-start gap-2">
           <DragHandle attributes={attributes} listeners={listeners} />
           <div className="min-w-0">
-            <p className="truncate font-medium">{item.itemNames.join('، ') || '—'}</p>
+            {/* Owner (2026-09-08, "عايز الcheckbox يكون جمب إسم الصنف") */}
+            <div className="flex items-center gap-2">
+              {canEdit && completeCheckbox(item)}
+              <p className="truncate font-medium">{item.itemNames.join('، ') || '—'}</p>
+            </div>
             <p className="text-muted-foreground truncate text-xs">{item.customerName ?? '—'}</p>
             <p className="text-muted-foreground truncate text-xs">
               {item.workOrderNumber ?? '—'} · {item.stageName}
@@ -772,7 +787,7 @@ function SortableQueueCard({
         <p className="text-muted-foreground text-xs">المورد: {supplierName(item.assignedSupplierId)}</p>
       )}
       {timelineLink(item)}
-      {canEdit && actionButtons(item)}
+      {canEdit && secondaryActions(item)}
     </Card>
   );
 }
@@ -900,7 +915,8 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
     });
   }, [queue, priorityFilter, delayedOnly, search, trackTab, unifiedTrackFilter, designDepartmentId, externalSupplierDepartmentId]);
 
-  const { actionError, reorderError, actionButtons, dialogs, persistStageOrder, updateField } = useQueueActions(loadQueue);
+  const { actionError, reorderError, completeCheckbox, secondaryActions, dialogs, persistStageOrder, updateField } =
+    useQueueActions(loadQueue);
 
   if (error) return <div className="text-destructive">{error}</div>;
 
@@ -1117,7 +1133,8 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                       canEditFields={canEdit}
                       timelineLink={timelineLink}
                       canEdit={canEdit}
-                      actionButtons={actionButtons}
+                      completeCheckbox={completeCheckbox}
+                      secondaryActions={secondaryActions}
                     />
                   ))}
                   {filteredQueue.length === 0 && (
@@ -1154,7 +1171,8 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
                     canEditFields={canEdit}
                     timelineLink={timelineLink}
                     canEdit={canEdit}
-                    actionButtons={actionButtons}
+                    completeCheckbox={completeCheckbox}
+                    secondaryActions={secondaryActions}
                   />
                 ))}
               </QueueDndContext>
@@ -1204,7 +1222,8 @@ function SortableKanbanCard({
   canEditFields,
   timelineLink,
   canEdit,
-  actionButtons,
+  completeCheckbox,
+  secondaryActions,
 }: {
   item: WorkflowQueueItem;
   employees: User[];
@@ -1212,7 +1231,8 @@ function SortableKanbanCard({
   canEditFields: boolean;
   timelineLink: (item: WorkflowQueueItem) => ReactNode;
   canEdit: boolean;
-  actionButtons: (item: WorkflowQueueItem) => ReactNode;
+  completeCheckbox: (item: WorkflowQueueItem) => ReactNode;
+  secondaryActions: (item: WorkflowQueueItem) => ReactNode;
 }) {
   const { setNodeRef, style, attributes, listeners } = useQueueSortableItem(item.id);
   return (
@@ -1220,7 +1240,11 @@ function SortableKanbanCard({
       <div className="flex items-start gap-2">
         <DragHandle attributes={attributes} listeners={listeners} />
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium">{item.itemNames.join('، ') || '—'}</p>
+          {/* Owner (2026-09-08, "عايز الcheckbox يكون جمب إسم الصنف") */}
+          <div className="flex items-center gap-2">
+            {canEdit && completeCheckbox(item)}
+            <p className="truncate font-medium">{item.itemNames.join('، ') || '—'}</p>
+          </div>
           <p className="text-muted-foreground truncate text-xs">{item.customerName ?? '—'}</p>
           <p className="text-muted-foreground truncate text-xs">{item.workOrderNumber ?? '—'}</p>
         </div>
@@ -1241,7 +1265,7 @@ function SortableKanbanCard({
         <WaitingReasonCell item={item} updateField={updateField} disabled={!canEditFields} />
       </div>
       {timelineLink(item)}
-      {canEdit && actionButtons(item)}
+      {canEdit && secondaryActions(item)}
     </Card>
   );
 }
@@ -1310,7 +1334,8 @@ function WorkflowKanbanTab() {
     });
   }, [queue, priorityFilter, delayedOnly, search]);
 
-  const { actionError, reorderError, actionButtons, dialogs, persistStageOrder, updateField } = useQueueActions(loadQueue);
+  const { actionError, reorderError, completeCheckbox, secondaryActions, dialogs, persistStageOrder, updateField } =
+    useQueueActions(loadQueue);
 
   const canEdit = can('work-orders.edit');
 
@@ -1436,7 +1461,8 @@ function WorkflowKanbanTab() {
                           canEditFields={canEdit}
                           timelineLink={timelineLink}
                           canEdit={canEdit}
-                          actionButtons={actionButtons}
+                          completeCheckbox={completeCheckbox}
+                          secondaryActions={secondaryActions}
                         />
                       ))}
                     </QueueDndContext>
