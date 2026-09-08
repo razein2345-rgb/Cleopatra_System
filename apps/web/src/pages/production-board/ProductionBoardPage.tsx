@@ -1132,6 +1132,12 @@ function DepartmentsTab({ initialTrackTab }: { initialTrackTab?: TrackTabKey }) 
               {printing ? 'جارٍ التجهيز…' : 'طباعة قائمة الاستلام'}
             </Button>
           )}
+          {/* Owner (2026-09-08, "اتحكم في مكان العمود... زي نوشن") — an
+              escape hatch back to the shipped column order/widths, in case
+              a drag goes wrong or a saved layout no longer fits. */}
+          <Button type="button" variant="ghost" size="sm" onClick={columns.resetLayout}>
+            استرجاع ترتيب الأعمدة الافتراضي
+          </Button>
         </div>
       </div>
 
@@ -1489,7 +1495,13 @@ function KanbanColumns({
   const stageById = new Map(stages.map((s) => [s.id, s]));
 
   return (
-    <ColumnDndContext order={columns.order} onReorder={columns.setOrder}>
+    <div className="space-y-2">
+      <div className="flex justify-end">
+        <Button type="button" variant="ghost" size="sm" onClick={columns.resetLayout}>
+          استرجاع ترتيب الأعمدة الافتراضي
+        </Button>
+      </div>
+      <ColumnDndContext order={columns.order} onReorder={columns.setOrder}>
       <div className="flex gap-3 overflow-x-auto pb-2">
         {columns.order.map((stageId) => {
           const stage = stageById.get(stageId);
@@ -1532,7 +1544,8 @@ function KanbanColumns({
           );
         })}
       </div>
-    </ColumnDndContext>
+      </ColumnDndContext>
+    </div>
   );
 }
 
