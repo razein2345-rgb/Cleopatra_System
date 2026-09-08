@@ -2484,6 +2484,8 @@ function NewOrderForm({
   /** Owner (2026-08-20, "بيع سريع... جوة تاب بضاعة من المخزون وتاب بند يدوي") — see QuickSaleDialog/QuickManualIncomeDialog below. */
   const [showQuickSale, setShowQuickSale] = useState(false);
   const [showQuickIncome, setShowQuickIncome] = useState(false);
+  /** Owner (2026-09-08, "اكتب انا الكلام عشوائي مره واحده وهو يحسبهم كلهم بدل ما تكون عملية الحساب بطيئة لأني بحسبهم بند بند") — see QuickPasteItemsDialog below. */
+  const [showQuickPasteItems, setShowQuickPasteItems] = useState(false);
   const [partnerId, setPartnerId] = useState(
     editOrder?.partnerId ?? editQuotation?.partnerId ?? presetPartnerId ?? partners[0]?.id ?? '',
   );
@@ -5028,15 +5030,32 @@ function NewOrderForm({
                   إيه؟" → "يسجل قيد دخل خزينة بس، بدون مخزون") — MANUAL has
                   no inventory item to deduct from at all (see
                   QuickManualIncomeDialog below). */}
-              {can('treasury.create') && (
+              <div className="flex flex-wrap gap-3">
+                {can('treasury.create') && (
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickIncome(true)}
+                    className="text-primary text-xs hover:underline"
+                  >
+                    ⚡ بيع سريع — قيد خزينة بدون فاتورة
+                  </button>
+                )}
+                {/* Owner (2026-09-08, "اكتب انا الكلام عشوائي مره واحده وهو
+                    يحسبهم كلهم بدل ما تكون عملية الحساب بطيئة لأني بحسبهم
+                    بند بند") — confirmed "نموذج سريع بدون AI (لصق قايمة
+                    أصناف)" over an actual AI/LLM call: a fixed line format
+                    (اسم، كمية، سعر) parsed client-side, reviewed in a
+                    preview table, then added to the cart in one shot —
+                    scoped to MANUAL only (no formula to get wrong, unlike
+                    every other kind — pricing rule 3/4 stays untouched). */}
                 <button
                   type="button"
-                  onClick={() => setShowQuickIncome(true)}
+                  onClick={() => setShowQuickPasteItems(true)}
                   className="text-primary text-xs hover:underline"
                 >
-                  ⚡ بيع سريع — قيد خزينة بدون فاتورة
+                  📋 لصق قائمة أصناف دفعة واحدة
                 </button>
-              )}
+              </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <label className="space-y-1 text-sm">
                   <span className="text-muted-foreground">السعر</span>
@@ -5402,6 +5421,12 @@ function NewOrderForm({
       {showQuickIncome && (
         <QuickManualIncomeDialog branchId={branchId} categories={treasuryCategories} onClose={() => setShowQuickIncome(false)} />
       )}
+      {showQuickPasteItems && (
+        <QuickPasteItemsDialog
+          onAddLines={(lines) => setCart((prev) => [...prev, ...lines])}
+          onClose={() => setShowQuickPasteItems(false)}
+        />
+      )}
     </div>
   );
 }
@@ -5730,6 +5755,200 @@ function QuickSaleDialog({
             </Button>
           </div>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface ParsedQuickItemLine {
+  lineNumber: number;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  error?: string;
+}
+
+/** One item per line — `اسم، كمية، سعر` (comma or tab-separated, so a paste straight from an Excel column also works). Blank lines are dropped. */
+function parseQuickItemLines(text: string): ParsedQuickItemLine[] {
+  return text
+    .split('\n')
+    .map((raw, idx) => ({ raw: raw.trim(), lineNumber: idx + 1 }))
+    .filter(({ raw }) => raw.length > 0)
+    .map(({ raw, lineNumber }) => {
+      const parts = (raw.includes('\t') ? raw.split('\t') : raw.split(/[,،]/)).map((p) => p.trim());
+      const [name = '', qtyRaw = '', priceRaw = ''] = parts;
+      const quantity = Number(qtyRaw);
+      const unitPrice = Number(priceRaw);
+
+      let error: string | undefined;
+      if (!name) error = 'الاسم مطلوب';
+      else if (parts.length < 3) error = 'الصيغة المطلوبة: اسم الصنف، الكمية، السعر';
+      else if (!Number.isFinite(quantity) || quantity <= 0) error = 'الكمية لازم تكون رقم أكبر من صفر';
+      else if (!Number.isFinite(unitPrice) || unitPrice < 0) error = 'السعر لازم يكون رقم';
+
+      return {
+        lineNumber,
+        name,
+        quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+        unitPrice: Number.isFinite(unitPrice) && unitPrice >= 0 ? unitPrice : 0,
+        error,
+      };
+    });
+}
+
+/**
+ * Owner (2026-09-08, "هل ممكن يكون في Ai مش شرط Ai بالظبط بس اكتب انا
+ * الكلام عشوائي مره واحده وهو يحسبهم كلهم بدل ما تكون عملية الحساب بطيئة
+ * لأني بحسبهم بند بند") — confirmed over AskUserQuestion: a fast form (not
+ * an actual AI/LLM call) where a fixed line format is parsed and reviewed
+ * before anything is added. Scoped to MANUAL only — its "pricing" is just
+ * `unitPrice × quantity`, so building cart lines directly here (skipping
+ * `addToCart`'s full per-kind draft/preview machinery) touches zero pricing
+ * formula (rule 3/4 is a non-issue for a kind that has no formula at all).
+ */
+function QuickPasteItemsDialog({ onAddLines, onClose }: { onAddLines: (lines: CartLine[]) => void; onClose: () => void }) {
+  const [text, setText] = useState('');
+  const [rows, setRows] = useState<(ParsedQuickItemLine & { included: boolean })[] | null>(null);
+
+  const parse = () => {
+    const parsed = parseQuickItemLines(text);
+    setRows(parsed.map((r) => ({ ...r, included: !r.error })));
+  };
+
+  const updateRow = (lineNumber: number, patch: Partial<ParsedQuickItemLine & { included: boolean }>) => {
+    setRows((prev) => prev?.map((r) => (r.lineNumber === lineNumber ? { ...r, ...patch } : r)) ?? prev);
+  };
+
+  const included = (rows ?? []).filter((r) => r.included && r.quantity > 0);
+  const grandTotal = included.reduce((sum, r) => sum + r.quantity * r.unitPrice, 0);
+
+  const confirmAdd = () => {
+    const lines: CartLine[] = included.map((r) => {
+      draftKeySeq += 1;
+      return {
+        key: `item-${draftKeySeq}`,
+        itemType: r.name,
+        summary: `${r.name} × ${r.quantity}`,
+        pricing: { kind: 'MANUAL', unitPrice: r.unitPrice, quantity: r.quantity },
+        total: r.unitPrice * r.quantity,
+        productionTrack: null,
+      };
+    });
+    onAddLines(lines);
+    onClose();
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>لصق قائمة أصناف — بند يدوي</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          {!rows && (
+            <>
+              <p className="text-muted-foreground text-xs">
+                سطر لكل صنف — الاسم، الكمية، السعر (افصل بينهم بفاصلة، أو الصق مباشرة من عمود إكسيل). مثال:
+              </p>
+              <textarea
+                autoFocus
+                rows={10}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder={'ورق A4 80 جرام, 5, 120\nشريط لاصق, 10, 15'}
+                className="border-input bg-background w-full rounded-md border px-3 py-2 font-mono text-sm"
+                dir="rtl"
+              />
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="secondary" onClick={onClose}>
+                  إلغاء
+                </Button>
+                <Button type="button" onClick={parse} disabled={!text.trim()}>
+                  معاينة
+                </Button>
+              </div>
+            </>
+          )}
+
+          {rows && (
+            <>
+              <div className="border-border max-h-80 overflow-y-auto rounded-md border">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted sticky top-0">
+                    <tr className="*:p-2 *:text-start">
+                      <th></th>
+                      <th>الاسم</th>
+                      <th>الكمية</th>
+                      <th>السعر</th>
+                      <th>الإجمالي</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => (
+                      <tr key={row.lineNumber} className={`border-border border-t ${row.error ? 'bg-destructive/10' : ''}`}>
+                        <td className="p-2">
+                          <input
+                            type="checkbox"
+                            title={row.error}
+                            checked={row.included}
+                            onChange={(e) => updateRow(row.lineNumber, { included: e.target.checked })}
+                          />
+                        </td>
+                        <td className="p-1">
+                          <input
+                            value={row.name}
+                            onChange={(e) => updateRow(row.lineNumber, { name: e.target.value })}
+                            className="border-input bg-background w-full rounded border px-2 py-1"
+                          />
+                        </td>
+                        <td className="p-1">
+                          <input
+                            type="number"
+                            min={1}
+                            dir="ltr"
+                            value={row.quantity}
+                            onChange={(e) => updateRow(row.lineNumber, { quantity: Number(e.target.value) || 0 })}
+                            className="border-input bg-background w-full rounded border px-2 py-1"
+                          />
+                        </td>
+                        <td className="p-1">
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            dir="ltr"
+                            value={row.unitPrice}
+                            onChange={(e) => updateRow(row.lineNumber, { unitPrice: Number(e.target.value) || 0 })}
+                            className="border-input bg-background w-full rounded border px-2 py-1"
+                          />
+                        </td>
+                        <td className="text-muted-foreground p-1">
+                          {(row.quantity * row.unitPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {rows.some((r) => r.error) && (
+                <p className="text-destructive text-xs">
+                  الصفوف المُلوّنة فيها مشكلة (اسم/كمية/سعر) — صححها من الجدول لو عايز تضيفها، أو سيبها مستبعدة.
+                </p>
+              )}
+              <div className="flex items-center justify-between">
+                <Button type="button" variant="secondary" onClick={() => setRows(null)}>
+                  رجوع
+                </Button>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm">الإجمالي: {grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م</span>
+                  <Button type="button" onClick={confirmAdd} disabled={included.length === 0}>
+                    إضافة للسلة ({included.length})
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
