@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type {
   BranchSummary,
   BusinessPartner,
+  CompanyFinancialSummary,
   CreateTreasuryEntryInput,
   MyTreasurySummary,
   PaymentMethod,
@@ -18,7 +19,16 @@ import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Combobox, StatusBadge, EditableDateCell, EditableNumberCell, EditableSelectCell, EditableTextCell, useConfirm } from '@/components/cleopatra';
+import {
+  BranchFinancialSummaryTable,
+  Combobox,
+  StatusBadge,
+  EditableDateCell,
+  EditableNumberCell,
+  EditableSelectCell,
+  EditableTextCell,
+  useConfirm,
+} from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PAYMENT_METHOD_LABELS, PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 import { TREASURY_TYPE_LABELS, TREASURY_TYPE_OPTIONS, treasuryTypeTone, WALLET_COLORS } from './treasuryLabels';
@@ -80,6 +90,23 @@ function FullTreasuryView() {
   // narrow it. 'ALL' (both combined) stays the default — nothing changes
   // for an admin who never touches this filter.
   const [branchFilter, setBranchFilter] = useState<string>('ALL');
+  // Owner (2026-09-08, "عايزها تظهرلي كمان في الخزينة") — the same per-
+  // branch breakdown + combined totals already on the Dashboard
+  // (`BranchProfitWidget`), now also inline here. Gated on `reports.view`
+  // (not `treasury.view`, which this whole view already required) since
+  // that's the permission the endpoint itself checks — a `treasury.view`
+  // holder without it (e.g. plain CASHIER) simply never fetches this,
+  // same silent-skip the dashboard widget already does.
+  const [branchSummary, setBranchSummary] = useState<CompanyFinancialSummary | null>(null);
+  const canSeeBranchSummary = can('reports.view');
+
+  useEffect(() => {
+    if (!canSeeBranchSummary) return;
+    apiGet<CompanyFinancialSummary>('/api/reports/branch-summary')
+      .then(setBranchSummary)
+      .catch(() => setBranchSummary(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canSeeBranchSummary]);
 
   const loadList = () => {
     const params = new URLSearchParams();
@@ -230,6 +257,17 @@ function FullTreasuryView() {
             );
           })}
         </div>
+      )}
+
+      {canSeeBranchSummary && (
+        <Card className="p-4">
+          <p className="mb-3 text-sm font-bold">صافي الربح والخزينة بالفرع</p>
+          {branchSummary ? (
+            <BranchFinancialSummaryTable summary={branchSummary} />
+          ) : (
+            <p className="text-muted-foreground text-sm">جارٍ التحميل…</p>
+          )}
+        </Card>
       )}
 
       {/* FEATURE-016, rebuilt 2026-08-18 — admins oversee every branch's register, so unlike ReceptionTreasuryView's implicit "my own branch," this view picks which branch's day to review/close/reopen. */}

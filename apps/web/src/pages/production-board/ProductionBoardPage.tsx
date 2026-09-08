@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Ban, GripVertical, Pencil, RefreshCw, Route as RouteIcon, SkipForward } from 'lucide-react';
 import type {
@@ -1465,7 +1465,7 @@ function SortableKanbanColumn({
  * mount) instead of carrying over a stale order from the previous template.
  */
 function KanbanColumns({
-  templateId,
+  groupKey,
   stages,
   byStage,
   employees,
@@ -1476,8 +1476,9 @@ function KanbanColumns({
   secondaryActions,
   persistStageOrder,
 }: {
-  templateId: string;
-  stages: WorkflowTemplate['stages'];
+  /** The workflow template `code` this board covers — scopes the saved column layout, distinct from any one version's own stage ids (see `mergedStages`'s doc comment in `WorkflowKanbanTab`). */
+  groupKey: string;
+  stages: { id: string; name: string }[];
   byStage: Map<string, WorkflowQueueItem[]>;
   employees: User[];
   updateField: (item: WorkflowQueueItem, patch: Record<string, unknown>) => Promise<void>;
@@ -1488,7 +1489,7 @@ function KanbanColumns({
   persistStageOrder: (newFullOrder: WorkflowQueueItem[], movedId: string) => Promise<void>;
 }) {
   const columns = useColumnLayout(
-    `kanban.${templateId}`,
+    `kanban.${groupKey}`,
     stages.map((s) => s.id),
     288,
   );
@@ -1552,21 +1553,19 @@ function KanbanColumns({
 /**
  * Owner (2026-09-07, "عايز فيو مختلف يظهرلي فيه كل وورك فلو حسب اختياري
  * بيبانلي فيه كل الشغل اللي في الوورك فلو اللي اختارته واشوفه في مراحله
- * المختلفة") — a Kanban board for ONE chosen `WorkflowTemplate` version:
- * columns are that template's own ordered stages (its real structure, not
- * just whichever stages happen to have jobs right now — an empty stage
- * still shows as an empty column), cards are the same `WorkflowQueueItem`
- * rows `DepartmentsTab` already uses, grouped by `stageId`. Deliberately
- * scoped to exactly one template VERSION at a time, never "every version
- * of a code" — an instance's `templateId` is frozen at creation (Workflow
- * Versioning), so a stage from one version has nothing to do with a
- * same-named stage in another; the picker lists every published version
- * (not just the latest) since an older one can still have real jobs on it.
+ * المختلفة") — a Kanban board for ONE chosen workflow `code` (e.g. "كل شغل
+ * الأوفست" regardless of which published version each job happens to be
+ * running on — see `mergedStages`'s doc comment below for why this
+ * replaced the original one-version-at-a-time design), cards are the same
+ * `WorkflowQueueItem` rows `DepartmentsTab` already uses, grouped by
+ * `stageName`. Columns for a stage that's since been renamed or removed
+ * still show up if an older version's job is still sitting there — never
+ * silently hidden just because the picker moved on to a newer version.
  */
 function WorkflowKanbanTab() {
   const { can } = useAuth();
   const [templates, setTemplates] = useState<WorkflowTemplate[] | null>(null);
-  const [templateId, setTemplateId] = useState('');
+  const [code, setCode] = useState('');
   const [queue, setQueue] = useState<WorkflowQueueItem[] | null>(null);
   const [employees, setEmployees] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -1579,21 +1578,83 @@ function WorkflowKanbanTab() {
     apiGet<WorkflowTemplate[]>('/api/workflow-instances/templates')
       .then((list) => {
         setTemplates(list);
-        setTemplateId((current) => current || (list[0]?.id ?? ''));
+        setCode((current) => current || (list[0]?.code ?? ''));
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل قائمة الوركفلوهات'));
     apiGet<User[]>('/api/users').then(setEmployees).catch(() => undefined);
   }, []);
 
+  /**
+   * Owner (2026-09-08, "ليه مقسم وورك فلو بتاع الاوفست واللوحات لأكتر من
+   * حاجه هو المفروض يكون وورك فلو واحد بيظهر فيه شغل الاوفست كله") — the
+   * picker used to list every published VERSION of a code separately
+   * ("(v1)"/"(v2)"/"(v3)"), on the assumption a stage from one version has
+   * nothing to do with a same-named stage in another. A live check proved
+   * that assumption costly in practice: READY_PRODUCTS had 2 real
+   * in-progress jobs on v1 and 4 more on v2 AT THE SAME TIME (an order
+   * keeps running on whichever template version was current when it was
+   * placed, forever) — picking only the latest version would have shown 4
+   * jobs and silently hidden the other 2 real ones still open on v1. Every
+   * version sharing this `code` is now fetched together.
+   */
+  const versionsForCode = useMemo(() => (templates ?? []).filter((t) => t.code === code), [templates, code]);
+
+  const codeOptions = useMemo(() => {
+    const latestByCode = new Map<string, WorkflowTemplate>();
+    for (const t of templates ?? []) {
+      const existing = latestByCode.get(t.code);
+      if (!existing || t.version > existing.version) latestByCode.set(t.code, t);
+    }
+    return [...latestByCode.values()];
+  }, [templates]);
+
+  /**
+   * The board's columns: every distinct stage NAME across every version of
+   * this code, newest version's own order first (that's the structure new
+   * orders actually follow) — a name unique to an older version (renamed
+   * or removed since) is appended at the end rather than dropped, so a job
+   * still sitting there is never hidden. Different versions' stages have
+   * different real ids even when conceptually the same step, so the name
+   * itself (not a stage id) is what correlates them — and what doubles as
+   * this column's id for `useColumnLayout`/drag-reorder below.
+   */
+  const mergedStages = useMemo(() => {
+    const newestFirst = [...versionsForCode].sort((a, b) => b.version - a.version);
+    const seen = new Set<string>();
+    const result: { id: string; name: string }[] = [];
+    for (const t of newestFirst) {
+      for (const stage of [...t.stages].sort((a, b) => a.order - b.order)) {
+        if (seen.has(stage.name)) continue;
+        seen.add(stage.name);
+        result.push({ id: stage.name, name: stage.name });
+      }
+    }
+    return result;
+  }, [versionsForCode]);
+
+  // Merging versions means one "load" is now several requests (`Promise.all`)
+  // instead of one — switching `code` quickly (e.g. clicking through the
+  // dropdown to compare tracks) can let an OLDER batch, still waiting on
+  // more responses, resolve AFTER a newer one and clobber it with stale
+  // data. `loadRequestIdRef` tags each call; a batch whose tag no longer
+  // matches by the time it resolves was superseded and is simply dropped.
+  const loadRequestIdRef = useRef(0);
   const loadQueue = useCallback(() => {
-    if (!templateId) return;
-    apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?templateId=${templateId}`)
-      .then((items) => {
-        setQueue(items);
+    if (versionsForCode.length === 0) return;
+    const requestId = ++loadRequestIdRef.current;
+    Promise.all(
+      versionsForCode.map((t) => apiGet<WorkflowQueueItem[]>(`/api/workflow-instances/queue?templateId=${t.id}`)),
+    )
+      .then((lists) => {
+        if (loadRequestIdRef.current !== requestId) return;
+        setQueue(lists.flat());
         setLastUpdated(new Date());
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل شغل هذا الوركفلو'));
-  }, [templateId]);
+      .catch((err: unknown) => {
+        if (loadRequestIdRef.current !== requestId) return;
+        setError(err instanceof Error ? err.message : 'تعذر تحميل شغل هذا الوركفلو');
+      });
+  }, [versionsForCode]);
 
   useEffect(loadQueue, [loadQueue]);
 
@@ -1634,33 +1695,24 @@ function WorkflowKanbanTab() {
     return <div className="text-muted-foreground">لا يوجد أي وركفلو منشور بعد.</div>;
   }
 
-  // Templates sharing a `code` (an older + a newer published version, both
-  // still capable of holding real running instances) get a version suffix
-  // so the picker can tell them apart; a code with only one published
-  // version stays plain.
-  const codeCounts = new Map<string, number>();
-  for (const t of templates) codeCounts.set(t.code, (codeCounts.get(t.code) ?? 0) + 1);
-  const templateLabel = (t: WorkflowTemplate) => ((codeCounts.get(t.code) ?? 0) > 1 ? `${t.name} (v${t.version})` : t.name);
-
-  const selectedTemplate = templates.find((t) => t.id === templateId) ?? null;
   const byStage = new Map<string, WorkflowQueueItem[]>();
   for (const item of filteredQueue ?? []) {
-    const list = byStage.get(item.stageId) ?? [];
+    const list = byStage.get(item.stageName) ?? [];
     list.push(item);
-    byStage.set(item.stageId, list);
+    byStage.set(item.stageName, list);
   }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <select
-          value={templateId}
-          onChange={(e) => setTemplateId(e.target.value)}
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
           className="border-input bg-background min-w-[220px] rounded-md border px-3 py-2 text-sm font-medium"
         >
-          {templates.map((t) => (
-            <option key={t.id} value={t.id}>
-              {templateLabel(t)}
+          {codeOptions.map((t) => (
+            <option key={t.code} value={t.code}>
+              {t.name}
             </option>
           ))}
         </select>
@@ -1708,13 +1760,13 @@ function WorkflowKanbanTab() {
         </div>
       )}
 
-      {!filteredQueue || !selectedTemplate ? (
+      {!filteredQueue || versionsForCode.length === 0 ? (
         <div className="text-muted-foreground">جارٍ التحميل…</div>
       ) : (
         <KanbanColumns
-          key={selectedTemplate.id}
-          templateId={selectedTemplate.id}
-          stages={selectedTemplate.stages}
+          key={code}
+          groupKey={code}
+          stages={mergedStages}
           byStage={byStage}
           employees={employees}
           updateField={updateField}
