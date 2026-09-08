@@ -366,6 +366,16 @@ interface DraftItem {
   copyPagesOverrideEnabled: boolean;
   copyPagesOverrideValue: string;
   /**
+   * Owner (2026-09-08, "عايز اقدر اعدل على السعر النهائي لأي بند في
+   * الفاتورة لأي قسم") — a universal override replacing the computed
+   * price outright, every kind except MANUAL (already the raw typed
+   * price). Same "toggle + value, defaults to the computed number" shape
+   * as every override above, but this one alone applies to every kind at
+   * once instead of a handful.
+   */
+  finalPriceOverrideEnabled: boolean;
+  finalPriceOverrideValue: string;
+  /**
    * الخدمات الإضافية — every kind. Owner (2026-08-17, "عايز في الإعدادات
    * أقدر أضيف على الخدمات الإضافية خدمة") — was 4 fixed checkboxes, now
    * one row per active `ExtraServiceOption` from the admin-managed catalog
@@ -477,6 +487,8 @@ function emptyDraftItem(kind: PricingKind = 'LOOSE_PAPER', extraServiceOptions: 
     originalPagesOverrideValue: '',
     copyPagesOverrideEnabled: false,
     copyPagesOverrideValue: '',
+    finalPriceOverrideEnabled: false,
+    finalPriceOverrideValue: '0',
     extraServices: extraServiceOptions.map((o) => ({ optionId: o.id, label: o.label, enabled: false, amount: '0' })),
     attachmentId: '',
     attachmentUrl: '',
@@ -505,6 +517,11 @@ function sheetPriceOverrideFieldOf(d: DraftItem) {
 /** Owner (same day, "عايز اقدر اعدل في إجمالي سعر الورق في الصنف بعد ما يتحسب") — a separate total-replacing override, independent of `sheetPriceOverrideFieldOf`. */
 function paperCostOverrideFieldOf(d: DraftItem) {
   return d.paperCostOverrideEnabled ? { paperCostOverride: toNum(d.paperCostOverrideValue) } : {};
+}
+
+/** Owner (2026-09-08, "عايز اقدر اعدل على السعر النهائي لأي بند... لأي قسم") — universal final-total override, applied by `computeItemPricing`'s wrapper (pricingEngineService.ts) AFTER the normal formula runs, for every kind except MANUAL. */
+function finalPriceOverrideFieldOf(d: DraftItem) {
+  return d.finalPriceOverrideEnabled ? { finalPriceOverride: toNum(d.finalPriceOverrideValue) } : {};
 }
 
 /** Owner (2026-09-01, "لما اختار وجهين... مختلفين هيبقى في سعر للتصميم التاني وسعر للزنكاية التانية") — only sent when the second side is actually distinguished from the first. */
@@ -573,6 +590,8 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
     ...(d.originalPagesOverrideEnabled ? { originalPagesOverride: toNum(d.originalPagesOverrideValue) } : {}),
     ...(d.copyPagesOverrideEnabled ? { copyPagesOverride: toNum(d.copyPagesOverrideValue) } : {}),
   };
+  // Owner (2026-09-08) — universal, every kind except MANUAL below.
+  const finalPrice = finalPriceOverrideFieldOf(d);
   switch (d.kind) {
     case 'LOOSE_PAPER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -595,6 +614,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...numberingSize,
         ...sheetPriceOverrideFieldOf(d),
         ...paperCostOverrideFieldOf(d),
+        ...finalPrice,
       };
     case 'NOTEBOOK': {
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.notebookQuantity || !d.colorCount) return null;
@@ -671,6 +691,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...pageCounts,
         ...sheetPriceOverrideFieldOf(d),
         ...paperCostOverrideFieldOf(d),
+        ...finalPrice,
       };
     }
     case 'ENVELOPE':
@@ -684,6 +705,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...extra,
         ...margin,
         ...zpd,
+        ...finalPrice,
       };
     case 'FOLDER':
       if (!d.sizeFamilyKey || !d.realSizeLabel || !d.inventoryItemId || !d.quantity || !d.colorCount) return null;
@@ -709,6 +731,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         ...calcSize,
         ...sheetPriceOverrideFieldOf(d),
         ...paperCostOverrideFieldOf(d),
+        ...finalPrice,
       };
     case 'BOARDS':
       if (d.boardsUseCatalog) {
@@ -718,6 +741,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
           quantity: toNum(d.quantity),
           ...extra,
           ...(d.boardsSupplierCostOverrideEnabled ? { supplierCostOverride: toNum(d.boardsSupplierCostOverrideValue) } : {}),
+          ...finalPrice,
         };
       }
       if (!d.widthCm || !d.heightCm || !d.quantity) return null;
@@ -731,6 +755,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         hasSellophane: d.material === 'VINYL_NORMAL' || d.material === 'VINYL_PRINT_CUT' ? d.hasSellophane : undefined,
         ...extra,
         ...priceOverrideFieldsOf(d, 'pricePerMeterOverride', 'pricePerMeterMarkupPercent'),
+        ...finalPrice,
       };
     case 'DIGITAL': {
       // "Yield" is only meaningful for the QUARTER machine (Yield-packed
@@ -764,6 +789,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         components,
         ...extra,
         ...margin,
+        ...finalPrice,
       };
     }
     case 'PRODUCT':
@@ -774,6 +800,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         quantity: toNum(d.quantity),
         ...extra,
         ...priceOverrideFieldsOf(d, 'unitPriceOverride', 'unitPriceMarkupPercent'),
+        ...finalPrice,
       };
     case 'INVENTORY_RETAIL':
       if (!d.inventoryItemId || !d.quantity) return null;
@@ -783,6 +810,7 @@ function buildPricingInput(d: DraftItem): OrderItemPricingInput | null {
         quantity: toNum(d.quantity),
         ...extra,
         ...priceOverrideFieldsOf(d, 'unitPriceOverride', 'unitPriceMarkupPercent'),
+        ...finalPrice,
       };
     case 'MANUAL':
       if (!d.unitPrice || !d.quantity) return null;
@@ -871,6 +899,11 @@ function draftFromCartLine(line: CartLine, extraServiceOptions: ExtraServiceOpti
   d.numberingRunPriceOverrideValue = String(overrides.numberingRunPriceOverride ?? 0);
   d.wasteSheetsOverrideEnabled = overrides.wasteSheetsOverride !== undefined;
   d.wasteSheetsOverrideValue = String(overrides.wasteSheetsOverride ?? 0);
+
+  // Owner (2026-09-08) — universal, every kind except MANUAL.
+  const finalPriceOverride = (p as Partial<{ finalPriceOverride: number }>).finalPriceOverride;
+  d.finalPriceOverrideEnabled = finalPriceOverride !== undefined;
+  d.finalPriceOverrideValue = String(finalPriceOverride ?? 0);
 
   const sizeOverrides = p as Partial<{ calcSizeOverride: string; numberingSizeOverride: string }>;
   d.calcSizeOverrideEnabled = sizeOverrides.calcSizeOverride !== undefined;
@@ -1069,6 +1102,8 @@ interface PricingPreviewResult {
   subtotal?: number;
   total?: number;
   unitPrice?: number;
+  /** Owner (2026-09-08) — set only when `finalPriceOverride` is active; the normal formula's own result, for the "قبل السعر النهائي المعدل" display (same role `subtotal` plays for "قبل نسبة الربح"). */
+  computedTotalBeforeFinalPriceOverride?: number;
   // DIGITAL (§13.3)
   fitsInQuarter?: boolean;
   unitsNeeded?: number | null;
@@ -1112,7 +1147,7 @@ function previewItemTotal(
  * the identical pricing-preview math without reconstructing a full
  * `DraftItem` per item kind.
  */
-function pricingPreviewFromInput(
+function pricingPreviewFromInputRaw(
   pricing: OrderItemPricingInput,
   catalogId: string | undefined,
   ctx: PricingCtx,
@@ -1341,6 +1376,29 @@ function pricingPreviewFromInput(
   }
 }
 
+/**
+ * Owner (2026-09-08) — client mirror of `pricingEngineService.ts`'s
+ * `computeItemPricing` wrapper: runs the normal preview unchanged, then
+ * replaces `.total` with `finalPriceOverride` when present, freezing the
+ * pre-override number into `result.computedTotalBeforeFinalPriceOverride`
+ * for the composer's "قبل السعر النهائي المعدل" line. Kept in sync with the
+ * server wrapper's own ordering (applied last, before item discount).
+ */
+function pricingPreviewFromInput(
+  pricing: OrderItemPricingInput,
+  catalogId: string | undefined,
+  ctx: PricingCtx,
+): { total: number; error: string | null; result: PricingPreviewResult | null } {
+  const preview = pricingPreviewFromInputRaw(pricing, catalogId, ctx);
+  const finalPriceOverride = 'finalPriceOverride' in pricing ? pricing.finalPriceOverride : undefined;
+  if (finalPriceOverride === undefined || preview.error) return preview;
+  return {
+    ...preview,
+    total: finalPriceOverride,
+    result: { ...preview.result, computedTotalBeforeFinalPriceOverride: preview.total },
+  };
+}
+
 /** Short human line shown on the cart row — not the frozen breakdown, just enough for the staff member to recognize which item is which. */
 function describeDraft(d: DraftItem, readyProducts: ReadyProduct[], services: Service[], boardsCatalogItems: BoardsCatalogItem[] = []): string {
   switch (d.kind) {
@@ -1560,6 +1618,9 @@ interface StoredBreakdown {
   unitPriceMarkupPercent?: number | null;
   pricePerMeterOverride?: number | null;
   pricePerMeterMarkupPercent?: number | null;
+  /** Owner (2026-09-08, "عايز اقدر اعدل على السعر النهائي لأي بند... لأي قسم") — universal, every kind except MANUAL. `computedTotalBeforeFinalPriceOverride` is what the normal formula would have produced, frozen alongside it for the "قبل السعر النهائي المعدل" display. */
+  finalPriceOverride?: number | null;
+  computedTotalBeforeFinalPriceOverride?: number | null;
 }
 
 /**
@@ -1623,6 +1684,7 @@ function restoreOverridesOf(b: StoredBreakdown) {
     ...(b.paperCostOverride != null ? { paperCostOverride: b.paperCostOverride } : {}),
     ...(b.originalPagesOverride != null ? { originalPagesOverride: b.originalPagesOverride } : {}),
     ...(b.copyPagesOverride != null ? { copyPagesOverride: b.copyPagesOverride } : {}),
+    ...(b.finalPriceOverride != null ? { finalPriceOverride: b.finalPriceOverride } : {}),
   };
 }
 
@@ -1717,6 +1779,7 @@ function reconstructPricingInput(
           quantity: b.quantity ?? 1,
           ...extra,
           ...(b.supplierCost !== undefined && b.quantity ? { supplierCostOverride: b.supplierCost / b.quantity } : {}),
+          ...(b.finalPriceOverride != null ? { finalPriceOverride: b.finalPriceOverride } : {}),
         };
       }
       return {
@@ -1730,6 +1793,7 @@ function reconstructPricingInput(
         pricePerMeterOverride: b.pricePerMeterOverride ?? undefined,
         pricePerMeterMarkupPercent: b.pricePerMeterMarkupPercent ?? undefined,
         ...extra,
+        ...(b.finalPriceOverride != null ? { finalPriceOverride: b.finalPriceOverride } : {}),
       };
     case 'DIGITAL': {
       // Multi-component (2026-08-17) — each component's full pricing input
@@ -1759,6 +1823,7 @@ function reconstructPricingInput(
         })),
         ...extra,
         ...(b.profitPercentOverride != null ? { profitPercentOverride: b.profitPercentOverride } : {}),
+        ...(b.finalPriceOverride != null ? { finalPriceOverride: b.finalPriceOverride } : {}),
       };
     }
     case 'PRODUCT':
@@ -1769,6 +1834,7 @@ function reconstructPricingInput(
         unitPriceOverride: b.unitPriceOverride ?? undefined,
         unitPriceMarkupPercent: b.unitPriceMarkupPercent ?? undefined,
         ...extra,
+        ...(b.finalPriceOverride != null ? { finalPriceOverride: b.finalPriceOverride } : {}),
       };
     case 'INVENTORY_RETAIL':
       if (!inventoryItemId) return null;
@@ -1779,6 +1845,7 @@ function reconstructPricingInput(
         unitPriceOverride: b.unitPriceOverride ?? undefined,
         unitPriceMarkupPercent: b.unitPriceMarkupPercent ?? undefined,
         ...extra,
+        ...(b.finalPriceOverride != null ? { finalPriceOverride: b.finalPriceOverride } : {}),
       };
     case 'MANUAL':
       return { kind: 'MANUAL', unitPrice: b.unitPrice ?? 0, quantity: b.quantity ?? 1 };
@@ -3118,13 +3185,25 @@ function NewOrderForm({
                       ))}
                     </div>
                   )}
-                  {/* Owner (2026-08-26, "عايز الإجمالي قبل نسبة الربح يكون واضح كده وباين علشان اعرف الفرق كام") */}
-                  {typeof line.breakdown?.subtotal === 'number' && line.breakdown.subtotal !== line.total && (
+                  {/* Owner (2026-09-08) — takes priority over "قبل نسبة الربح" below, same reasoning as the composer's own version of this line. */}
+                  {typeof line.breakdown?.computedTotalBeforeFinalPriceOverride === 'number' && (
                     <div className="text-muted-foreground mt-1.5 flex justify-between border-t pt-1.5 text-xs">
-                      <span>قبل نسبة الربح</span>
-                      <span dir="ltr">{money(line.breakdown.subtotal)} ج.م — الفرق {money(line.total - line.breakdown.subtotal)} ج.م</span>
+                      <span>قبل السعر النهائي المعدل</span>
+                      <span dir="ltr">
+                        {money(line.breakdown.computedTotalBeforeFinalPriceOverride)} ج.م — الفرق{' '}
+                        {money(line.total - line.breakdown.computedTotalBeforeFinalPriceOverride)} ج.م
+                      </span>
                     </div>
                   )}
+                  {/* Owner (2026-08-26, "عايز الإجمالي قبل نسبة الربح يكون واضح كده وباين علشان اعرف الفرق كام") */}
+                  {typeof line.breakdown?.computedTotalBeforeFinalPriceOverride !== 'number' &&
+                    typeof line.breakdown?.subtotal === 'number' &&
+                    line.breakdown.subtotal !== line.total && (
+                      <div className="text-muted-foreground mt-1.5 flex justify-between border-t pt-1.5 text-xs">
+                        <span>قبل نسبة الربح</span>
+                        <span dir="ltr">{money(line.breakdown.subtotal)} ج.م — الفرق {money(line.total - line.breakdown.subtotal)} ج.م</span>
+                      </div>
+                    )}
                   {totalSheets !== null && (
                     <div className="mt-1 flex justify-between border-t pt-1 text-xs font-medium">
                       <span>إجمالي الورق</span>
@@ -5112,6 +5191,29 @@ function NewOrderForm({
             {draft.attachmentError && <p className="text-destructive text-xs">{draft.attachmentError}</p>}
           </div>
 
+          {/* Owner (2026-09-08, "عايز اقدر اعدل على السعر النهائي لأي بند في الفاتورة لأي قسم") — universal, every kind except MANUAL (already the raw typed price — nothing to override). Applied before the item discount below, exactly like the ordinary computed price. */}
+          {!draftPreview.error && draft.kind !== 'MANUAL' && (
+            <div className="border-border flex flex-wrap items-center gap-2 rounded-lg border p-2">
+              <Checkbox
+                checked={draft.finalPriceOverrideEnabled}
+                onCheckedChange={(v) => updateDraft({ finalPriceOverrideEnabled: v === true })}
+              />
+              <span className="text-sm">السعر النهائي الفعلي</span>
+              {draft.finalPriceOverrideEnabled ? (
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={draft.finalPriceOverrideValue}
+                  onChange={(e) => updateDraft({ finalPriceOverrideValue: e.target.value })}
+                  className="border-input bg-background w-28 rounded-md border px-2 py-1 text-end text-sm"
+                />
+              ) : (
+                <span className="text-muted-foreground text-xs">السعر المحسوب: {money(draftPreview.total)} ج.م</span>
+              )}
+            </div>
+          )}
+
           {/* Owner (2026-08-23, "تخفيض على صنف محدد وليس بالضرورة كل الفاتورة")، نسبة % بدل الجنيه (2026-08-26) — على هذا البند بس، مستقل عن نسبة الخصم % على مستوى الفاتورة كلها. */}
           {!draftPreview.error && (
             <label className="flex items-center gap-2 border-t pt-2 text-sm">
@@ -5137,8 +5239,16 @@ function NewOrderForm({
                   {draftPreview.error ?? `${money(draftPreview.total)} ج.م`}
                 </span>
               </p>
+              {/* Owner (2026-09-08) — takes priority over "قبل نسبة الربح" below: once the whole computed price is replaced outright, showing the margin breakdown underneath it too is redundant noise. */}
+              {!draftPreview.error && draft.finalPriceOverrideEnabled && typeof result?.computedTotalBeforeFinalPriceOverride === 'number' && (
+                <p className="text-muted-foreground text-xs">
+                  قبل السعر النهائي المعدل: {money(result.computedTotalBeforeFinalPriceOverride)} ج.م — الفرق:{' '}
+                  {money(draftPreview.total - result.computedTotalBeforeFinalPriceOverride)} ج.م
+                </p>
+              )}
               {/* Owner (2026-08-26, "عايز الإجمالي قبل نسبة الربح يكون واضح كده وباين علشان اعرف الفرق كام") — (hasPrintSection || DIGITAL) کانوا الوحيدين اللي عندهم مفهوم subtotal/هامش ربح مختلفين عن total أصلًا. */}
               {!draftPreview.error &&
+                !draft.finalPriceOverrideEnabled &&
                 (hasPrintSection || draft.kind === 'DIGITAL') &&
                 typeof result?.subtotal === 'number' &&
                 result.subtotal !== draftPreview.total && (

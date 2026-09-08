@@ -352,7 +352,7 @@ function resolveOverriddenUnitPrice(base: number | undefined, override: number |
  * owner-approved manual-override fields (2026-08-10) — threaded straight
  * through to the pure functions, which already know how to apply them.
  */
-export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): ItemPricingResult {
+function computeItemPricingRaw(item: PricingLineItem, ctx: PricingContext): ItemPricingResult {
   const pricing = item.pricing;
 
   switch (pricing.kind) {
@@ -829,4 +829,37 @@ export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): 
       };
     }
   }
+}
+
+/**
+ * Owner (2026-09-08, "عايز اقدر اعدل على السعر النهائي لأي بند في الفاتورة
+ * لأي قسم") — a universal wrapper around `computeItemPricingRaw`'s per-kind
+ * dispatch: runs the ENTIRE normal calculation unchanged (zero lines
+ * touched inside any of the switch's cases — CLAUDE.md rule 3/4, no
+ * Pricing Logic change without explicit approval, satisfied by construction
+ * since every existing formula is untouched), then, only if
+ * `finalPriceOverride` is present on the input, replaces the computed
+ * `.total` outright with it — same "applied last, after the whole formula
+ * runs" ordering `frozenOverridesOf` documents for every other override,
+ * and applied BEFORE the item-level discount percentage exactly like the
+ * ordinary computed price already is (owner confirmed explicitly). The
+ * pre-override total is frozen alongside it into `breakdown` (same
+ * discipline as `frozenOverridesOf`'s raw-value freezing, fixed by
+ * tekmila 51) — `computedTotalBeforeFinalPriceOverride`, read back by
+ * `NewOrderPage.tsx`'s composer for the "قبل السعر النهائي المعدل" display,
+ * the same role `subtotal` plays for "قبل نسبة الربح".
+ */
+export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): ItemPricingResult {
+  const result = computeItemPricingRaw(item, ctx);
+  const finalPriceOverride = 'finalPriceOverride' in item.pricing ? item.pricing.finalPriceOverride : undefined;
+  if (finalPriceOverride === undefined) return result;
+  return {
+    ...result,
+    total: finalPriceOverride,
+    breakdown: {
+      ...(result.breakdown as Record<string, unknown>),
+      finalPriceOverride,
+      computedTotalBeforeFinalPriceOverride: result.total,
+    },
+  };
 }

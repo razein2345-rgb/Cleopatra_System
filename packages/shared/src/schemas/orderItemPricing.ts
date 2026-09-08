@@ -46,6 +46,22 @@ const marginOverrideFields = {
 };
 
 /**
+ * Owner (2026-09-08, "عايز اقدر اعدل على السعر النهائي لأي بند في الفاتورة
+ * لأي قسم") — a universal override replacing the computed/catalog TOTAL
+ * outright, for every kind that has a formula at all (every kind except
+ * MANUAL, which already IS the raw typed price — nothing to override).
+ * Applied last, after the whole normal calculation runs (see
+ * `computeItemPricing`'s wrapper in `pricingEngineService.ts`) — unlike
+ * every override above, which feeds an INPUT into the formula, this
+ * replaces its OUTPUT directly. Still applied BEFORE the item-level
+ * discount percentage, same ordering as the ordinary computed price today
+ * (owner confirmed explicitly).
+ */
+const finalPriceOverrideFields = {
+  finalPriceOverride: z.number().nonnegative().optional(),
+};
+
+/**
  * Owner (2026-08-17, "عايز أقدر أعدل سعر الزنك وتراج الطبع وترقيم
  * والتصميم من واجهة الطلبات... ساعات بحتاج أغير لما احب أحسب مناقصة",
  * same-day refinement: "يكون بيحط سعر الزنكاية الواحدة، سعر تراج الطباعة
@@ -138,6 +154,7 @@ export const loosePaperPricingInputSchema = z.object({
   ...wasteSheetsOverrideFields,
   ...calcSizeOverrideFields,
   ...numberingSizeOverrideFields,
+  ...finalPriceOverrideFields,
   ...extraServiceFields,
 });
 
@@ -218,6 +235,7 @@ export const notebookPricingInputSchema = z.object({
   ...calcSizeOverrideFields,
   ...numberingSizeOverrideFields,
   ...notebookPageCountOverrideFields,
+  ...finalPriceOverrideFields,
   ...extraServiceFields,
 });
 
@@ -230,6 +248,7 @@ export const envelopePricingInputSchema = z.object({
   readyEnvelopePricePerPiece: z.number().nonnegative(),
   ...marginOverrideFields,
   ...zincPrintOverrideFields,
+  ...finalPriceOverrideFields,
   ...extraServiceFields,
 });
 
@@ -255,6 +274,7 @@ export const folderPricingInputSchema = z.object({
   ...zincPrintOverrideFields,
   ...wasteSheetsOverrideFields,
   ...calcSizeOverrideFields,
+  ...finalPriceOverrideFields,
   ...extraServiceFields,
 });
 
@@ -305,6 +325,7 @@ export const boardsPricingInputSchema = z.object({
   hasSellophane: z.boolean().optional(),
   pricePerMeterOverride: z.number().nonnegative().optional(),
   pricePerMeterMarkupPercent: z.number().min(-100).optional(),
+  ...finalPriceOverrideFields,
   ...extraServiceFields,
 });
 
@@ -351,6 +372,7 @@ export const digitalPricingInputSchema = z.object({
   kind: z.literal('DIGITAL'),
   components: z.array(digitalComponentSchema).min(1).max(6),
   ...marginOverrideFields,
+  ...finalPriceOverrideFields,
   ...extraServiceFields,
 });
 
@@ -360,6 +382,7 @@ export const productOrServicePricingInputSchema = z.object({
   quantity: z.number().int().positive(),
   ...extraServiceFields,
   ...unitPriceOverrideFields,
+  ...finalPriceOverrideFields,
 });
 
 /**
@@ -377,6 +400,7 @@ export const inventoryRetailPricingInputSchema = z.object({
   quantity: z.number().int().positive(),
   ...extraServiceFields,
   ...unitPriceOverrideFields,
+  ...finalPriceOverrideFields,
 });
 
 /**
