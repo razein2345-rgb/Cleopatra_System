@@ -3760,6 +3760,18 @@ function NewOrderForm({
           ))}
         </div>
 
+        {/* Owner (2026-09-09) — "لصق قائمة أصناف" covers دفاتر/مخزون/بند
+            يدوي معًا (see QuickPasteItemsDialog), فمفيش سبب يتحبس جوّه تاب
+            "بند يدوي" بس — كان كده باقي من قبل ما الميزة تتوسع، بيرجع يمنع
+            المستخدم يوصله وهو واقف في تاب تاني زي الأوفست. */}
+        <button
+          type="button"
+          onClick={() => setShowQuickPasteItems(true)}
+          className="text-primary self-start text-xs hover:underline"
+        >
+          📋 لصق قائمة أصناف دفعة واحدة
+        </button>
+
         {activeParent.subTabs && (
           <div className="border-border bg-muted/20 inline-flex flex-wrap gap-1 rounded-lg border p-1 text-xs">
             {activeParent.subTabs.map((sub) => (
@@ -5076,21 +5088,6 @@ function NewOrderForm({
                     ⚡ بيع سريع — قيد خزينة بدون فاتورة
                   </button>
                 )}
-                {/* Owner (2026-09-08, "اكتب انا الكلام عشوائي مره واحده وهو
-                    يحسبهم كلهم بدل ما تكون عملية الحساب بطيئة لأني بحسبهم
-                    بند بند") — confirmed "نموذج سريع بدون AI (لصق قايمة
-                    أصناف)" over an actual AI/LLM call: a fixed line format
-                    (اسم، كمية، سعر) parsed client-side, reviewed in a
-                    preview table, then added to the cart in one shot —
-                    scoped to MANUAL only (no formula to get wrong, unlike
-                    every other kind — pricing rule 3/4 stays untouched). */}
-                <button
-                  type="button"
-                  onClick={() => setShowQuickPasteItems(true)}
-                  className="text-primary text-xs hover:underline"
-                >
-                  📋 لصق قائمة أصناف دفعة واحدة
-                </button>
               </div>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <label className="space-y-1 text-sm">
@@ -5918,7 +5915,10 @@ function parseQuickItemLines(text: string, inventoryItems: InventoryItem[]): Par
       // No trailing `\b` — JS regex word boundaries are ASCII-only (`\w`
       // excludes Arabic letters entirely), so `\b` right after Arabic text
       // silently never matches.
-      const notebookMatch = normalized.match(/(\d+)\s*دفاتر?/);
+      // "دف(ا)?تر" covers both singular "دفتر" (used after numbers ≥ 11 in
+      // proper Arabic, e.g. "20 دفتر") and plural "دفاتر" — matching plural
+      // only ("دفاتر?") silently missed every singular-form line.
+      const notebookMatch = normalized.match(/(\d+)\s*دف(?:ا)?تر/);
       if (notebookMatch) {
         const notebookQuantity = Number(notebookMatch[1]);
         const copyMatch = normalized.match(/(\d+)?\s*صور[ةه]?/);
@@ -5989,6 +5989,8 @@ interface NotebookAnswers {
   isNewDesign: '1' | '0' | '';
   numberingAnswer: '1' | '0' | '';
   bindingPricePerNotebook: string;
+  /** One optional paper per copy (owner, 2026-09-09: "الورق الاصل مكربن اول... 3 صور مكربن وسط... الصورة الاخيرة مكربن اخير") — blank = same paper as the original, same `copyMaterials[i]` shape/indexing the full composer already uses (rule 5), never guessed from the free text since "اول/وسط/اخير" don't map reliably to a specific inventory item. */
+  copyMaterials: string[];
 }
 
 const EMPTY_NOTEBOOK_ANSWERS: NotebookAnswers = {
@@ -6000,6 +6002,7 @@ const EMPTY_NOTEBOOK_ANSWERS: NotebookAnswers = {
   isNewDesign: '',
   numberingAnswer: '',
   bindingPricePerNotebook: '',
+  copyMaterials: [],
 };
 
 /** Owner (2026-09-09, "ممكن يقترح عليا من ملاحظة التكرار") — a fresh row starts from the last successfully-added notebook's paper/size/color/sides/binding as an editable suggestion, never silently applied. */
@@ -6080,6 +6083,16 @@ function QuickPasteItemsDialog({
     setNotebookAnswers((prev) => ({ ...prev, [lineNumber]: { ...(prev[lineNumber] ?? EMPTY_NOTEBOOK_ANSWERS), ...patch } }));
   };
 
+  const updateCopyMaterial = (lineNumber: number, copyIndex: number, inventoryItemId: string) => {
+    setNotebookAnswers((prev) => {
+      const current = prev[lineNumber] ?? EMPTY_NOTEBOOK_ANSWERS;
+      const next = [...current.copyMaterials];
+      while (next.length <= copyIndex) next.push('');
+      next[copyIndex] = inventoryItemId;
+      return { ...prev, [lineNumber]: { ...current, copyMaterials: next } };
+    });
+  };
+
   const notebookRows = (rows ?? []).filter((r): r is ParsedNotebookLine => r.kind === 'NOTEBOOK');
   const priceableRows = (rows ?? []).filter(
     (r): r is ParsedManualLine | ParsedInventoryLine => r.kind === 'MANUAL' || r.kind === 'INVENTORY',
@@ -6107,6 +6120,7 @@ function QuickPasteItemsDialog({
     sides: (answers.sides || '1') as '1' | '2',
     isNewDesign: answers.isNewDesign === '1',
     bindingPricePerNotebook: answers.bindingPricePerNotebook,
+    copyMaterials: answers.copyMaterials,
   });
 
   const notebookRowStatus = (row: ParsedNotebookLine) => {
@@ -6258,6 +6272,27 @@ function QuickPasteItemsDialog({
                         />
                       </div>
                     </div>
+
+                    {row.contentType === 'ORIGINAL_PLUS_COPIES' && row.copies >= 1 && (
+                      <div className="space-y-1">
+                        <span className="text-muted-foreground text-xs">
+                          ورق كل نسخة (اختياري — فاضي = نفس ورق الأصل)
+                        </span>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {Array.from({ length: row.copies }, (_, i) => (
+                            <div key={i}>
+                              <span className="text-muted-foreground text-xs">نسخة {i + 1}</span>
+                              <InventoryItemCombobox
+                                items={paperInventoryItems}
+                                value={answers.copyMaterials[i] ?? ''}
+                                onChange={(p) => updateCopyMaterial(row.lineNumber, i, p.id)}
+                                placeholder="— نفس ورق الأصل —"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                       <label className="space-y-1 text-xs">
