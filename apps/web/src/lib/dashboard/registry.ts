@@ -8,6 +8,7 @@ import { activeWorkOrdersWidget } from './widgets/ActiveWorkOrdersWidget';
 import { waitingJobsWidget } from './widgets/WaitingJobsWidget';
 import { jobsInProgressWidget } from './widgets/JobsInProgressWidget';
 import { delayedJobsWidget } from './widgets/DelayedJobsWidget';
+import { hrScalingAlertWidget } from './widgets/HrScalingAlertWidget';
 import { dailyProductionWidget } from './widgets/DailyProductionWidget';
 import { jobsByDepartmentWidget } from './widgets/JobsByDepartmentWidget';
 import { jobsByOperatorWidget } from './widgets/JobsByOperatorWidget';
@@ -40,6 +41,7 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   waitingJobsWidget,
   jobsInProgressWidget,
   delayedJobsWidget,
+  hrScalingAlertWidget,
   dailyProductionWidget,
   jobsByDepartmentWidget,
   jobsByOperatorWidget,

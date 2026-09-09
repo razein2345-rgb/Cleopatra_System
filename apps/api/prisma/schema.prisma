@@ -622,6 +622,15 @@ model Setting {
   /// settings screen, never joined against.
   deviceAccessMode String @default("ALLOW_ALL_REGISTERED")
 
+  /// system_specifications_v2.md §16.2 (HR Scaling Alert) — "مراقبة Queue
+  /// Time، عدد Jobs المنتظرة... يمكن إطلاق تنبيه إداري عند تجاوز الحدود
+  /// المحددة." Null = that alert is off (the default) — an admin must
+  /// explicitly set a real number (رول 15، لا Threshold مثبّت في الكود).
+  /// Reuses `DepartmentJobSummary.waiting`/`.delayed` (already computed by
+  /// `getWorkflowDashboardSummary`, رول 5) rather than a new count.
+  hrScalingWaitingThreshold Int?
+  hrScalingDelayedThreshold Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

@@ -113,6 +113,11 @@ export const settingSchema = z.object({
   // device starts PENDING until SUPER_ADMIN approves it). See
   // `requireAuth.ts`/`deviceService.ts` and the Devices settings screen.
   deviceAccessMode: z.enum(['ALLOW_ALL_REGISTERED', 'ONLY_APPROVED']),
+  // system_specifications_v2.md §16.2 (HR Scaling Alert) — null = off (رول
+  // 15, no threshold baked into the code). See `hrScalingAlertSchema` in
+  // workflowInstance.ts for how these are applied.
+  hrScalingWaitingThreshold: z.number().int().nullable(),
+  hrScalingDelayedThreshold: z.number().int().nullable(),
 });
 
 export const updateSettingSchema = settingSchema.omit({ id: true }).partial();

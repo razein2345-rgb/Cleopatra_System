@@ -1,6 +1,7 @@
 import type { Prisma } from '../generated/prisma/client.js';
 import type {
   AdvanceWorkflowInstanceInput,
+  HrScalingAlert,
   ProductionTrack,
   RevertWorkflowInstanceInput,
   StageInstance,
@@ -986,6 +987,34 @@ export async function getWorkflowDashboardSummary(
 
   const avgDeliveryDurationByTrack = await computeAvgDeliveryDurationByTrack();
 
+  // system_specifications_v2.md §16.2 (HR Scaling Alert) — a department
+  // shows up here only when an admin actually set a threshold (رول 15) AND
+  // it's exceeded; both null (the default) means the alert stays fully off.
+  const hrScalingSetting = await prisma.setting.findFirst({
+    select: { hrScalingWaitingThreshold: true, hrScalingDelayedThreshold: true },
+  });
+  const hrScalingAlerts: HrScalingAlert[] = [];
+  for (const dept of byDepartment.values()) {
+    if (hrScalingSetting?.hrScalingWaitingThreshold != null && dept.waiting > hrScalingSetting.hrScalingWaitingThreshold) {
+      hrScalingAlerts.push({
+        departmentId: dept.departmentId,
+        departmentName: dept.departmentName,
+        reason: 'WAITING',
+        count: dept.waiting,
+        threshold: hrScalingSetting.hrScalingWaitingThreshold,
+      });
+    }
+    if (hrScalingSetting?.hrScalingDelayedThreshold != null && dept.delayed > hrScalingSetting.hrScalingDelayedThreshold) {
+      hrScalingAlerts.push({
+        departmentId: dept.departmentId,
+        departmentName: dept.departmentName,
+        reason: 'DELAYED',
+        count: dept.delayed,
+        threshold: hrScalingSetting.hrScalingDelayedThreshold,
+      });
+    }
+  }
+
   return {
     totals: {
       activeWorkOrders: activeWorkOrderIds.size,
@@ -996,6 +1025,7 @@ export async function getWorkflowDashboardSummary(
     byDepartment: Array.from(byDepartment.values()),
     byOperator: Array.from(byOperator.values()),
     supplierDelays: Array.from(supplierDelays.values()),
+    hrScalingAlerts,
     dailyProductionCount,
     failedToday,
     avgDeliveryDurationByTrack,

@@ -62,6 +62,8 @@ const baseSetting: Setting = {
   invoiceDocumentLabel: null,
   autoCloseDayTime: null,
   deviceAccessMode: 'ALLOW_ALL_REGISTERED',
+  hrScalingWaitingThreshold: null,
+  hrScalingDelayedThreshold: null,
 };
 
 const baseTemplate: DocumentTemplate = {

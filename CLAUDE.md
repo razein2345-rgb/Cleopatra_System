@@ -161,7 +161,7 @@ Delivery أو Pickup (يحدد لكل مورد/طلب) → Received → Ready`. 
 | 2 | محرك الإنتاج | Dynamic Workflow Engine, Production Queue/Dashboard, أمر شغل بدون QR, شاشة موحدة — ✅ مكتملة (راجع تكملة 83) |
 | 3 | ~~Offline/Sync~~ | **ملغاة نهائيًا.** النظام سحابي Online بالكامل بقرار صاحب المشروع — راجع قسم 4 |
 | 4 | CRM والتواصل | Customer 360°, Leads Pipeline, Unified Inbox (يبدأ بقناة واحدة رسمية), Call Center أساسي |
-| 5 | التسويق والذكاء | Campaigns, Content Calendar, Auto Re-Order — ✅ خلصوا (راجع تكملة 87)، Smart Decision Engine — لسه صفر (محتاج توسعة Machine/Capacity model) |
+| 5 | التسويق والذكاء | Campaigns, Content Calendar, Auto Re-Order — ✅ خلصوا (راجع تكملة 87)، Smart Decision Engine — 🔄 جزئي (HR Scaling Alert ✅ خلص، راجع تكملة 89؛ Equipment Expansion/Marketing Trigger محتاجين توسعة Machine/Capacity model) |
 
 > **حالة المشروع الحالية (آخر تحديث: 2026-08-26، المرحلة 2 تأكدت ✅ مكتملة في 2026-09-09 —
 > راجع تكملة 83 آخر السطر ده):** **مرجع تفصيلي حي محدَّث
@@ -696,6 +696,22 @@ Delivery أو Pickup (يحدد لكل مورد/طلب) → Received → Ready`. 
 > `downloadDocumentAsPdf` اللي كل مستند تاني بيستخدمهم، صفر Endpoint Backend جديد. مقصورة على
 > SUPER_ADMIN بس (نفس تقييد بيانات الحضور/المرتبات). رابط "🖶 طباعة" جديد في ملف الموظف (الفترة
 > الحالية + كل شهر مقفول). متحقق منه حي على موظف حقيقي. 107 اختبار API فضلوا ناجحين.
+> 🐛 owner سأل بعدها "ظبطها على الA4؟ علشان عايز ابعت التقرير لصاحب الشغل" — قياس رقمي أثبت إن
+> "تنزيل PDF" (زرار الإرسال الفعلي) كان أصلًا صفحة واحدة بهامش كبير؛ المشكلة الحقيقية كانت في
+> "طباعة التقرير" (Print-to-PDF من نافذة طباعة المتصفح) بسبب Padding مزدوج (`p-8` فوق الـ1.5cm
+> اللي `.document-print-root` بيضيفهم أصلاً في الطباعة) — اتصلح بنقل الـPadding لعنصر داخلي
+> `print:p-0`.
+>
+> **وبعد كده مباشرة (تكملة 89)، owner: "كمل"** (بعد ما المرحلة الخامسة خلصت إلا محرك القرار
+> الذكي) — أول بند فعلي منه: **HR Scaling Alert** (system_specifications_v2.md §16.2)، الوحيد
+> من التلاتة (Equipment Expansion/HR Scaling/Marketing Trigger) اللي بيعتمد على بيانات موجودة
+> بالكامل (`getWorkflowDashboardSummary`'s `byDepartment.waiting`/`.delayed`، مستخدمة بالفعل
+> في ويدجت "المهام حسب القسم") — التانيين محتاجين توسعة Machine/Capacity model كبيرة، مؤجلين.
+> حقلين جديدين في `Setting` (`hrScalingWaitingThreshold`/`hrScalingDelayedThreshold`، فاضي =
+> مقفول، رول 15)، شاشة إعداد جديدة `/settings/production`، وويدجت داشبورد "تنبيهات التوسع في
+> الفريق" (نفس الـProvider المشترك، صفر Fetch إضافي). متحقق منه حي بالكامل (تفعيل حد=1، حفظ
+> ناجح، صفر تنبيه لأن العدد الفعلي كان صفر وقتها — واقع بيانات مش باگ، ثم إرجاع الإعداد
+> لحالته المقفولة). 107 اختبار API فضلوا ناجحين.
 > _[حدّث هذا السطر و`docs/AI/PROJECT_STATUS.md` باستمرار عشان أي جلسة Claude Code جديدة تعرف
 > تبدأ منين]_
 

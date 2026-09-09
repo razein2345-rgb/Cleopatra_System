@@ -207,6 +207,23 @@ export const trackDeliveryDurationSchema = z.object({
   sampleSize: z.number().int(),
 });
 
+/**
+ * system_specifications_v2.md §16.2 (HR Scaling Alert, 2026-09-09) —
+ * "مراقبة Queue Time، عدد Jobs المنتظرة... يمكن إطلاق تنبيه إداري عند
+ * تجاوز الحدود المحددة." Reuses `DepartmentJobSummary.waiting`/`.delayed`
+ * (already computed by `getWorkflowDashboardSummary`, رول 5) against the
+ * admin-configurable `Setting.hrScalingWaitingThreshold`/
+ * `hrScalingDelayedThreshold` (رول 15) — a department appears here only
+ * when a threshold is actually set AND exceeded, never a fixed rule.
+ */
+export const hrScalingAlertSchema = z.object({
+  departmentId: z.string().uuid(),
+  departmentName: z.string(),
+  reason: z.enum(['WAITING', 'DELAYED']),
+  count: z.number().int(),
+  threshold: z.number().int(),
+});
+
 export const workflowDashboardSummarySchema = z.object({
   totals: z.object({
     activeWorkOrders: z.number().int(),
@@ -221,6 +238,7 @@ export const workflowDashboardSummarySchema = z.object({
   /** FEATURE-005 Sprint 2.5 — STAGE_FAILED events today, same window/pattern as `dailyProductionCount`. */
   failedToday: z.number().int(),
   avgDeliveryDurationByTrack: z.array(trackDeliveryDurationSchema),
+  hrScalingAlerts: z.array(hrScalingAlertSchema),
 });
 
 export type WorkflowInstanceStatus = z.infer<typeof workflowInstanceStatusSchema>;
@@ -236,5 +254,6 @@ export type WorkflowInstanceListItem = z.infer<typeof workflowInstanceListItemSc
 export type DepartmentJobSummary = z.infer<typeof departmentJobSummarySchema>;
 export type OperatorJobSummary = z.infer<typeof operatorJobSummarySchema>;
 export type SupplierDelaySummary = z.infer<typeof supplierDelaySummarySchema>;
+export type HrScalingAlert = z.infer<typeof hrScalingAlertSchema>;
 export type WorkflowDashboardSummary = z.infer<typeof workflowDashboardSummarySchema>;
 export type TrackDeliveryDuration = z.infer<typeof trackDeliveryDurationSchema>;
