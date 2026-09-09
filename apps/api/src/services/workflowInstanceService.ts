@@ -2,6 +2,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import type {
   AdvanceWorkflowInstanceInput,
   ProductionTrack,
+  RevertWorkflowInstanceInput,
   StageInstance,
   StageInstanceStatus,
   UpdateStageInstanceInput,
@@ -524,6 +525,89 @@ export async function advanceWorkflowInstance(
       stageInstanceId: newStageInstance.id,
       eventType: 'STAGE_STARTED',
       payload: { stageId: nextStage.id, stageName: nextStage.name, departmentId: nextStage.departmentId },
+      performedById,
+    });
+  });
+
+  return prisma.workflowInstance.findUniqueOrThrow({
+    where: { id: instance.id },
+    include: WORKFLOW_INSTANCE_INCLUDE,
+  });
+}
+
+/**
+ * Owner (2026-09-09, "لو عايز ارجع طلب من الطلبات مرحله علشان دوست إنها
+ * خلصت بالغلط") — undoes exactly the single most recent COMPLETE/SKIP/FAIL
+ * on this instance: reopens that stage (back to `IN_PROGRESS`, clearing
+ * `finishedAt`) and marks whatever `applyStageTransition`/
+ * `advanceWorkflowInstance` auto-created as a result (the wrong "next"
+ * stage instance, or nothing at all if the mistake finished/cancelled the
+ * whole instance) as `REVERTED` — never hard-deleted, keeping the full
+ * StageInstance/WorkflowEvent history intact (رول 8/9). Calling this again
+ * on the freshly-reopened stage undoes one step further back — there's no
+ * "jump back N stages" input, same reasoning `advanceWorkflowInstanceSchema`
+ * never takes a target stage id.
+ */
+export async function revertWorkflowInstance(
+  instanceId: string,
+  input: RevertWorkflowInstanceInput,
+  performedById: string,
+): Promise<WorkflowInstanceRecord> {
+  const instance = await prisma.workflowInstance.findUnique({ where: { id: instanceId } });
+  if (!instance || instance.isDeleted) {
+    throw new IllegalStageTransitionError('تعذر العثور على أمر التشغيل');
+  }
+
+  const previousStageInstance = await prisma.stageInstance.findFirst({
+    where: { workflowInstanceId: instance.id, status: { in: ['DONE', 'SKIPPED', 'FAILED'] } },
+    orderBy: [{ finishedAt: 'desc' }, { createdAt: 'desc' }],
+  });
+  if (!previousStageInstance) {
+    throw new IllegalStageTransitionError('مفيش مرحلة سابقة يُتراجع ليها — دي أول مرحلة في الوركفلو');
+  }
+
+  // Present only when the mistaken action moved to a new stage rather than
+  // ending the instance (COMPLETED/CANCELLED never create a new StageInstance
+  // — see `applyStageTransition`'s `if (!destinationStageId)` branch).
+  const currentStageInstance = instance.currentStageId
+    ? await prisma.stageInstance.findFirst({
+        where: { workflowInstanceId: instance.id, status: { in: ['WAITING', 'IN_PROGRESS'] } },
+        orderBy: { createdAt: 'desc' },
+      })
+    : null;
+
+  await prisma.$transaction(async (tx) => {
+    if (currentStageInstance) {
+      await tx.stageInstance.update({
+        where: { id: currentStageInstance.id },
+        data: { status: 'REVERTED', finishedAt: new Date() },
+      });
+    }
+
+    await tx.stageInstance.update({
+      where: { id: previousStageInstance.id },
+      data: {
+        status: 'IN_PROGRESS',
+        finishedAt: null,
+        actualDurationMinutes: null,
+        notes: input.notes ?? previousStageInstance.notes,
+      },
+    });
+
+    await tx.workflowInstance.update({
+      where: { id: instance.id },
+      data: { status: 'IN_PROGRESS', currentStageId: previousStageInstance.stageId },
+    });
+
+    await recordWorkflowEvent(tx, {
+      workflowInstanceId: instance.id,
+      stageInstanceId: previousStageInstance.id,
+      eventType: 'STAGE_REVERTED',
+      payload: {
+        stageId: previousStageInstance.stageId,
+        undidStatus: currentStageInstance?.status ?? instance.status,
+        notes: input.notes,
+      },
       performedById,
     });
   });

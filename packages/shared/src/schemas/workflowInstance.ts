@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { productionTrackSchema } from './order.js';
 
 export const workflowInstanceStatusSchema = z.enum(['IN_PROGRESS', 'COMPLETED', 'CANCELLED']);
-export const stageInstanceStatusSchema = z.enum(['WAITING', 'IN_PROGRESS', 'DONE', 'SKIPPED', 'FAILED']);
+export const stageInstanceStatusSchema = z.enum(['WAITING', 'IN_PROGRESS', 'DONE', 'SKIPPED', 'FAILED', 'REVERTED']);
 export const workflowPrioritySchema = z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']);
 
 /**
@@ -82,6 +82,18 @@ export const workflowInstanceSchema = z.object({
 export const advanceWorkflowInstanceSchema = z.object({
   action: z.enum(['COMPLETE', 'FAIL', 'SKIP']),
   variableValues: z.record(z.string(), z.unknown()).optional(),
+  notes: z.string().trim().max(1000).optional(),
+});
+
+/**
+ * Owner (2026-09-09, "لو عايز ارجع طلب من الطلبات مرحله علشان دوست إنها
+ * خلصت بالغلط") — undoes the single most recent COMPLETE/SKIP/FAIL:
+ * reopens that stage, marks whatever it auto-created as `REVERTED`. Calling
+ * this again undoes one more step further back, same as `advance` only
+ * ever moves one step forward — never a target stage id, for the same
+ * reason `advanceWorkflowInstanceSchema` never takes one.
+ */
+export const revertWorkflowInstanceSchema = z.object({
   notes: z.string().trim().max(1000).optional(),
 });
 
@@ -217,6 +229,7 @@ export type WorkflowPriority = z.infer<typeof workflowPrioritySchema>;
 export type StageInstance = z.infer<typeof stageInstanceSchema>;
 export type WorkflowInstance = z.infer<typeof workflowInstanceSchema>;
 export type AdvanceWorkflowInstanceInput = z.infer<typeof advanceWorkflowInstanceSchema>;
+export type RevertWorkflowInstanceInput = z.infer<typeof revertWorkflowInstanceSchema>;
 export type UpdateStageInstanceInput = z.infer<typeof updateStageInstanceSchema>;
 export type WorkflowQueueItem = z.infer<typeof workflowQueueItemSchema>;
 export type WorkflowInstanceListItem = z.infer<typeof workflowInstanceListItemSchema>;

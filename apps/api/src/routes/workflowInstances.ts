@@ -8,6 +8,7 @@ import {
   getWorkflowQueue,
   listWorkflowInstancesHandler,
   listWorkflowTemplatesForKanbanHandler,
+  revertWorkflowInstanceHandler,
   updateCurrentStageInstanceHandler,
 } from '../controllers/workflowInstances.js';
 
@@ -33,6 +34,11 @@ workflowInstancesRouter.put(
   '/:id/advance',
   requirePermission('work-orders.edit'),
   advanceWorkflowInstanceHandler,
+);
+workflowInstancesRouter.put(
+  '/:id/revert',
+  requirePermission('work-orders.edit'),
+  revertWorkflowInstanceHandler,
 );
 workflowInstancesRouter.put(
   '/:id/current-stage',

@@ -6,6 +6,7 @@ export const STAGE_STATUS_LABELS: Record<StageInstanceStatus, string> = {
   DONE: 'مكتملة',
   SKIPPED: 'تم التخطي',
   FAILED: 'فشلت',
+  REVERTED: 'تم التراجع عنها',
 };
 
 export const PRIORITY_LABELS: Record<WorkflowPriority, string> = {

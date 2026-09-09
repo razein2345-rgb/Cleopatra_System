@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { STAGE_STATUS_LABELS } from './productionBoardLabels';
 
 type ChainStageDisplay =
-  | { kind: 'REACHED'; stage: WorkflowStage; status: 'DONE' | 'IN_PROGRESS' | 'SKIPPED' | 'FAILED' }
+  | { kind: 'REACHED'; stage: WorkflowStage; status: 'DONE' | 'IN_PROGRESS' | 'SKIPPED' | 'FAILED' | 'REVERTED' }
   | { kind: 'UPCOMING'; stage: WorkflowStage };
 
 /**
@@ -180,7 +180,9 @@ function StageChip({ entry }: { entry: ChainStageDisplay }) {
       ? 'bg-success/15 text-success'
       : status === 'SKIPPED'
         ? 'bg-warning/15 text-warning'
-        : 'bg-destructive/15 text-destructive';
+        : status === 'REVERTED'
+          ? 'bg-muted text-muted-foreground line-through'
+          : 'bg-destructive/15 text-destructive';
 
   return (
     <span className={cn('rounded-full px-3 py-1 text-xs', toneClass)}>

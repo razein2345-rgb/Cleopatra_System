@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Ban, Pencil, SkipForward } from 'lucide-react';
+import { Ban, Pencil, SkipForward, Undo2 } from 'lucide-react';
 import type { WorkflowQueueItem } from '@cleopatra/shared';
 import { apiPut } from '@/lib/api';
 import { EditQueueItemDialog } from './EditQueueItemDialog';
@@ -18,7 +18,7 @@ export function useQueueActions(reload: () => void) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [reorderError, setReorderError] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<WorkflowQueueItem | null>(null);
-  const [confirmAction, setConfirmAction] = useState<{ item: WorkflowQueueItem; action: 'FAIL' | 'SKIP' } | null>(
+  const [confirmAction, setConfirmAction] = useState<{ item: WorkflowQueueItem; action: 'FAIL' | 'SKIP' | 'REVERT' } | null>(
     null,
   );
 
@@ -32,6 +32,23 @@ export function useQueueActions(reload: () => void) {
       reload();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'تعذر تنفيذ الإجراء');
+    }
+  };
+
+  /**
+   * Owner (2026-09-09, "لو عايز ارجع طلب من الطلبات مرحله علشان دوست إنها
+   * خلصت بالغلط") — the completion checkbox has zero confirmation (it's
+   * meant to be a fast single click), so an accidental tap needs an equally
+   * fast way back. Undoes exactly the last COMPLETE/SKIP/FAIL; calling it
+   * again undoes one step further.
+   */
+  const revert = async (item: WorkflowQueueItem) => {
+    setActionError(null);
+    try {
+      await apiPut(`/api/workflow-instances/${item.workflowInstanceId}/revert`, {});
+      reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'تعذر التراجع');
     }
   };
 
@@ -125,6 +142,14 @@ export function useQueueActions(reload: () => void) {
       </button>
       <button
         type="button"
+        title="تراجع عن آخر مرحلة (لو اتقفلت بالغلط)"
+        onClick={() => setConfirmAction({ item, action: 'REVERT' })}
+        className="text-muted-foreground hover:text-foreground"
+      >
+        <Undo2 className="size-4" />
+      </button>
+      <button
+        type="button"
         title="تعديل"
         onClick={() => setEditingItem(item)}
         className="text-muted-foreground hover:text-foreground"
@@ -159,7 +184,11 @@ export function useQueueActions(reload: () => void) {
           action={confirmAction.action}
           onCancel={() => setConfirmAction(null)}
           onConfirm={() => {
-            void advance(confirmAction.item, confirmAction.action);
+            if (confirmAction.action === 'REVERT') {
+              void revert(confirmAction.item);
+            } else {
+              void advance(confirmAction.item, confirmAction.action);
+            }
             setConfirmAction(null);
           }}
         />

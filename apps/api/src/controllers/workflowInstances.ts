@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import type { ProductionTrack, WorkflowInstanceStatus } from '@cleopatra/shared';
-import { advanceWorkflowInstanceSchema, hasPermission, updateStageInstanceSchema } from '@cleopatra/shared';
+import { advanceWorkflowInstanceSchema, hasPermission, revertWorkflowInstanceSchema, updateStageInstanceSchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
   IllegalStageTransitionError,
@@ -15,6 +15,7 @@ import {
   getWorkflowDashboardSummary,
   listWorkflowInstances,
   mapWorkflowInstanceToDto,
+  revertWorkflowInstance,
   updateCurrentStageInstance,
 } from '../services/workflowInstanceService.js';
 import { listPublishedWorkflowTemplates, mapWorkflowTemplateToDto } from '../services/workflowTemplateService.js';
@@ -100,6 +101,48 @@ export async function advanceWorkflowInstanceHandler(req: Request<{ id: string }
     performedById: auth.staffId,
     previousValue: { currentStageId: existing.currentStageId },
     newValue: { action: input.action, currentStageId: updated.currentStageId, status: updated.status },
+  });
+
+  res.json({ success: true, data: mapWorkflowInstanceToDto(updated, true) });
+}
+
+/**
+ * Owner (2026-09-09, "لو عايز ارجع طلب من الطلبات مرحله علشان دوست إنها
+ * خلصت بالغلط") — undoes the single most recent COMPLETE/SKIP/FAIL. Same
+ * permission as `/advance` (`work-orders.edit`) — reverting a mistaken
+ * transition is the same actor's own correction, not a separate capability.
+ */
+export async function revertWorkflowInstanceHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
+  const input = revertWorkflowInstanceSchema.parse(req.body);
+
+  const existing = await prisma.workflowInstance.findUnique({ where: { id: req.params.id } });
+  if (!existing || existing.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Workflow instance not found' } });
+    return;
+  }
+
+  let updated;
+  try {
+    updated = await revertWorkflowInstance(existing.id, input, auth.staffId);
+  } catch (err) {
+    if (err instanceof IllegalStageTransitionError) {
+      res.status(400).json({
+        success: false,
+        error: { message: err.message, code: 'ILLEGAL_STAGE_TRANSITION' },
+      });
+      return;
+    }
+    throw err;
+  }
+
+  await recordAudit({
+    entityType: 'WorkflowInstance',
+    entityId: updated.id,
+    action: 'STATUS_CHANGE',
+    performedById: auth.staffId,
+    previousValue: { currentStageId: existing.currentStageId, status: existing.status },
+    newValue: { action: 'REVERT', currentStageId: updated.currentStageId, status: updated.status },
   });
 
   res.json({ success: true, data: mapWorkflowInstanceToDto(updated, true) });

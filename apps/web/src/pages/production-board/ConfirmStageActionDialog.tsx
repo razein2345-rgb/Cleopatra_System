@@ -15,18 +15,22 @@ export function ConfirmStageActionDialog({
   onCancel,
 }: {
   stageName: string;
-  action: 'FAIL' | 'SKIP';
+  action: 'FAIL' | 'SKIP' | 'REVERT';
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  const actionLabel = action === 'FAIL' ? 'فشل' : 'تخطي';
+  const actionLabel = action === 'FAIL' ? 'فشل' : action === 'SKIP' ? 'تخطي' : 'تراجع';
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>تأكيد الإجراء</DialogTitle>
           <DialogDescription>
-            هل أنت متأكد من تسجيل هذه المرحلة كـ "{actionLabel}"؟ — {stageName}
+            {action === 'REVERT' ? (
+              <>هل أنت متأكد من التراجع عن آخر مرحلة اتسجّلت والرجوع للمرحلة السابقة؟ — {stageName}</>
+            ) : (
+              <>هل أنت متأكد من تسجيل هذه المرحلة كـ "{actionLabel}"؟ — {stageName}</>
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
