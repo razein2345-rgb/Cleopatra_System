@@ -1,5 +1,6 @@
 export { StatusBadge } from './StatusBadge';
 export { ContactLinks } from './ContactLinks';
+export { LogCallDialog } from './LogCallDialog';
 export { BranchFinancialSummaryTable } from './BranchFinancialSummaryTable';
 export { PartnerCombobox } from './PartnerCombobox';
 export { InventoryItemCombobox } from './InventoryItemCombobox';

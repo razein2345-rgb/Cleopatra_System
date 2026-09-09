@@ -9,11 +9,22 @@ import type {
   LeadSource,
   LeadStage,
   ParsedLeadImportRow,
+  UpdateLeadInput,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { ContactLinks, StatusBadge, paginate, Pagination, useConfirm, type StatusTone } from '@/components/cleopatra';
+import {
+  ContactLinks,
+  EditableSelectCell,
+  EditableTextCell,
+  LogCallDialog,
+  StatusBadge,
+  paginate,
+  Pagination,
+  useConfirm,
+  type StatusTone,
+} from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { LEAD_SOURCE_LABELS, LEAD_SOURCE_OPTIONS } from '@/pages/partners/partnerLabels';
 
@@ -61,6 +72,7 @@ export function LeadsPage() {
   const [page, setPage] = useState(1);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejectingLead, setRejectingLead] = useState<Lead | null>(null);
+  const [loggingCallLead, setLoggingCallLead] = useState<Lead | null>(null);
 
   const load = () => {
     Promise.all([apiGet<Lead[]>('/api/leads'), apiGet<BranchSummary[]>('/api/branches')])
@@ -125,6 +137,14 @@ export function LeadsPage() {
   };
 
   const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? id;
+  const branchOptions = branches.map((b) => [b.id, b.name] as const);
+  const canEditFields = can('leads.edit');
+
+  /** Owner (2026-09-09, "عايز اقدر اعدل على جدول الليدز من بره") — same direct-in-table edit `EditableTextCell`/`EditableSelectCell` already give the Partners list, applied here too. */
+  const updateLeadField = async (id: string, patch: UpdateLeadInput) => {
+    const updated = await apiPut<Lead>(`/api/leads/${id}`, patch);
+    setLeads((prev) => prev?.map((l) => (l.id === id ? updated : l)) ?? prev);
+  };
 
   if (error && !leads) return <div className="text-destructive">{error}</div>;
   if (!leads) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
@@ -191,15 +211,49 @@ export function LeadsPage() {
               const busy = busyId === lead.id;
               return (
                 <tr key={lead.id} className="border-border border-b last:border-0">
-                  <td className="p-3 font-medium">{lead.name}</td>
+                  <td className="p-3 font-medium">
+                    {canEditFields ? (
+                      <EditableTextCell value={lead.name} onSave={(next) => updateLeadField(lead.id, { name: next })} />
+                    ) : (
+                      lead.name
+                    )}
+                  </td>
                   <td className="text-muted-foreground p-3" dir="ltr">
-                    {lead.phone}
+                    {canEditFields ? (
+                      <EditableTextCell value={lead.phone} onSave={(next) => updateLeadField(lead.id, { phone: next })} />
+                    ) : (
+                      lead.phone
+                    )}
                   </td>
                   <td className="p-3">
                     <ContactLinks phone={lead.phone} email={lead.email} facebookUrl={lead.facebookUrl} />
                   </td>
-                  <td className="p-3">{lead.source ? LEAD_SOURCE_LABELS[lead.source] : '—'}</td>
-                  <td className="p-3">{branchName(lead.branchId)}</td>
+                  <td className="p-3">
+                    {canEditFields ? (
+                      <EditableSelectCell
+                        value={lead.source ?? ''}
+                        options={[['', '— بدون —'], ...LEAD_SOURCE_OPTIONS]}
+                        onSave={(next) => updateLeadField(lead.id, { source: next ? (next as LeadSource) : null })}
+                        renderValue={(v) => (v ? LEAD_SOURCE_LABELS[v as LeadSource] : '—')}
+                      />
+                    ) : lead.source ? (
+                      LEAD_SOURCE_LABELS[lead.source]
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="p-3">
+                    {canEditFields ? (
+                      <EditableSelectCell
+                        value={lead.branchId}
+                        options={branchOptions}
+                        onSave={(next) => updateLeadField(lead.id, { branchId: next })}
+                        renderValue={branchName}
+                      />
+                    ) : (
+                      branchName(lead.branchId)
+                    )}
+                  </td>
                   <td className="p-3">
                     <StatusBadge tone={LEAD_STAGE_TONES[lead.stage]}>{LEAD_STAGE_LABELS[lead.stage]}</StatusBadge>
                     {lead.stage === 'REJECTED' && lead.rejectedReason && (
@@ -239,15 +293,26 @@ export function LeadsPage() {
                         </button>
                       </div>
                     )}
-                    {can('leads.delete') && (
-                      <button
-                        type="button"
-                        onClick={() => void deleteLead(lead)}
-                        className="text-muted-foreground mt-1 block text-xs hover:underline"
-                      >
-                        حذف
-                      </button>
-                    )}
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      {can('call-logs.create') && (
+                        <button
+                          type="button"
+                          onClick={() => setLoggingCallLead(lead)}
+                          className="text-primary text-xs hover:underline"
+                        >
+                          📞 سجل مكالمة
+                        </button>
+                      )}
+                      {can('leads.delete') && (
+                        <button
+                          type="button"
+                          onClick={() => void deleteLead(lead)}
+                          className="text-muted-foreground text-xs hover:underline"
+                        >
+                          حذف
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );
@@ -269,6 +334,15 @@ export function LeadsPage() {
           lead={rejectingLead}
           onClose={() => setRejectingLead(null)}
           onReject={(reason) => void reject(rejectingLead, reason)}
+        />
+      )}
+      {loggingCallLead && (
+        <LogCallDialog
+          targetName={loggingCallLead.name}
+          leadId={loggingCallLead.id}
+          branches={branches}
+          defaultBranchId={loggingCallLead.branchId}
+          onClose={() => setLoggingCallLead(null)}
         />
       )}
     </div>

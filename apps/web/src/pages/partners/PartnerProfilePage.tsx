@@ -12,7 +12,7 @@ import type {
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Combobox, ContactLinks, useConfirm } from '@/components/cleopatra';
+import { Combobox, ContactLinks, LogCallDialog, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { LEAD_SOURCE_OPTIONS, PARTNER_ROLE_OPTIONS, PARTNER_STATUS_OPTIONS } from './partnerLabels';
 import { ContactsTab } from './ContactsTab';
@@ -52,6 +52,7 @@ export function PartnerProfilePage() {
   const [staff, setStaff] = useState<User[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
+  const [showLogCall, setShowLogCall] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -109,11 +110,18 @@ export function PartnerProfilePage() {
           <h1 className="text-2xl font-bold">{partner.nameAr}</h1>
           <ContactLinks phone={partner.phone} email={partner.email} />
         </div>
-        {can('partners.delete') && (
-          <Button variant="destructive" onClick={() => void removePartner()}>
-            حذف العميل
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {can('call-logs.create') && (
+            <Button variant="secondary" onClick={() => setShowLogCall(true)}>
+              📞 سجل مكالمة
+            </Button>
+          )}
+          {can('partners.delete') && (
+            <Button variant="destructive" onClick={() => void removePartner()}>
+              حذف العميل
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="border-border flex gap-4 border-b text-sm">
@@ -173,6 +181,10 @@ export function PartnerProfilePage() {
       )}
 
       {tab === 'payments' && can('treasury.view') && <PaymentsHistoryTab partnerId={partner.id} />}
+
+      {showLogCall && (
+        <LogCallDialog targetName={partner.nameAr} partnerId={partner.id} branches={branches} defaultBranchId={partner.branchId} onClose={() => setShowLogCall(false)} />
+      )}
     </div>
   );
 }
