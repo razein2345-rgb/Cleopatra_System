@@ -15,12 +15,15 @@ import { searchCallLogsTool } from './searchCallLogs.js';
 import { getReorderDueTool } from './getReorderDue.js';
 import { getDashboardSummaryTool } from './getDashboardSummary.js';
 import { getEmployeePayrollTool } from './getEmployeePayroll.js';
+import { searchQuotationsTool } from './searchQuotations.js';
+import { getQuotationTool } from './getQuotation.js';
 
 /**
- * Phase 1 tool registry — the complete, approved READ-only catalog
- * (CLEOPATRA_AI_TOOLS.md, Phase 1 table). Exactly 16 tools, zero WRITE
- * tools. Adding a Phase 2+ tool means adding it to a *separate* registry
- * gated behind its own approval, never appending here.
+ * READ-only tool registry — the Phase 1 catalog (CLEOPATRA_AI_TOOLS.md,
+ * 16 tools) plus each Phase 2 read-tool task the owner has explicitly
+ * approved one at a time (Task 1, 2026-09-10: `search_quotations`/
+ * `get_quotation`). Zero WRITE tools. A tool is only ever appended here
+ * after its own specific approval — never speculatively.
  */
 export const AI_TOOLS: AnyAiToolDefinition[] = [
   searchCustomersTool,
@@ -39,4 +42,6 @@ export const AI_TOOLS: AnyAiToolDefinition[] = [
   getReorderDueTool,
   getDashboardSummaryTool,
   getEmployeePayrollTool,
+  searchQuotationsTool,
+  getQuotationTool,
 ] as unknown as AnyAiToolDefinition[];

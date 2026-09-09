@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { AI_TOOLS } from './index.js';
 
 /**
- * A declarative lock on the Phase 1 security model (CLEOPATRA_AI_TOOLS.md /
- * CLEOPATRA_AI_SECURITY.md §2) — exactly the 16 approved READ tools, each
- * with the exact permission (or SUPER_ADMIN gate) the catalog specifies.
- * A future edit that accidentally widens or removes a permission check
- * fails this test immediately, without needing a live LLM call.
+ * A declarative lock on the AI tool registry's security model
+ * (CLEOPATRA_AI_TOOLS.md / CLEOPATRA_AI_SECURITY.md §2) — the 16 Phase 1
+ * tools plus each Phase 2 read-tool task approved so far (Task 1,
+ * 2026-09-10: `search_quotations`/`get_quotation`), each with the exact
+ * permission (or SUPER_ADMIN gate) the catalog specifies. A future edit
+ * that accidentally widens or removes a permission check fails this test
+ * immediately, without needing a live LLM call.
  */
 const EXPECTED = {
   search_customers: { requiredPermission: 'partners.view', requiresSuperAdmin: undefined },
@@ -25,10 +27,12 @@ const EXPECTED = {
   get_reorder_due: { requiredPermission: 'orders.view', requiresSuperAdmin: undefined },
   get_dashboard_summary: { requiredPermission: null, requiresSuperAdmin: undefined },
   get_employee_payroll: { requiredPermission: null, requiresSuperAdmin: true },
+  search_quotations: { requiredPermission: 'quotations.view', requiresSuperAdmin: undefined },
+  get_quotation: { requiredPermission: 'quotations.view', requiresSuperAdmin: undefined },
 } as const;
 
-describe('AI_TOOLS registry (Phase 1)', () => {
-  it('contains exactly the 16 approved READ tools, no more, no fewer', () => {
+describe('AI_TOOLS registry', () => {
+  it('contains exactly the approved READ tools, no more, no fewer', () => {
     expect(AI_TOOLS.map((t) => t.name).sort()).toEqual(Object.keys(EXPECTED).sort());
   });
 
