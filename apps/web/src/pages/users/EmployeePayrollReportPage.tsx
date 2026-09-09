@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import type { BusinessIdentity, EmployeePayroll, EmployeePayrollDay, PayrollPeriod, User } from '@cleopatra/shared';
+import type { BusinessIdentity, EmployeeAdvance, EmployeePayroll, EmployeePayrollDay, PayrollPeriod, User } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -62,6 +62,16 @@ export function EmployeePayrollReportPage() {
   const [user, setUser] = useState<User | null>(null);
   const [business, setBusiness] = useState<BusinessIdentity | null>(null);
   const [source, setSource] = useState<ReportSource | null | undefined>(undefined);
+  // Owner (2026-09-10, "لاحظت إنه مش خاصم السلف من المرتب ولا ظاهرة في
+  // التقرير... صاحب الشغل هيديني مرتب زايد") — this report showed
+  // `grossDue` (base salary + attendance adjustment) as the final amount
+  // to pay, but never subtracted the employee's own outstanding advances
+  // (`EmployeeAdvance.remainingBalance`, already correctly tracked and
+  // shown elsewhere — e.g. the "تقرير السلف والمرتبات" screen's own
+  // `netDue = grossDue - totalOutstanding`). Reuses the exact same
+  // already-correct per-advance `remainingBalance` field (رول 5) — no new
+  // calculation, no backend change.
+  const [outstandingAdvances, setOutstandingAdvances] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
 
@@ -73,10 +83,12 @@ export function EmployeePayrollReportPage() {
       periodId
         ? apiGet<PayrollPeriod[]>(`/api/employee-advances/staff/${id}/payroll-periods`)
         : apiGet<EmployeePayroll | null>(`/api/employee-advances/staff/${id}/payroll`),
+      apiGet<EmployeeAdvance[]>(`/api/employee-advances/staff/${id}`),
     ])
-      .then(([u, b, payrollData]) => {
+      .then(([u, b, payrollData, advances]) => {
         setUser(u);
         setBusiness(b);
+        setOutstandingAdvances(advances.reduce((sum, a) => sum + a.remainingBalance, 0));
         if (periodId) {
           const period = (payrollData as PayrollPeriod[]).find((p) => p.id === periodId);
           setSource(
@@ -253,11 +265,20 @@ export function EmployeePayrollReportPage() {
 
         <div className="border-border bg-muted/30 flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3">
           <Field label="المرتب قبل التسوية" value={<span dir="ltr">{money(source.baseSalary)} ج.م</span>} />
+          <Field label="المرتب بعد التسوية" value={<span dir="ltr">{money(source.grossDue)} ج.م</span>} />
           <Field
-            label="المرتب بعد التسوية — الصافي المستحق للصرف"
+            label="السلف المستحقة"
+            value={
+              <span dir="ltr" className={outstandingAdvances > 0 ? 'text-destructive' : ''}>
+                {outstandingAdvances > 0 ? `-${money(outstandingAdvances)} ج.م` : '—'}
+              </span>
+            }
+          />
+          <Field
+            label="الصافي النهائي المستحق للصرف"
             value={
               <span dir="ltr" className="text-lg font-bold">
-                {money(source.grossDue)} ج.م
+                {money(source.grossDue - outstandingAdvances)} ج.م
               </span>
             }
           />
