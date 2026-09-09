@@ -57,6 +57,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     'employees.*',
     'leads.*',
     'call-logs.*',
+    'content-calendar.*',
     // Owner (2026-08-20, "تعديل/حذف مقيد بصلاحية خاصة") — a deliberately
     // separate grant from `orders.*` above; still included for ADMIN by
     // default (SUPER_ADMIN already covered via the global bypass), but
@@ -68,7 +69,16 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     'roles.view',
     'permissions.view',
   ],
-  SALES: ['partners.*', 'orders.*', 'quotations.*', 'reports.view', 'inventory.view', 'leads.*', 'call-logs.*'],
+  SALES: [
+    'partners.*',
+    'orders.*',
+    'quotations.*',
+    'reports.view',
+    'inventory.view',
+    'leads.*',
+    'call-logs.*',
+    'content-calendar.*',
+  ],
   // Owner (2026-08-20, "عايز انا بس اللي أقدر اعدل او احذف في المخزن مش كل
   // الموظفين... هو فقط يقدر يضيف") — deliberately `view`+`create` only, no
   // `edit`/`delete`/`inventory.*`: a cashier can see stock and record new
@@ -92,6 +102,7 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
     'employees.view',
     'leads.view',
     'call-logs.view',
+    'content-calendar.view',
   ],
 };
 

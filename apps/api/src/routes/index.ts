@@ -44,6 +44,7 @@ import { fixedMonthlyExpensesRouter } from './fixedMonthlyExpenses.js';
 import { itemSupplierTasksRouter } from './itemSupplierTasks.js';
 import { communicationHubLinksRouter } from './communicationHubLinks.js';
 import { callLogsRouter } from './callLogs.js';
+import { contentCalendarRouter } from './contentCalendar.js';
 
 export const apiRouter = Router();
 
@@ -69,6 +70,7 @@ api.use('/fixed-monthly-expenses', fixedMonthlyExpensesRouter);
 api.use('/item-supplier-tasks', itemSupplierTasksRouter);
 api.use('/communication-hub-links', communicationHubLinksRouter);
 api.use('/call-logs', callLogsRouter);
+api.use('/content-calendar', contentCalendarRouter);
 api.use('/suppliers', suppliersRouter);
 api.use('/leads', leadsRouter);
 api.use('/partner-categories', partnerCategoriesRouter);

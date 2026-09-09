@@ -230,6 +230,19 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
+    // Owner (2026-09-09, "المرحلة الخامسة" → "تقويم المحتوى") — Phase 5
+    // (التسويق والذكاء)'s first shipped piece: internal scheduling/
+    // tracking of planned social content, no publishing integration.
+    module: 'content-calendar',
+    moduleLabel: 'Content Calendar',
+    actions: [
+      { action: 'view', label: 'View content calendar' },
+      { action: 'create', label: 'Add content calendar entries' },
+      { action: 'edit', label: 'Edit content calendar entries' },
+      { action: 'delete', label: 'Delete content calendar entries' },
+    ],
+  },
+  {
     // Owner (2026-08-23, "مرتجعات") — deliberately its own top-level
     // module, NOT nested under `orders.*` — same reasoning as `payments`
     // above: a return moves both stock and cash, so it needs a separate,
