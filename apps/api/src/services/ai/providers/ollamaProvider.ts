@@ -129,6 +129,12 @@ export class OllamaProvider implements LlmProvider {
     const body = {
       model: this.model,
       stream: false,
+      // Owner (2026-09-10, live-latency test): Qwen3's default hybrid
+      // "thinking" mode measured at 55-256s per turn on this hardware —
+      // disabling it (Ollama's own documented top-level "think" param)
+      // measured 10x faster (26-30s) with identical tool-selection
+      // correctness in a direct before/after test.
+      think: false,
       messages: [{ role: 'system', content: input.system }, ...toOllamaMessages(input.messages)],
       tools: input.tools.map((tool) => ({
         type: 'function',
