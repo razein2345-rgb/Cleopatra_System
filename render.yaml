@@ -26,3 +26,6 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      # Cleopatra AI (Phase 1) — required for the /api/ai/chat endpoint to work.
+      - key: ANTHROPIC_API_KEY
+        sync: false

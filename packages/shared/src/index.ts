@@ -58,6 +58,8 @@ export * from './pricing/digitalCostCalculation.js';
 export * from './pricing/productionQuantity.js';
 export * from './schemas/inventoryItem.js';
 export * from './schemas/inventoryCategory.js';
+export * from './reorder/reorderPrediction.js';
+export * from './schemas/ai.js';
 export * from './schemas/employeeAdvance.js';
 export * from './schemas/salaryPayment.js';
 export * from './schemas/lead.js';

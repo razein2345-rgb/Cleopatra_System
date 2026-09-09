@@ -1,4 +1,5 @@
-import type { ItemReorderOverride, Order } from '@cleopatra/shared';
+import type { ItemReorderOverride } from '../schemas/itemReorderOverride.js';
+import type { Order } from '../schemas/order.js';
 
 type OrderItem = Order['items'][number];
 
@@ -7,9 +8,16 @@ type OrderItem = Order['items'][number];
  * علشان ابلغ العميل بالصنف الفلاني قرب يخلص") — same "last date + average
  * gap between past occurrences" heuristic `OrdersHistoryTab.tsx` already
  * uses at the whole-order level, applied per distinct item instead.
- * Shared between `ReorderPredictionTab.tsx` (per-customer tab) and the
- * dashboard's `ReorderDueWidget.tsx` (cross-customer widget) — one
- * grouping/prediction implementation, not two (rule 5, "دوّر قبل ما تبني").
+ * Shared between `ReorderPredictionTab.tsx` (per-customer tab), the
+ * dashboard's `ReorderDueWidget.tsx` (cross-customer widget), and
+ * `ReorderDuePage.tsx` — one grouping/prediction implementation, not two
+ * (rule 5, "دوّر قبل ما تبني").
+ *
+ * Moved here (2026-09-09, Cleopatra AI Phase 1) from
+ * `apps/web/src/lib/reorderPrediction.ts` so the server-side
+ * `get_reorder_due` AI tool can reuse the exact same functions/formulas a
+ * frontend-only module could never be imported into — content copied
+ * verbatim, no formula/threshold changes.
  *
  * `OrderItem` has no stable catalog FK once frozen — `readyProductId`/
  * `serviceId` only ever exist on the create-order *input*, never persisted

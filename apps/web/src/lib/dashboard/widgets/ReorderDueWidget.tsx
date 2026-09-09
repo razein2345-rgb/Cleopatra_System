@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { BusinessPartner, ItemReorderOverride, Order } from '@cleopatra/shared';
+import { buildItemGroups, isOverdue, isSoon, resolveEffectiveDate } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Card } from '@/components/ui/card';
-import { buildItemGroups, isOverdue, isSoon, resolveEffectiveDate } from '@/lib/reorderPrediction';
 import type { DashboardWidgetDefinition } from '../types';
 
 interface DueRow {

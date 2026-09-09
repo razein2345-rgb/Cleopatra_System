@@ -1,18 +1,11 @@
 import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { ItemReorderOverride, Order } from '@cleopatra/shared';
+import type { ItemGroup, ItemReorderOverride, Order } from '@cleopatra/shared';
+import { buildItemGroups, buildReminderMessage, isOverdue, isSoon, resolveEffectiveDate } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPut } from '@/lib/api';
 import { whatsappLink } from '@/lib/whatsapp';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
-import {
-  buildItemGroups,
-  buildReminderMessage,
-  isOverdue,
-  isSoon,
-  resolveEffectiveDate,
-  type ItemGroup,
-} from '@/lib/reorderPrediction';
 
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 

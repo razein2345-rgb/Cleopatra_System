@@ -25,6 +25,7 @@ import {
   Repeat,
   CalendarDays,
   Megaphone,
+  Sparkles,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -45,6 +46,10 @@ import { useAuth } from '@/state/AuthContext';
  */
 const NAV_ITEMS: NavEntry[] = [
   { kind: 'link', to: '/', label: 'لوحة التحكم', icon: LayoutDashboard, end: true },
+  // Owner (2026-09-09, "AI... متدرب كويس جداً على النظام" → Phase 1
+  // approval, "usable by كل الموظفين المسجلين دخول") — open to everyone,
+  // no `permission`, same open-nav pattern as `/communication-hub` above.
+  { kind: 'link', to: '/ai-assistant', label: 'مساعد Cleopatra الذكي', icon: Sparkles },
   {
     kind: 'group',
     label: 'الإنتاج',

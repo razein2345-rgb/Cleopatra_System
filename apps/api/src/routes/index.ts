@@ -46,6 +46,7 @@ import { communicationHubLinksRouter } from './communicationHubLinks.js';
 import { callLogsRouter } from './callLogs.js';
 import { contentCalendarRouter } from './contentCalendar.js';
 import { campaignsRouter } from './campaigns.js';
+import { aiRouter } from './ai.js';
 
 export const apiRouter = Router();
 
@@ -73,6 +74,7 @@ api.use('/communication-hub-links', communicationHubLinksRouter);
 api.use('/call-logs', callLogsRouter);
 api.use('/content-calendar', contentCalendarRouter);
 api.use('/campaigns', campaignsRouter);
+api.use('/ai', aiRouter);
 api.use('/suppliers', suppliersRouter);
 api.use('/leads', leadsRouter);
 api.use('/partner-categories', partnerCategoriesRouter);

@@ -44,6 +44,7 @@ const CampaignsPage = lazy(() => import('@/pages/campaigns/CampaignsPage').then(
 const CommunicationHubPage = lazy(() =>
   import('@/pages/communication-hub/CommunicationHubPage').then((m) => ({ default: m.CommunicationHubPage })),
 );
+const AiChatPanel = lazy(() => import('@/components/ai/AiChatPanel').then((m) => ({ default: m.AiChatPanel })));
 const PartnerProfilePage = lazy(() =>
   import('@/pages/partners/PartnerProfilePage').then((m) => ({ default: m.PartnerProfilePage })),
 );
@@ -110,6 +111,13 @@ function App() {
                   prop, same as the dashboard above (managing the link
                   list itself is gated inside the page via `settings.edit`). */}
               <Route path="/communication-hub" element={<CommunicationHubPage />} />
+
+              {/* Owner (2026-09-09, Cleopatra AI Phase 1 approval, "usable
+                  by كل الموظفين المسجلين دخول") — open to every logged-in
+                  staff member, same as the two routes above; every tool
+                  call inside is still individually permission-checked
+                  server-side against the caller's own real grants. */}
+              <Route path="/ai-assistant" element={<AiChatPanel />} />
 
               <Route element={<ProtectedRoute permission="settings.view" />}>
                 <Route path="/settings" element={<SettingsPage />} />

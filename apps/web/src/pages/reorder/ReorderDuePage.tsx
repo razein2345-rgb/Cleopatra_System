@@ -1,16 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { BranchSummary, BusinessPartner, ItemReorderOverride, Order } from '@cleopatra/shared';
+import { buildItemGroups, buildReminderMessage, isOverdue, isSoon, resolveEffectiveDate } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { whatsappLink } from '@/lib/whatsapp';
 import { Button } from '@/components/ui/button';
-import {
-  buildItemGroups,
-  buildReminderMessage,
-  isOverdue,
-  isSoon,
-  resolveEffectiveDate,
-} from '@/lib/reorderPrediction';
 
 interface DueItem {
   key: string;
