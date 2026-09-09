@@ -2,7 +2,7 @@ import { hasPermission } from '@cleopatra/shared';
 import type { AiChatTurn } from '@cleopatra/shared';
 import type { AuthenticatedUser } from './authContext.js';
 import type { LlmMessage, LlmProvider, LlmToolDefinition } from './ai/llmProvider.js';
-import { AnthropicProvider, toAssistantMessage } from './ai/providers/anthropicProvider.js';
+import { OllamaProvider, toAssistantMessage } from './ai/providers/ollamaProvider.js';
 import { CLEOPATRA_AI_SYSTEM_PROMPT } from './ai/systemKnowledge.js';
 import { AI_TOOLS } from './ai/tools/index.js';
 import type { AnyAiToolDefinition } from './ai/toolTypes.js';
@@ -25,23 +25,22 @@ const MAX_TOOL_ITERATIONS = 6;
 
 let cachedProvider: LlmProvider | null = null;
 
-export class AiProviderNotConfiguredError extends Error {
-  constructor() {
-    super('ANTHROPIC_API_KEY is not configured');
-    this.name = 'AiProviderNotConfiguredError';
-  }
-}
-
+/**
+ * Owner's correction (2026-09-09): Phase 1 validation runs against a
+ * locally-installed Ollama instance — no hosted API key of any kind is
+ * required. Both settings are plain, optional env vars with sensible
+ * local defaults (never hard-coded into business logic, per the owner's
+ * instruction) — `OllamaProvider` itself owns the actual defaults.
+ */
 function getProvider(): LlmProvider {
   if (cachedProvider) return cachedProvider;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new AiProviderNotConfiguredError();
-  const model = process.env.ANTHROPIC_MODEL || undefined;
-  cachedProvider = new AnthropicProvider(apiKey, model);
+  const baseUrl = process.env.OLLAMA_BASE_URL || undefined;
+  const model = process.env.OLLAMA_MODEL || undefined;
+  cachedProvider = new OllamaProvider(baseUrl, model);
   return cachedProvider;
 }
 
-/** Test-only seam — lets tests substitute a fake provider without touching env vars or the real Anthropic SDK. */
+/** Test-only seam — lets tests substitute a fake provider without touching env vars or a real Ollama instance. */
 export function __setProviderForTests(provider: LlmProvider | null): void {
   cachedProvider = provider;
 }

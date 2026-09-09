@@ -26,6 +26,8 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      # Cleopatra AI (Phase 1) — required for the /api/ai/chat endpoint to work.
-      - key: ANTHROPIC_API_KEY
-        sync: false
+      # Cleopatra AI (Phase 1) — owner's correction (2026-09-09): local
+      # validation only, against a locally-installed Ollama instance
+      # (OLLAMA_BASE_URL/OLLAMA_MODEL in apps/api/.env, not on Render).
+      # Deliberately no entry here yet — deploying/reaching an LLM from
+      # this Render service is a separate, later decision.
