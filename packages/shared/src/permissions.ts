@@ -243,6 +243,18 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
+    // Owner (2026-09-09, "المرحلة الخامسة" → "كمل في الأسرع فيهم") — Phase
+    // 5's Campaign Management piece (system_specifications_v2.md §10.1).
+    module: 'campaigns',
+    moduleLabel: 'Campaigns',
+    actions: [
+      { action: 'view', label: 'View campaigns' },
+      { action: 'create', label: 'Add campaigns' },
+      { action: 'edit', label: 'Edit campaigns' },
+      { action: 'delete', label: 'Delete campaigns' },
+    ],
+  },
+  {
     // Owner (2026-08-23, "مرتجعات") — deliberately its own top-level
     // module, NOT nested under `orders.*` — same reasoning as `payments`
     // above: a return moves both stock and cash, so it needs a separate,

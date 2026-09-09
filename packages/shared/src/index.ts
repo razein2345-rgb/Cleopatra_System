@@ -45,6 +45,7 @@ export * from './schemas/communicationHubLink.js';
 export * from './schemas/itemSupplierTask.js';
 export * from './schemas/callLog.js';
 export * from './schemas/contentCalendar.js';
+export * from './schemas/campaign.js';
 export * from './schemas/supplier.js';
 export * from './schemas/reportsOverview.js';
 export * from './schemas/boardsCatalogItem.js';

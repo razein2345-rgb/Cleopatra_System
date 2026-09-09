@@ -24,6 +24,7 @@ import {
   Phone,
   Repeat,
   CalendarDays,
+  Megaphone,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -72,6 +73,7 @@ const NAV_ITEMS: NavEntry[] = [
       // Owner (2026-09-09, "المرحلة الخامسة" → "تقويم المحتوى") — Phase 5's
       // first shipped piece.
       { kind: 'link', to: '/content-calendar', label: 'تقويم المحتوى', icon: CalendarDays, permission: 'content-calendar.view' },
+      { kind: 'link', to: '/campaigns', label: 'الحملات التسويقية', icon: Megaphone, permission: 'campaigns.view' },
       { kind: 'link', to: '/partners', label: 'العملاء', icon: Building2, permission: 'partners.view' },
       // Owner (2026-09-09, "استكمال إعادة الطلب التلقائي") — the
       // dashboard widget only shows the top 6 rows; this is the full

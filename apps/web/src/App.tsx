@@ -37,6 +37,7 @@ const ReorderDuePage = lazy(() => import('@/pages/reorder/ReorderDuePage').then(
 const ContentCalendarPage = lazy(() =>
   import('@/pages/content-calendar/ContentCalendarPage').then((m) => ({ default: m.ContentCalendarPage })),
 );
+const CampaignsPage = lazy(() => import('@/pages/campaigns/CampaignsPage').then((m) => ({ default: m.CampaignsPage })));
 const CommunicationHubPage = lazy(() =>
   import('@/pages/communication-hub/CommunicationHubPage').then((m) => ({ default: m.CommunicationHubPage })),
 );
@@ -150,6 +151,10 @@ function App() {
 
               <Route element={<ProtectedRoute permission="content-calendar.view" />}>
                 <Route path="/content-calendar" element={<ContentCalendarPage />} />
+              </Route>
+
+              <Route element={<ProtectedRoute permission="campaigns.view" />}>
+                <Route path="/campaigns" element={<CampaignsPage />} />
               </Route>
 
               <Route element={<ProtectedRoute permission="suppliers.view" />}>
