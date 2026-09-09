@@ -444,29 +444,30 @@ model Branch {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  staff               StaffProfile[]
-  userBranchAccess    UserBranchAccess[]
-  businessPartners    BusinessPartner[]
-  orders              Order[]
-  quotations          Quotation[]
-  workOrders          WorkOrder[]
-  treasuryEntries     TreasuryEntry[]
-  documentSequences   DocumentSequence[]
-  stockLevels         StockLevel[]
-  stockMovements      StockMovement[]
-  auditLogs           AuditLog[]
-  employeeAdvances    EmployeeAdvance[]
-  salaryPayments      SalaryPayment[]
-  payrollPeriods      PayrollPeriod[]
-  leads               Lead[]
-  attendanceEntries   AttendanceEntry[]
-  fieldAssignments    FieldAssignment[]
-  treasuryDayClosures TreasuryDayClosure[]
-  machines            Machine[]
-  orderTemplates      OrderTemplate[]
-  orderItemReturns    OrderItemReturn[]
-  fixedMonthlyExpenses FixedMonthlyExpense[]
-  callLogs            CallLog[]
+  staff                  StaffProfile[]
+  userBranchAccess       UserBranchAccess[]
+  businessPartners       BusinessPartner[]
+  orders                 Order[]
+  quotations             Quotation[]
+  workOrders             WorkOrder[]
+  treasuryEntries        TreasuryEntry[]
+  documentSequences      DocumentSequence[]
+  stockLevels            StockLevel[]
+  stockMovements         StockMovement[]
+  auditLogs              AuditLog[]
+  employeeAdvances       EmployeeAdvance[]
+  salaryPayments         SalaryPayment[]
+  payrollPeriods         PayrollPeriod[]
+  leads                  Lead[]
+  attendanceEntries      AttendanceEntry[]
+  fieldAssignments       FieldAssignment[]
+  treasuryDayClosures    TreasuryDayClosure[]
+  machines               Machine[]
+  orderTemplates         OrderTemplate[]
+  orderItemReturns       OrderItemReturn[]
+  fixedMonthlyExpenses   FixedMonthlyExpense[]
+  callLogs               CallLog[]
+  contentCalendarEntries ContentCalendarEntry[]
 
   @@index([isDeleted])
 }
@@ -964,6 +965,8 @@ model StaffProfile {
   payrollPeriodsReopened      PayrollPeriod[]            @relation("PayrollPeriodReopenedBy")
   leadsAssigned               Lead[]                     @relation("LeadAssignedTo")
   leadsRecorded               Lead[]                     @relation("LeadRecordedBy")
+  contentCalendarAssigned     ContentCalendarEntry[]     @relation("ContentCalendarAssignedTo")
+  contentCalendarRecorded     ContentCalendarEntry[]     @relation("ContentCalendarRecordedBy")
   supplierPurchasesRecorded   SupplierPurchase[]         @relation("SupplierPurchaseRecordedBy")
   supplierPaymentsRecorded    SupplierPayment[]          @relation("SupplierPaymentRecordedBy")
   purchaseRequestsPurchased   PurchaseRequest[]          @relation("PurchaseRequestPurchasedBy")
@@ -1264,9 +1267,9 @@ model BusinessPartner {
 model Lead {
   id String @id @default(uuid()) @db.Uuid
 
-  name  String
-  phone String
-  email String?
+  name        String
+  phone       String
+  email       String?
   /// Owner (2026-09-08, "لو في بيانات زي لينك فيسبوك مثلا... بيوصلني بردو
   /// اول ما اضغط على... صفحاتهم") — optional, opened directly from the
   /// leads list the same one-click way the WhatsApp/call/email links are.
@@ -1330,10 +1333,10 @@ model CallLog {
   outcome   CallOutcome
   notes     String?
 
-  partnerId String?          @db.Uuid
-  partner   BusinessPartner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
-  leadId    String?          @db.Uuid
-  lead      Lead?            @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  partnerId    String?          @db.Uuid
+  partner      BusinessPartner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  leadId       String?          @db.Uuid
+  lead         Lead?            @relation(fields: [leadId], references: [id], onDelete: SetNull)
   /// Only meaningful when neither `partnerId` nor `leadId` is set — a caller not yet in the system at all.
   contactName  String?
   contactPhone String?
@@ -1369,6 +1372,70 @@ enum CallDirection {
 enum CallOutcome {
   RESOLVED
   NEEDS_FOLLOWUP
+}
+
+/// Owner (2026-09-09, "المرحلة الخامسة" → "تقويم المحتوى") — internal
+/// scheduling/tracking of planned social-media content, deliberately NOT a
+/// real publishing integration (رول 8 — أي تكامل خارجي قابل للفصل ومربوط
+/// بأذونات API فعلية؛ مفيش API رسمي متاح دلوقتي لأي منصة). `publishedUrl`
+/// is filled in manually once a human actually posts it elsewhere — same
+/// "draft the human still sends" pattern already used for the WhatsApp
+/// reminder link in `reorderPrediction.ts`, never an automatic post.
+/// Same shape as `Lead`/`CallLog` (branch-scoped, optional assignee,
+/// required recorder, soft delete) for consistency with the rest of the
+/// CRM/التواصل phase.
+model ContentCalendarEntry {
+  id String @id @default(uuid()) @db.Uuid
+
+  title        String
+  platform     ContentPlatform
+  /// Free text ("ريلز", "بوست", "ستوري"...) — not a fixed enum (rule 15),
+  /// the actual content formats used vary and shouldn't need a migration
+  /// to add a new one.
+  contentType  String?
+  notes        String?
+  publishedUrl String?
+
+  scheduledDate DateTime
+  status        ContentCalendarStatus @default(IDEA)
+
+  branchId String? @db.Uuid
+  branch   Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  assignedToId String?       @db.Uuid
+  assignedTo   StaffProfile? @relation("ContentCalendarAssignedTo", fields: [assignedToId], references: [id], onDelete: SetNull)
+
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation("ContentCalendarRecordedBy", fields: [recordedById], references: [id])
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([branchId])
+  @@index([assignedToId])
+  @@index([scheduledDate])
+  @@index([status])
+}
+
+enum ContentPlatform {
+  INSTAGRAM
+  FACEBOOK
+  TIKTOK
+  WHATSAPP_STATUS
+  OTHER
+}
+
+enum ContentCalendarStatus {
+  IDEA
+  IN_PROGRESS
+  READY
+  PUBLISHED
+  CANCELLED
 }
 
 // ---------------------------------------------------------------------------
@@ -2601,6 +2668,14 @@ enum StageInstanceStatus {
   DONE
   SKIPPED
   FAILED
+  /// Owner (2026-09-09, "لو عايز ارجع طلب من الطلبات مرحله علشان دوست إنها
+  /// خلصت بالغلط") — the stage a mistaken COMPLETE/SKIP/FAIL auto-created
+  /// as "next", undone by reopening the real previous stage. Never
+  /// hard-deleted (رول 8/9 — full production traceability/history) —
+  /// this status just excludes it from live queues the same way DONE/
+  /// SKIPPED/FAILED already do (`queryWorkflowQueue` only pulls WAITING/
+  /// IN_PROGRESS).
+  REVERTED
 }
 
 /// Presets for a WorkflowStageVariable's answer type — structural (what
@@ -2637,6 +2712,9 @@ enum WorkflowEventType {
   STAGE_FAILED
   INSTANCE_COMPLETED
   INSTANCE_CANCELLED
+  /// Owner (2026-09-09) — a mistaken COMPLETE/SKIP/FAIL undone; see
+  /// `StageInstanceStatus.REVERTED`.
+  STAGE_REVERTED
 }
 
 /// A Workflow Template version (VISION.md's Workflow Templates / Workflow
