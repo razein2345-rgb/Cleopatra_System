@@ -466,6 +466,7 @@ model Branch {
   orderTemplates      OrderTemplate[]
   orderItemReturns    OrderItemReturn[]
   fixedMonthlyExpenses FixedMonthlyExpense[]
+  callLogs            CallLog[]
 
   @@index([isDeleted])
 }
@@ -982,6 +983,7 @@ model StaffProfile {
   trustedDevices              TrustedDevice[]            @relation("TrustedDeviceOwner")
   devicesApproved             TrustedDevice[]            @relation("TrustedDeviceApprovedBy")
   devicesBlocked              TrustedDevice[]            @relation("TrustedDeviceBlockedBy")
+  callLogs                    CallLog[]
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -1241,6 +1243,8 @@ model BusinessPartner {
   /// Reverse of `BoardsCatalogItem.purchaseSupplierId`/`assemblySupplierId` — part 3 of the supplier-linkage initiative.
   boardsCatalogItemsAsPurchaseSupplier BoardsCatalogItem[]       @relation("BoardsCatalogItemPurchaseSupplier")
   boardsCatalogItemsAsAssemblySupplier BoardsCatalogItem[]       @relation("BoardsCatalogItemAssemblySupplier")
+  /// Reverse of `CallLog.partnerId` — every call logged against this customer.
+  callLogs                             CallLog[]
 
   @@index([isDeleted])
   @@index([status])
@@ -1297,9 +1301,74 @@ model Lead {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// Reverse of `CallLog.leadId` — every call logged against this lead before it converted.
+  callLogs CallLog[]
+
   @@index([isDeleted])
   @@index([stage])
   @@index([branchId])
+}
+
+/// Owner (2026-09-09, "داشبورد Call Center... سجل مكالمة جديدة... العميل:
+/// بحث/اختيار... النوع: وارد/صادر... الغرض: استفسار/متابعة طلب/شكوى...
+/// النتيجة: تم الحل/محتاج متابعة") — Phase 4 (CRM والتواصل)'s first shipped
+/// piece: a call log, not a real telephony integration (no dialer/
+/// recording — purely a manual record of a call that already happened).
+/// The caller can be a real customer (`partnerId`), a not-yet-converted
+/// Lead (`leadId`), or a brand-new number the system has never seen before
+/// (`contactName`/`contactPhone` free text) — a real reception desk gets
+/// all three, and forcing the first call from an unknown number to become
+/// a Lead/Partner before it can even be logged would lose data. `purpose`
+/// is deliberately free text, not a fixed enum (rule 15 — no hardcoded
+/// business categories) — the composer UI offers common values as
+/// suggestions, never a hard constraint.
+model CallLog {
+  id String @id @default(uuid()) @db.Uuid
+
+  direction CallDirection
+  purpose   String
+  outcome   CallOutcome
+  notes     String?
+
+  partnerId String?          @db.Uuid
+  partner   BusinessPartner? @relation(fields: [partnerId], references: [id], onDelete: SetNull)
+  leadId    String?          @db.Uuid
+  lead      Lead?            @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  /// Only meaningful when neither `partnerId` nor `leadId` is set — a caller not yet in the system at all.
+  contactName  String?
+  contactPhone String?
+
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  staffId String       @db.Uuid
+  staff   StaffProfile @relation(fields: [staffId], references: [id])
+
+  /// Optional reminder date — same purely-informational field every other "متابعة" date in this app already is (no notification engine yet, CLAUDE.md §10).
+  followUpDate DateTime?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([partnerId])
+  @@index([leadId])
+  @@index([branchId])
+  @@index([createdAt])
+}
+
+enum CallDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum CallOutcome {
+  RESOLVED
+  NEEDS_FOLLOWUP
 }
 
 // ---------------------------------------------------------------------------

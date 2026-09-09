@@ -216,6 +216,20 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
+    // Owner (2026-09-09, "داشبورد Call Center... سجل مكالمة جديدة") —
+    // Phase 4 (CRM والتواصل)'s Call Center piece. Its own namespace, not
+    // folded into `partners`/`leads`, since a call can reference either
+    // (or neither, for a brand-new unknown caller).
+    module: 'call-logs',
+    moduleLabel: 'Call Center',
+    actions: [
+      { action: 'view', label: 'View call logs' },
+      { action: 'create', label: 'Log calls' },
+      { action: 'edit', label: 'Edit call logs' },
+      { action: 'delete', label: 'Delete call logs' },
+    ],
+  },
+  {
     // Owner (2026-08-23, "مرتجعات") — deliberately its own top-level
     // module, NOT nested under `orders.*` — same reasoning as `payments`
     // above: a return moves both stock and cash, so it needs a separate,

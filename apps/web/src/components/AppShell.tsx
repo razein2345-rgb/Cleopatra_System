@@ -21,6 +21,7 @@ import {
   Truck,
   FileBarChart,
   MessageCircle,
+  Phone,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -63,6 +64,9 @@ const NAV_ITEMS: NavEntry[] = [
       // need this daily, not just roles holding a specific module grant.
       { kind: 'link', to: '/communication-hub', label: 'مركز التواصل', icon: MessageCircle },
       { kind: 'link', to: '/leads', label: 'العملاء المحتملون', icon: UserPlus, permission: 'leads.view' },
+      // Owner (2026-09-09, "المرحلة الرابعة... أبدأ بداشبورد Call Center
+      // الأول") — Phase 4's first shipped piece.
+      { kind: 'link', to: '/call-center', label: 'مركز الاتصال', icon: Phone, permission: 'call-logs.view' },
       { kind: 'link', to: '/partners', label: 'العملاء', icon: Building2, permission: 'partners.view' },
       { kind: 'link', to: '/suppliers', label: 'الموردين', icon: Truck, permission: 'suppliers.view' },
       { kind: 'link', to: '/quotations', label: 'المستندات', icon: FileText, permission: 'quotations.view' },

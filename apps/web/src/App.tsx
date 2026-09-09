@@ -32,6 +32,7 @@ const RolesPage = lazy(() => import('@/pages/roles/RolesPage').then((m) => ({ de
 const PermissionsPage = lazy(() => import('@/pages/permissions/PermissionsPage').then((m) => ({ default: m.PermissionsPage })));
 const PartnersPage = lazy(() => import('@/pages/partners/PartnersPage').then((m) => ({ default: m.PartnersPage })));
 const LeadsPage = lazy(() => import('@/pages/leads/LeadsPage').then((m) => ({ default: m.LeadsPage })));
+const CallCenterPage = lazy(() => import('@/pages/call-center/CallCenterPage').then((m) => ({ default: m.CallCenterPage })));
 const CommunicationHubPage = lazy(() =>
   import('@/pages/communication-hub/CommunicationHubPage').then((m) => ({ default: m.CommunicationHubPage })),
 );
@@ -133,6 +134,10 @@ function App() {
 
               <Route element={<ProtectedRoute permission="leads.view" />}>
                 <Route path="/leads" element={<LeadsPage />} />
+              </Route>
+
+              <Route element={<ProtectedRoute permission="call-logs.view" />}>
+                <Route path="/call-center" element={<CallCenterPage />} />
               </Route>
 
               <Route element={<ProtectedRoute permission="suppliers.view" />}>
