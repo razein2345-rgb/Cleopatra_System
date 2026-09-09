@@ -159,8 +159,19 @@ export function EmployeePayrollReportPage() {
         </div>
       </div>
 
-      <div className="document-print-root bg-background text-foreground mx-auto max-w-4xl space-y-4 p-8 text-sm">
-        <header className="border-border flex items-start justify-between border-b pb-3">
+      {/* Owner (2026-09-09, "عايز تقرير الشهر يطلع كله في ورقه واحده A4...
+          بتنزل في صفحة كامله جديده") — `.document-print-root` itself
+          already gets 1.5cm print padding from index.css's shared print
+          stylesheet; stacking a Tailwind `p-8` directly on that same
+          element doubled it (screen padding + print padding both applying
+          in print), tipping a report that's otherwise one page long onto a
+          mostly-blank second page. Moving the screen padding to an inner
+          wrapper (with its own `print:p-0`) keeps the on-screen look
+          unchanged while letting print rely on the single shared padding
+          rule only. */}
+      <div className="document-print-root bg-background text-foreground mx-auto max-w-4xl text-sm">
+      <div className="space-y-3 p-8 print:p-0">
+        <header className="border-border flex items-start justify-between border-b pb-2">
           <div>
             <div className="text-lg font-bold">{business.businessNameAr}</div>
             <div className="text-lg font-bold">تقرير حضور ومرتب</div>
@@ -252,7 +263,7 @@ export function EmployeePayrollReportPage() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-8 pt-8 text-xs">
+        <div className="grid grid-cols-2 gap-8 pt-4 text-xs">
           <div>
             <div className="border-border border-t pt-1">توقيع الموظف</div>
           </div>
@@ -260,6 +271,7 @@ export function EmployeePayrollReportPage() {
             <div className="border-border border-t pt-1">توقيع المسؤول</div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
