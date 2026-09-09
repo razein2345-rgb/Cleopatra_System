@@ -25,6 +25,9 @@ const UsersPage = lazy(() => import('@/pages/users/UsersPage').then((m) => ({ de
 const EmployeeProfilePage = lazy(() =>
   import('@/pages/users/EmployeeProfilePage').then((m) => ({ default: m.EmployeeProfilePage })),
 );
+const EmployeePayrollReportPage = lazy(() =>
+  import('@/pages/users/EmployeePayrollReportPage').then((m) => ({ default: m.EmployeePayrollReportPage })),
+);
 const EmployeeAdvancesReportPage = lazy(() =>
   import('@/pages/users/EmployeeAdvancesReportPage').then((m) => ({ default: m.EmployeeAdvancesReportPage })),
 );
@@ -130,6 +133,7 @@ function App() {
                 <Route path="/users" element={<UsersPage />} />
                 <Route path="/users/advances-report" element={<EmployeeAdvancesReportPage />} />
                 <Route path="/users/:id" element={<EmployeeProfilePage />} />
+                <Route path="/users/:id/payroll-report" element={<EmployeePayrollReportPage />} />
               </Route>
 
               <Route element={<ProtectedRoute permission="partners.view" />}>

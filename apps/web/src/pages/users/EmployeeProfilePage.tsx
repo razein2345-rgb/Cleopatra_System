@@ -282,7 +282,14 @@ export function EmployeeProfilePage() {
       </div>
 
       <div className="border-border bg-card space-y-3 rounded-2xl border p-4">
-        <h2 className="font-semibold">حساب المرتب بالساعات — الفترة الحالية</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="font-semibold">حساب المرتب بالساعات — الفترة الحالية</h2>
+          {payroll && payroll.scheduledDaysInPeriod > 0 && (
+            <Link to={`/users/${id}/payroll-report`} className="text-primary text-xs hover:underline">
+              🖶 طباعة تقرير الحضور والمرتب
+            </Link>
+          )}
+        </div>
         {!payroll ? (
           <p className="text-muted-foreground text-sm">
             لازم تحدد دورة الصرف والراتب الأساسي ومواعيد الوردية وأيام العمل في "بيانات الوظيفة" فوق عشان يتحسب.
@@ -1082,11 +1089,16 @@ function PayrollPeriodRow({ period, onChanged }: { period: PayrollPeriod; onChan
         )}
       </td>
       <td className="p-2">
-        {canReopen && (
-          <Button variant="secondary" size="sm" onClick={() => setShowReopen(true)}>
-            إعادة فتح
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <Link to={`/users/${period.staffId}/payroll-report?periodId=${period.id}`} className="text-primary text-xs hover:underline">
+            🖶 طباعة
+          </Link>
+          {canReopen && (
+            <Button variant="secondary" size="sm" onClick={() => setShowReopen(true)}>
+              إعادة فتح
+            </Button>
+          )}
+        </div>
       </td>
       {showReopen && (
         <ReopenPayrollPeriodDialog
