@@ -77,9 +77,14 @@ function ReorderDueWidgetComponent() {
 
   return (
     <Card className="p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <RefreshCw className="text-muted-foreground size-4" />
-        <span className="text-sm font-bold">عملاء قرّب ميعاد إعادة الطلب المتوقع بتاعهم</span>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <RefreshCw className="text-muted-foreground size-4" />
+          <span className="text-sm font-bold">عملاء قرّب ميعاد إعادة الطلب المتوقع بتاعهم</span>
+        </div>
+        <Link to="/reorder-due" className="text-primary text-xs hover:underline">
+          القائمة كاملة
+        </Link>
       </div>
       {loading ? (
         <p className="text-muted-foreground text-sm">جارٍ التحميل…</p>
@@ -98,7 +103,13 @@ function ReorderDueWidgetComponent() {
               </span>
             </li>
           ))}
-          {rows.length > 6 && <li className="text-muted-foreground text-xs">و{rows.length - 6} عنصر تاني…</li>}
+          {rows.length > 6 && (
+            <li>
+              <Link to="/reorder-due" className="text-primary text-xs hover:underline">
+                و{rows.length - 6} عنصر تاني — شوف القائمة كاملة →
+              </Link>
+            </li>
+          )}
         </ul>
       )}
     </Card>

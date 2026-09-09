@@ -33,6 +33,7 @@ const PermissionsPage = lazy(() => import('@/pages/permissions/PermissionsPage')
 const PartnersPage = lazy(() => import('@/pages/partners/PartnersPage').then((m) => ({ default: m.PartnersPage })));
 const LeadsPage = lazy(() => import('@/pages/leads/LeadsPage').then((m) => ({ default: m.LeadsPage })));
 const CallCenterPage = lazy(() => import('@/pages/call-center/CallCenterPage').then((m) => ({ default: m.CallCenterPage })));
+const ReorderDuePage = lazy(() => import('@/pages/reorder/ReorderDuePage').then((m) => ({ default: m.ReorderDuePage })));
 const CommunicationHubPage = lazy(() =>
   import('@/pages/communication-hub/CommunicationHubPage').then((m) => ({ default: m.CommunicationHubPage })),
 );
@@ -138,6 +139,10 @@ function App() {
 
               <Route element={<ProtectedRoute permission="call-logs.view" />}>
                 <Route path="/call-center" element={<CallCenterPage />} />
+              </Route>
+
+              <Route element={<ProtectedRoute permission="orders.view" />}>
+                <Route path="/reorder-due" element={<ReorderDuePage />} />
               </Route>
 
               <Route element={<ProtectedRoute permission="suppliers.view" />}>

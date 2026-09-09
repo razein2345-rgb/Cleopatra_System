@@ -5,28 +5,16 @@ import { apiDelete, apiGet, apiPut } from '@/lib/api';
 import { whatsappLink } from '@/lib/whatsapp';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
-import { buildItemGroups, isOverdue, isSoon, resolveEffectiveDate, type ItemGroup } from '@/lib/reorderPrediction';
+import {
+  buildItemGroups,
+  buildReminderMessage,
+  isOverdue,
+  isSoon,
+  resolveEffectiveDate,
+  type ItemGroup,
+} from '@/lib/reorderPrediction';
 
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
-
-/**
- * Owner (2026-08-26, "رسالة جاهزة بالأصناف اللي قربت تخلص اول ما ادوس على
- * اللينك تتكتب للعميل وانا ابعتها") — a draft message pre-filled into the
- * wa.me compose box, listing only the items due-or-overdue (not every
- * item ever bought). The staff member still reviews and presses send
- * themselves; nothing here sends automatically.
- */
-function buildReminderMessage(partnerName: string | undefined, items: ItemGroup[]): string {
-  const lines = items.map((g) => `- ${g.label}`);
-  const greeting = partnerName ? `مرحبًا ${partnerName} 👋` : 'مرحبًا 👋';
-  return [
-    greeting,
-    'حبينا نفكرك إن الأصناف دي قربت تخلص عندك وممكن تحتاج تطلب تاني قريب:',
-    ...lines,
-    '',
-    'لو حابب تطلب، إحنا في الخدمة.',
-  ].join('\n');
-}
 
 interface EditDraft {
   dailyConsumptionRate: string;

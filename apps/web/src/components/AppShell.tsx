@@ -22,6 +22,7 @@ import {
   FileBarChart,
   MessageCircle,
   Phone,
+  Repeat,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -68,6 +69,10 @@ const NAV_ITEMS: NavEntry[] = [
       // الأول") — Phase 4's first shipped piece.
       { kind: 'link', to: '/call-center', label: 'مركز الاتصال', icon: Phone, permission: 'call-logs.view' },
       { kind: 'link', to: '/partners', label: 'العملاء', icon: Building2, permission: 'partners.view' },
+      // Owner (2026-09-09, "استكمال إعادة الطلب التلقائي") — the
+      // dashboard widget only shows the top 6 rows; this is the full
+      // cross-customer list ("و X عنصر تاني" made real).
+      { kind: 'link', to: '/reorder-due', label: 'متابعة إعادة الطلب', icon: Repeat, permission: 'orders.view' },
       { kind: 'link', to: '/suppliers', label: 'الموردين', icon: Truck, permission: 'suppliers.view' },
       { kind: 'link', to: '/quotations', label: 'المستندات', icon: FileText, permission: 'quotations.view' },
       { kind: 'link', to: '/inventory', label: 'المخزن', icon: Package, permission: 'inventory.view' },

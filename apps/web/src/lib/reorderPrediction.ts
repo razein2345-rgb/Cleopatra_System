@@ -136,3 +136,24 @@ export function isSoon(d: Date, now: number = Date.now()): boolean {
 export function isOverdue(d: Date, now: number = Date.now()): boolean {
   return d.getTime() < now;
 }
+
+/**
+ * Owner (2026-08-26, "رسالة جاهزة بالأصناف اللي قربت تخلص اول ما ادوس على
+ * اللينك تتكتب للعميل وانا ابعتها") — a draft message pre-filled into the
+ * wa.me compose box, listing only the items due-or-overdue (not every item
+ * ever bought). The staff member still reviews and presses send themselves;
+ * nothing here sends automatically. Moved here (2026-09-09) from
+ * `ReorderPredictionTab.tsx` so `ReorderDuePage.tsx`'s cross-customer list
+ * can build the exact same message without a second copy (rule 5).
+ */
+export function buildReminderMessage(partnerName: string | undefined, items: { label: string }[]): string {
+  const lines = items.map((g) => `- ${g.label}`);
+  const greeting = partnerName ? `مرحبًا ${partnerName} 👋` : 'مرحبًا 👋';
+  return [
+    greeting,
+    'حبينا نفكرك إن الأصناف دي قربت تخلص عندك وممكن تحتاج تطلب تاني قريب:',
+    ...lines,
+    '',
+    'لو حابب تطلب، إحنا في الخدمة.',
+  ].join('\n');
+}
