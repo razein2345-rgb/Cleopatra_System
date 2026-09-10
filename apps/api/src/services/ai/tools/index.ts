@@ -17,13 +17,15 @@ import { getDashboardSummaryTool } from './getDashboardSummary.js';
 import { getEmployeePayrollTool } from './getEmployeePayroll.js';
 import { searchQuotationsTool } from './searchQuotations.js';
 import { getQuotationTool } from './getQuotation.js';
+import { searchProductionByCustomerTool } from './searchProductionByCustomer.js';
 
 /**
  * READ-only tool registry — the Phase 1 catalog (CLEOPATRA_AI_TOOLS.md,
  * 16 tools) plus each Phase 2 read-tool task the owner has explicitly
  * approved one at a time (Task 1, 2026-09-10: `search_quotations`/
- * `get_quotation`). Zero WRITE tools. A tool is only ever appended here
- * after its own specific approval — never speculatively.
+ * `get_quotation`; Task 3, 2026-09-10: `search_production_by_customer`).
+ * Zero WRITE tools. A tool is only ever appended here after its own
+ * specific approval — never speculatively.
  */
 export const AI_TOOLS: AnyAiToolDefinition[] = [
   searchCustomersTool,
@@ -44,4 +46,5 @@ export const AI_TOOLS: AnyAiToolDefinition[] = [
   getEmployeePayrollTool,
   searchQuotationsTool,
   getQuotationTool,
+  searchProductionByCustomerTool,
 ] as unknown as AnyAiToolDefinition[];

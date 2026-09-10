@@ -5,9 +5,10 @@ import { AI_TOOLS } from './index.js';
  * A declarative lock on the AI tool registry's security model
  * (CLEOPATRA_AI_TOOLS.md / CLEOPATRA_AI_SECURITY.md §2) — the 16 Phase 1
  * tools plus each Phase 2 read-tool task approved so far (Task 1,
- * 2026-09-10: `search_quotations`/`get_quotation`), each with the exact
- * permission (or SUPER_ADMIN gate) the catalog specifies. A future edit
- * that accidentally widens or removes a permission check fails this test
+ * 2026-09-10: `search_quotations`/`get_quotation`; Task 3, 2026-09-10:
+ * `search_production_by_customer`), each with the exact permission (or
+ * SUPER_ADMIN gate) the catalog specifies. A future edit that
+ * accidentally widens or removes a permission check fails this test
  * immediately, without needing a live LLM call.
  */
 const EXPECTED = {
@@ -29,6 +30,7 @@ const EXPECTED = {
   get_employee_payroll: { requiredPermission: null, requiresSuperAdmin: true },
   search_quotations: { requiredPermission: 'quotations.view', requiresSuperAdmin: undefined },
   get_quotation: { requiredPermission: 'quotations.view', requiresSuperAdmin: undefined },
+  search_production_by_customer: { requiredPermission: 'work-orders.view', requiresSuperAdmin: undefined },
 } as const;
 
 describe('AI_TOOLS registry', () => {
