@@ -18,12 +18,15 @@ import { getEmployeePayrollTool } from './getEmployeePayroll.js';
 import { searchQuotationsTool } from './searchQuotations.js';
 import { getQuotationTool } from './getQuotation.js';
 import { searchProductionByCustomerTool } from './searchProductionByCustomer.js';
+import { searchSuppliersTool } from './searchSuppliers.js';
+import { getSupplierStatementTool } from './getSupplierStatement.js';
 
 /**
  * READ-only tool registry — the Phase 1 catalog (CLEOPATRA_AI_TOOLS.md,
  * 16 tools) plus each Phase 2 read-tool task the owner has explicitly
  * approved one at a time (Task 1, 2026-09-10: `search_quotations`/
- * `get_quotation`; Task 3, 2026-09-10: `search_production_by_customer`).
+ * `get_quotation`; Task 3, 2026-09-10: `search_production_by_customer`;
+ * Task 4, 2026-09-10: `search_suppliers`/`get_supplier_statement`).
  * Zero WRITE tools. A tool is only ever appended here after its own
  * specific approval — never speculatively.
  */
@@ -47,4 +50,6 @@ export const AI_TOOLS: AnyAiToolDefinition[] = [
   searchQuotationsTool,
   getQuotationTool,
   searchProductionByCustomerTool,
+  searchSuppliersTool,
+  getSupplierStatementTool,
 ] as unknown as AnyAiToolDefinition[];
