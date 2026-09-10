@@ -7,9 +7,10 @@ import { AI_TOOLS } from './index.js';
  * tools plus each Phase 2 read-tool task approved so far (Task 1,
  * 2026-09-10: `search_quotations`/`get_quotation`; Task 3, 2026-09-10:
  * `search_production_by_customer`; Task 4, 2026-09-10:
- * `search_suppliers`/`get_supplier_statement`), each with the exact
- * permission (or SUPER_ADMIN gate) the catalog specifies. A future edit
- * that accidentally widens or removes a permission check fails this test
+ * `search_suppliers`/`get_supplier_statement`; Task 5, 2026-09-10:
+ * `get_purchase_requests_due`), each with the exact permission (or
+ * SUPER_ADMIN gate) the catalog specifies. A future edit that
+ * accidentally widens or removes a permission check fails this test
  * immediately, without needing a live LLM call.
  */
 const EXPECTED = {
@@ -34,6 +35,7 @@ const EXPECTED = {
   search_production_by_customer: { requiredPermission: 'work-orders.view', requiresSuperAdmin: undefined },
   search_suppliers: { requiredPermission: 'suppliers.view', requiresSuperAdmin: undefined },
   get_supplier_statement: { requiredPermission: 'suppliers.view', requiresSuperAdmin: undefined },
+  get_purchase_requests_due: { requiredPermission: 'inventory.view', requiresSuperAdmin: undefined },
 } as const;
 
 describe('AI_TOOLS registry', () => {
