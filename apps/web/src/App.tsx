@@ -63,6 +63,7 @@ const QuotationDocumentPage = lazy(() =>
   import('@/pages/quotations/QuotationDocumentPage').then((m) => ({ default: m.QuotationDocumentPage })),
 );
 const NewOrderPage = lazy(() => import('@/pages/orders/NewOrderPage').then((m) => ({ default: m.NewOrderPage })));
+const PosPage = lazy(() => import('@/pages/pos/PosPage').then((m) => ({ default: m.PosPage })));
 const OrderDocumentPage = lazy(() =>
   import('@/pages/orders/OrderDocumentPage').then((m) => ({ default: m.OrderDocumentPage })),
 );
@@ -191,6 +192,13 @@ function App() {
                   either permission alone is enough to reach it. */}
               <Route element={<ProtectedRoute permission={['orders.create', 'quotations.create']} />}>
                 <Route path="/orders/new" element={<NewOrderPage />} />
+              </Route>
+
+              {/* POS / Cashier (2026-09-11) — fast barcode-first sale screen,
+                  same `orders.create` gate as `/orders/new` since checkout
+                  reuses the exact same `POST /api/orders` endpoint. */}
+              <Route element={<ProtectedRoute permission="orders.create" />}>
+                <Route path="/pos" element={<PosPage />} />
               </Route>
 
               {/* FEATURE-006 M9 — Invoice document (print). */}

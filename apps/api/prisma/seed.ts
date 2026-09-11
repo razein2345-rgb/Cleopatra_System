@@ -86,7 +86,11 @@ const DEFAULT_ROLE_PERMISSIONS: Record<(typeof DEFAULT_ROLES)[number]['name'], s
   // `edit`/`delete`/`inventory.*`: a cashier can see stock and record new
   // movements (restocking, POS sales), but correcting or removing an
   // already-recorded one stays owner-only unless explicitly granted.
-  CASHIER: ['treasury.*', 'orders.view', 'partners.view', 'inventory.view', 'inventory.create'],
+  // `orders.create` added (POS module, 2026-09-11, owner-approved) — the
+  // Cashier/POS screen checks out a sale via the existing `POST /api/orders`
+  // (createOrder), so the role needs the same permission `/orders/new`
+  // already requires; nothing else in this role's grant changed.
+  CASHIER: ['treasury.*', 'orders.view', 'orders.create', 'partners.view', 'inventory.view', 'inventory.create'],
   PRODUCTION_MANAGER: ['work-orders.*', 'machines.*', 'orders.view'],
   DESIGNER: ['work-orders.view', 'work-orders.edit', 'orders.view'],
   PRINTING_OPERATOR: ['work-orders.view', 'work-orders.edit', 'machines.view'],

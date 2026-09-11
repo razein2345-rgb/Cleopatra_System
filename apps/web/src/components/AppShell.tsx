@@ -26,6 +26,7 @@ import {
   CalendarDays,
   Megaphone,
   Sparkles,
+  ShoppingCart,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -50,6 +51,11 @@ const NAV_ITEMS: NavEntry[] = [
   // approval, "usable by كل الموظفين المسجلين دخول") — open to everyone,
   // no `permission`, same open-nav pattern as `/communication-hub` above.
   { kind: 'link', to: '/ai-assistant', label: 'مساعد Cleopatra الذكي', icon: Sparkles },
+  // POS / Cashier (2026-09-11) — same `orders.create` gate as `/orders/new`
+  // (its own route, top-level like the AI assistant above, since a cashier
+  // needs to reach it in the fewest clicks — CLAUDE.md §6's "أقل عدد
+  // ضغطات ممكن للوصول لأي Job" applies just as much to a sale).
+  { kind: 'link', to: '/pos', label: 'الكاشير', icon: ShoppingCart, permission: 'orders.create' },
   {
     kind: 'group',
     label: 'الإنتاج',
