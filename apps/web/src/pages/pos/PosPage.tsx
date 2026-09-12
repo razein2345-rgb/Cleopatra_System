@@ -26,17 +26,30 @@ import { PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 
 /**
  * POS / Cashier (2026-09-11, owner-approved plan) — a fast, barcode-first
- * sale screen built entirely on top of existing architecture:
- * - Checkout reuses `POST /api/orders` (createOrder) as-is, unchanged.
+ * sale screen built entirely on top of existing architecture. Two
+ * genuinely different checkout paths (owner, 2026-09-12: "البيع المباشر
+ * ده يعني متعملش فاتورة وبيع على طول واخصم من البضاعه وسجل في الخزينة...
+ * ولما ادوس إصدار فاتورة يبقى اعمل فاتورة"):
+ * - "بيع مباشر" reuses `quickSaleFromInventory`
+ *   (`POST /api/inventory-items/:id/quick-sale`, one call per cart line —
+ *   the exact pattern NewOrderPage.tsx's own QuickSaleDialog already uses
+ *   for this endpoint) — deducts stock and records treasury income
+ *   directly, with NO Order/invoice at all. This only understands plain
+ *   stock items; a Service/ReadyProduct/Boards line has no invoice-less
+ *   path anywhere in the system (its WorkOrder, when one applies, only
+ *   ever comes from a real OrderItem), so "بيع مباشر" is disabled whenever
+ *   the cart holds one of those — that line must go through "إصدار
+ *   فاتورة" instead.
+ * - "إصدار فاتورة" reuses `POST /api/orders` (createOrder) as-is,
+ *   unchanged — a real Order/invoice, any item kind, requires a real
+ *   customer (never a walk-in).
  * - Catalog reuses the existing `/api/ready-products`, `/api/services`,
  *   `/api/boards-catalog-items`, `/api/inventory-items` endpoints.
  * - Barcode reuses the existing `/api/inventory-items/by-barcode/:barcode`.
  * - Price override reuses the existing `unitPriceOverride` pricing field
- *   (packages/shared/src/schemas/orderItemPricing.ts) — no new Backend logic.
- * - Walk-in customer is the one genuinely new piece: `POST /api/pos/walk-in-partner`
- *   (see apps/api/src/services/posService.ts), used only when a "بيع مباشر"
- *   sale needs a partner (Service/Product/Boards lines) and no real customer
- *   was chosen — `assertPartnerPresentUnlessWalkIn` itself is untouched.
+ *   (packages/shared/src/schemas/orderItemPricing.ts) for the invoice path,
+ *   and `quickInventorySaleSchema`'s own `unitPrice`/`discountPercent` for
+ *   the quick-sale path — no new Backend logic either way.
  */
 
 type CatalogKind = 'INVENTORY' | 'PRODUCT' | 'SERVICE' | 'BOARDS';
@@ -171,8 +184,11 @@ export function PosPage() {
   const [payments, setPayments] = useState<{ method: PaymentMethod; amount: string }[]>([{ method: 'CASH', amount: '' }]);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<'DIRECT' | 'INVOICE' | null>(null);
+  // "إصدار فاتورة" only now — a real Order/invoice.
   const [successOrder, setSuccessOrder] = useState<Order | null>(null);
-  const [successOrderType, setSuccessOrderType] = useState<'DIRECT' | 'INVOICE' | null>(null);
+  // "بيع مباشر" only — no Order/invoice exists for this path at all, just
+  // the sum actually collected across the quick-sale calls that succeeded.
+  const [quickSaleSuccess, setQuickSaleSuccess] = useState<{ totalAmount: number; itemCount: number } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -276,6 +292,10 @@ export function PosPage() {
 
   const cartTotal = useMemo(() => cart.reduce((sum, l) => sum + lineTotal(l), 0), [cart]);
   const paymentsTotal = useMemo(() => payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0), [payments]);
+  // Owner (2026-09-12) — "بيع مباشر" only ever reuses `quickSaleFromInventory`
+  // now, which only understands plain stock items; any Service/ReadyProduct/
+  // Boards line has no invoice-less path anywhere in the system.
+  const cartHasNonInventoryItem = cart.some((l) => l.kind !== 'INVENTORY');
 
   const filteredReadyProducts = useMemo(() => readyProducts.filter((p) => p.name.includes(search)), [readyProducts, search]);
   const filteredServices = useMemo(() => services.filter((s) => s.name.includes(search)), [services, search]);
@@ -446,88 +466,143 @@ export function PosPage() {
     barcodeRef.current?.focus();
   }
 
-  // `paymentsOverride` lets a caller supply a just-computed payments array
-  // (e.g. an auto-filled full-cash amount) and use it in the same call —
-  // reading back from the `payments` state right after `setPayments()`
-  // would still see the old value, since React state updates aren't
-  // synchronous.
-  async function handleCheckout(type: 'DIRECT' | 'INVOICE', paymentsOverride?: { method: PaymentMethod; amount: string }[]) {
-    const effectivePayments = paymentsOverride ?? payments;
+  /**
+   * "إصدار فاتورة" — a real Order/invoice via the existing `createOrder`,
+   * unchanged. Always requires a real customer (never the walk-in) —
+   * `WALK_IN_ALLOWED_KINDS`/`assertPartnerPresentUnlessWalkIn` in
+   * orderService.ts stay untouched.
+   */
+  async function handleIssueInvoice() {
     setCheckoutError(null);
     if (cart.length === 0) {
       setCheckoutError('السلة فارغة — أضف صنفًا واحدًا على الأقل قبل إتمام البيع.');
       return;
     }
-    if (type === 'INVOICE' && !partnerId) {
+    if (!partnerId) {
       setCheckoutError('اختر عميلاً لإصدار الفاتورة باسمه.');
       return;
     }
-    const validPayments = effectivePayments.filter((p) => (Number(p.amount) || 0) > 0).map((p) => ({ method: p.method, amount: Number(p.amount) }));
-    if (type === 'DIRECT' && validPayments.length === 0) {
-      setCheckoutError('أدخل مبلغ التحصيل قبل إتمام البيع المباشر.');
-      return;
-    }
+    const validPayments = payments.filter((p) => (Number(p.amount) || 0) > 0).map((p) => ({ method: p.method, amount: Number(p.amount) }));
 
-    setSubmitting(type);
+    setSubmitting('INVOICE');
     try {
-      let effectivePartnerId: string | null = partnerId || null;
-      // Owner decision (2026-09-11): `WALK_IN_ALLOWED_KINDS`/
-      // `assertPartnerPresentUnlessWalkIn` in orderService.ts stay untouched
-      // — a cart made only of INVENTORY_RETAIL lines already qualifies for
-      // a null partner today, exactly like `/orders/new`. The shared
-      // "عميل نقدي" is only fetched when the cart actually needs a partner
-      // (a Service/Product/Boards line present) and none was chosen.
-      const needsPartner = cart.some((l) => l.kind !== 'INVENTORY');
-      if (type === 'DIRECT' && !effectivePartnerId && needsPartner) {
-        const walkIn = await apiPost<BusinessPartner>('/api/pos/walk-in-partner', { branchId });
-        effectivePartnerId = walkIn.id;
-      }
-
       const payload: CreateOrderInput = {
-        partnerId: effectivePartnerId,
+        partnerId,
         branchId,
         items: buildOrderItems(),
         ...(validPayments.length > 0 ? { payments: validPayments } : {}),
       };
       const order = await apiPost<Order>('/api/orders', payload);
       setSuccessOrder(order);
-      setSuccessOrderType(type);
       setCart([]);
       setPartnerId('');
       setPayments([{ method: 'CASH', amount: '' }]);
     } catch (err) {
-      setCheckoutError(err instanceof Error ? err.message : 'تعذر إتمام البيع، حاول مرة أخرى.');
+      setCheckoutError(err instanceof Error ? err.message : 'تعذر إصدار الفاتورة، حاول مرة أخرى.');
     } finally {
       setSubmitting(null);
     }
   }
 
   /**
-   * Owner (2026-09-12, "بعد ما حددت الأصناف ودوست إنتر يبقى تم البيع") —
-   * the "just press Enter" shortcut: if the cashier already typed an
-   * amount, use it exactly as-is (same as clicking "بيع مباشر" normally);
-   * otherwise default to a single full-CASH payment for the cart's own
-   * total, so selecting items and pressing Enter alone completes an
-   * ordinary cash sale without an extra step.
+   * Owner (2026-09-12, "البيع المباشر ده يعني متعملش فاتورة وبيع على طول
+   * واخصم من البضاعه وسجل في الخزينة") — reuses the existing
+   * `quickSaleFromInventory` (`POST /api/inventory-items/:id/quick-sale`),
+   * one call per cart line — the same client-side loop
+   * NewOrderPage.tsx's own QuickSaleDialog already uses for this exact
+   * endpoint, not a new batching mechanism. No Order/invoice, no partner
+   * of any kind (walk-in or real) — that concept doesn't exist for this
+   * endpoint at all. Each line's own sale price/discount overrides map
+   * directly onto the endpoint's `unitPrice`/`discountPercent`.
+   *
+   * Each call is its own independent atomic transaction (stock movement +
+   * treasury entry paired) — not one all-or-nothing batch across the whole
+   * cart. A line that fails stays in the cart for the cashier to retry or
+   * remove; lines that already succeeded are not rolled back (same
+   * limitation the existing QuickSaleDialog already has for this endpoint).
    */
-  function handleQuickCashCheckout() {
-    const hasAnyAmount = payments.some((p) => (Number(p.amount) || 0) > 0);
-    if (hasAnyAmount) {
-      void handleCheckout('DIRECT');
+  async function handleQuickInventorySale() {
+    setCheckoutError(null);
+    if (cart.length === 0) {
+      setCheckoutError('السلة فارغة — أضف صنفًا واحدًا على الأقل قبل إتمام البيع.');
       return;
     }
-    const defaulted = [{ method: 'CASH' as PaymentMethod, amount: String(cartTotal) }];
-    setPayments(defaulted);
-    void handleCheckout('DIRECT', defaulted);
+    if (cartHasNonInventoryItem) {
+      setCheckoutError('في السلة صنف يحتاج فاتورة (خدمة / منتج جاهز / لوحة) — استخدم "إصدار فاتورة" له.');
+      return;
+    }
+    const method = payments[0]?.method ?? 'CASH';
+
+    setSubmitting('DIRECT');
+    const remaining: CartLine[] = [];
+    let totalAmount = 0;
+    let successCount = 0;
+    let firstError: string | null = null;
+    for (const line of cart) {
+      const override = line.salePrice !== line.defaultUnitPrice ? line.salePrice : undefined;
+      try {
+        const result = await apiPost<{ item: InventoryItem; treasuryEntry: { amount: number } }>(
+          `/api/inventory-items/${line.catalogId}/quick-sale`,
+          {
+            quantity: line.quantity,
+            method,
+            ...(override !== undefined ? { unitPrice: override } : {}),
+            ...(line.discountPercent > 0 ? { discountPercent: line.discountPercent } : {}),
+          },
+        );
+        totalAmount += result.treasuryEntry.amount;
+        successCount++;
+      } catch (err) {
+        remaining.push(line);
+        firstError ??= err instanceof Error ? err.message : 'تعذر بيع أحد الأصناف.';
+      }
+    }
+    setCart(remaining);
+    setSubmitting(null);
+
+    if (successCount > 0) {
+      setQuickSaleSuccess({ totalAmount, itemCount: successCount });
+      setPayments([{ method: 'CASH', amount: '' }]);
+    }
+    if (remaining.length > 0) {
+      setCheckoutError(
+        successCount > 0
+          ? `${firstError} — باقي ${remaining.length} صنف في السلة لم يُباع، حاول مرة أخرى.`
+          : (firstError ?? 'تعذر إتمام البيع.'),
+      );
+    }
   }
 
-  if (successOrder) {
+  // "بيع مباشر" — no Order/invoice exists for this path at all.
+  if (quickSaleSuccess) {
     return (
       <div className="flex min-h-[70vh] items-center justify-center p-6">
         <Card className="w-full max-w-md text-center">
           <CardContent className="space-y-4 pt-6">
             <div className="text-5xl">✅</div>
             <h2 className="text-xl font-bold">تم البيع بنجاح</h2>
+            <p className="text-muted-foreground text-sm">{quickSaleSuccess.itemCount} صنف</p>
+            <p className="text-muted-foreground text-sm">الإجمالي المحصّل</p>
+            <p className="text-lg font-semibold" dir="ltr">
+              {money(quickSaleSuccess.totalAmount)} ج.م
+            </p>
+            <Button className="w-full" onClick={() => setQuickSaleSuccess(null)}>
+              بيع جديد
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  // "إصدار فاتورة" — a real Order/invoice.
+  if (successOrder) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center p-6">
+        <Card className="w-full max-w-md text-center">
+          <CardContent className="space-y-4 pt-6">
+            <div className="text-5xl">✅</div>
+            <h2 className="text-xl font-bold">تم إصدار الفاتورة بنجاح</h2>
             <p className="text-muted-foreground text-sm">رقم الفاتورة</p>
             <p className="text-2xl font-bold" dir="ltr">
               {successOrder.invoiceNumber}
@@ -537,16 +612,12 @@ export function PosPage() {
               {money(successOrder.finalTotal)} ج.م
             </p>
             {/* Owner (2026-09-12, "لو عملت فاتورة يبقى عايز اطبعا اكيد") —
-                only for "إصدار فاتورة" (a real customer document); "بيع
-                مباشر" stays receipt-less per the original POS scope. Same
-                printable invoice view/print button `/orders/new`'s own
+                same printable invoice view/print button `/orders/new`'s own
                 success screen already navigates to — zero new print logic. */}
-            {successOrderType === 'INVOICE' && (
-              <Button className="w-full" variant="secondary" onClick={() => navigate(`/orders/${successOrder.id}`)}>
-                🖶 طباعة الفاتورة
-              </Button>
-            )}
-            <Button className="w-full" onClick={() => { setSuccessOrder(null); setSuccessOrderType(null); }}>
+            <Button className="w-full" variant="secondary" onClick={() => navigate(`/orders/${successOrder.id}`)}>
+              🖶 طباعة الفاتورة
+            </Button>
+            <Button className="w-full" onClick={() => setSuccessOrder(null)}>
               بيع جديد
             </Button>
           </CardContent>
@@ -598,14 +669,13 @@ export function PosPage() {
                 value={p.amount}
                 onChange={(e) => setPayments((prev) => prev.map((x, xi) => (xi === i ? { ...x, amount: e.target.value } : x)))}
                 // Owner (2026-09-12, "لو دوست Enter بعد تسجيل الأصناف
-                // يبقى تم البيع") — once the cashier finishes scanning/
-                // adding items and types the amount received, Enter here
-                // completes the same "بيع مباشر" the button does; no new
-                // checkout path, just another trigger for the existing one.
+                // يبقى تم البيع") — Enter here completes the same "بيع
+                // مباشر" the button does; no new checkout path, just
+                // another trigger for the existing one.
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    void handleCheckout('DIRECT');
+                    void handleQuickInventorySale();
                   }
                 }}
                 placeholder="0.00"
@@ -629,10 +699,20 @@ export function PosPage() {
       {checkoutError && <p className="text-destructive text-sm font-medium">{checkoutError}</p>}
 
       <div className="grid grid-cols-1 gap-2">
-        <Button size="lg" disabled={submitting !== null} onClick={() => void handleCheckout('DIRECT')}>
+        <Button size="lg" disabled={submitting !== null || cartHasNonInventoryItem} onClick={() => void handleQuickInventorySale()}>
           {submitting === 'DIRECT' ? 'جارٍ البيع…' : 'بيع مباشر'}
         </Button>
-        <Button size="lg" variant="outline" disabled={submitting !== null} onClick={() => void handleCheckout('INVOICE')}>
+        {/* Owner (2026-09-12) — "بيع مباشر" only ever reuses
+            quickSaleFromInventory now (no invoice, stock deduction +
+            treasury entry only); it has no path at all for a Service/
+            ReadyProduct/Boards line, so the button is disabled outright
+            with a clear reason instead of silently doing the wrong thing. */}
+        {cartHasNonInventoryItem && (
+          <p className="text-muted-foreground text-xs">
+            🔒 في السلة صنف يحتاج فاتورة (خدمة / منتج جاهز / لوحة) — استخدم "إصدار فاتورة".
+          </p>
+        )}
+        <Button size="lg" variant="outline" disabled={submitting !== null} onClick={() => void handleIssueInvoice()}>
           {submitting === 'INVOICE' ? 'جارٍ إصدار الفاتورة…' : 'إصدار فاتورة'}
         </Button>
         {cart.length > 0 && (
@@ -664,7 +744,7 @@ export function PosPage() {
                     // Enter here means "no barcode pending, finish the
                     // sale" rather than "submit an empty barcode".
                     if (!barcodeValue.trim() && cart.length > 0) {
-                      handleQuickCashCheckout();
+                      void handleQuickInventorySale();
                     } else {
                       void handleBarcodeSubmit();
                     }
