@@ -233,6 +233,15 @@ export function PosPage() {
         { ...entry, key: `${entry.kind}:${entry.catalogId}:${Date.now()}`, quantity: qty, salePrice: entry.defaultUnitPrice, discountPercent: 0 },
       ];
     });
+    // Owner (2026-09-12, "بعد ما حددت الأصناف ودوست إنتر معملش بيع مباشر")
+    // — root cause: clicking a catalog card/search result moves keyboard
+    // focus onto that button (native browser behavior), so a follow-up
+    // Enter just re-activates that same button (re-adding the item) instead
+    // of reaching any checkout logic at all. Returning focus to the
+    // barcode field after every add — the same field the scanner already
+    // types into — makes "select items → press Enter" land on the field
+    // below, whose own handler now completes the sale when it's empty.
+    barcodeRef.current?.focus();
   }
 
   function updateLine(key: string, patch: Partial<CartLine>) {
@@ -437,7 +446,13 @@ export function PosPage() {
     barcodeRef.current?.focus();
   }
 
-  async function handleCheckout(type: 'DIRECT' | 'INVOICE') {
+  // `paymentsOverride` lets a caller supply a just-computed payments array
+  // (e.g. an auto-filled full-cash amount) and use it in the same call —
+  // reading back from the `payments` state right after `setPayments()`
+  // would still see the old value, since React state updates aren't
+  // synchronous.
+  async function handleCheckout(type: 'DIRECT' | 'INVOICE', paymentsOverride?: { method: PaymentMethod; amount: string }[]) {
+    const effectivePayments = paymentsOverride ?? payments;
     setCheckoutError(null);
     if (cart.length === 0) {
       setCheckoutError('السلة فارغة — أضف صنفًا واحدًا على الأقل قبل إتمام البيع.');
@@ -447,7 +462,7 @@ export function PosPage() {
       setCheckoutError('اختر عميلاً لإصدار الفاتورة باسمه.');
       return;
     }
-    const validPayments = payments.filter((p) => (Number(p.amount) || 0) > 0).map((p) => ({ method: p.method, amount: Number(p.amount) }));
+    const validPayments = effectivePayments.filter((p) => (Number(p.amount) || 0) > 0).map((p) => ({ method: p.method, amount: Number(p.amount) }));
     if (type === 'DIRECT' && validPayments.length === 0) {
       setCheckoutError('أدخل مبلغ التحصيل قبل إتمام البيع المباشر.');
       return;
@@ -485,6 +500,25 @@ export function PosPage() {
     } finally {
       setSubmitting(null);
     }
+  }
+
+  /**
+   * Owner (2026-09-12, "بعد ما حددت الأصناف ودوست إنتر يبقى تم البيع") —
+   * the "just press Enter" shortcut: if the cashier already typed an
+   * amount, use it exactly as-is (same as clicking "بيع مباشر" normally);
+   * otherwise default to a single full-CASH payment for the cart's own
+   * total, so selecting items and pressing Enter alone completes an
+   * ordinary cash sale without an extra step.
+   */
+  function handleQuickCashCheckout() {
+    const hasAnyAmount = payments.some((p) => (Number(p.amount) || 0) > 0);
+    if (hasAnyAmount) {
+      void handleCheckout('DIRECT');
+      return;
+    }
+    const defaulted = [{ method: 'CASH' as PaymentMethod, amount: String(cartTotal) }];
+    setPayments(defaulted);
+    void handleCheckout('DIRECT', defaulted);
   }
 
   if (successOrder) {
@@ -624,7 +658,16 @@ export function PosPage() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    void handleBarcodeSubmit();
+                    // Owner (2026-09-12, "بعد ما حددت الأصناف ودوست إنتر
+                    // معملش بيع مباشر") — every add-to-cart path refocuses
+                    // this field (see addOrIncrement), so an empty field +
+                    // Enter here means "no barcode pending, finish the
+                    // sale" rather than "submit an empty barcode".
+                    if (!barcodeValue.trim() && cart.length > 0) {
+                      handleQuickCashCheckout();
+                    } else {
+                      void handleBarcodeSubmit();
+                    }
                   }
                 }}
                 placeholder="امسح الباركود أو اكتبه واضغط Enter"
