@@ -15,7 +15,13 @@ export async function postAiChat(req: Request, res: Response) {
   const input = aiChatRequestSchema.parse(req.body);
 
   try {
-    const result = await runAiChat(req.auth!, input.messages);
+    // `input.context` already passed `aiChatRequestSchema.parse()` above —
+    // shape-valid (enum/UUID/length), but still untrusted client input: it
+    // is only ever rendered as plain text (aiAgentService.ts's
+    // `injectContextNote`), never plumbed into a tool call directly, so it
+    // cannot bypass `dispatchTool`'s own permission check on whatever the
+    // model actually calls.
+    const result = await runAiChat(req.auth!, input.messages, input.context);
     res.json({ success: true, data: result });
   } catch (err) {
     if (err instanceof OllamaProviderError) {

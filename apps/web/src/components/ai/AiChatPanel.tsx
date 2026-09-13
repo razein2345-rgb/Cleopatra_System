@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Sparkles, Send, Wrench } from 'lucide-react';
-import type { AiChatTurn } from '@cleopatra/shared';
+import type { AiChatTurn, AiConversationContext } from '@cleopatra/shared';
 import { sendAiChatMessage } from '@/lib/ai/aiClient';
 import { Button } from '@/components/ui/button';
 
@@ -25,6 +25,12 @@ export function AiChatPanel() {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  // Task 8 — Structured Conversation Context V1. Component state only, same
+  // as `entries` — no persistence, resent on every request, replaced
+  // wholesale with whatever the backend returns (the backend is the sole
+  // source of truth for what the current context is; this component never
+  // merges or invents one of its own).
+  const [context, setContext] = useState<AiConversationContext | undefined>(undefined);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -43,7 +49,8 @@ export function AiChatPanel() {
 
     try {
       const turns: AiChatTurn[] = nextEntries.slice(-MAX_HISTORY_TURNS).map((e) => ({ role: e.role, text: e.text }));
-      const result = await sendAiChatMessage({ messages: turns });
+      const result = await sendAiChatMessage({ messages: turns, context });
+      setContext(result.context);
       setEntries((prev) => [...prev, { role: 'assistant', text: result.reply, toolsUsed: result.toolsUsed }]);
     } catch (err) {
       // `err.message` is always one of our own safe Arabic strings
