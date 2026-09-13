@@ -74,7 +74,9 @@ export function TreasuryCategoriesManagement() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-border text-muted-foreground border-b text-xs *:text-start">
+              <th className="p-2">الأيقونة</th>
               <th className="p-2">الاسم</th>
+              <th className="p-2">تسعير بالكمية</th>
               <th className="p-2">الحالة</th>
               {canSeeTotals && <th className="p-2">إجمالي / هذا الشهر</th>}
               <th className="p-2"></th>
@@ -85,6 +87,16 @@ export function TreasuryCategoriesManagement() {
               const total = totals.find((t) => t.category === category.name);
               return (
                 <tr key={category.id} className="border-border border-b last:border-0">
+                  <td className="p-2">
+                    {canManage ? (
+                      <EditableTextCell
+                        value={category.icon ?? ''}
+                        onSave={(next) => updateCategoryField(category, { icon: next.trim() ? next.trim() : null })}
+                      />
+                    ) : (
+                      <span className="text-lg">{category.icon ?? '—'}</span>
+                    )}
+                  </td>
                   <td className="p-2 font-medium">
                     {canManage ? (
                       <EditableTextCell
@@ -93,6 +105,16 @@ export function TreasuryCategoriesManagement() {
                       />
                     ) : (
                       category.name
+                    )}
+                  </td>
+                  <td className="p-2">
+                    {canManage ? (
+                      <EditableCheckboxCell
+                        value={category.calculateByQuantity}
+                        onSave={(next) => updateCategoryField(category, { calculateByQuantity: next })}
+                      />
+                    ) : (
+                      <span className="text-muted-foreground">{category.calculateByQuantity ? 'نعم' : 'لا'}</span>
                     )}
                   </td>
                   <td className="p-2">
@@ -135,7 +157,7 @@ export function TreasuryCategoriesManagement() {
             })}
             {categories.length === 0 && (
               <tr>
-                <td className="text-muted-foreground p-2" colSpan={canSeeTotals ? 4 : 3}>
+                <td className="text-muted-foreground p-2" colSpan={canSeeTotals ? 6 : 5}>
                   لا توجد تصنيفات بعد.
                 </td>
               </tr>
@@ -149,6 +171,8 @@ export function TreasuryCategoriesManagement() {
 
 function CategoryForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => void }) {
   const [name, setName] = useState('');
+  const [icon, setIcon] = useState('');
+  const [calculateByQuantity, setCalculateByQuantity] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -158,7 +182,7 @@ function CategoryForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: ()
     setError(null);
     setSubmitting(true);
     try {
-      const input: CreateTreasuryCategoryInput = { name };
+      const input: CreateTreasuryCategoryInput = { name, calculateByQuantity, ...(icon.trim() ? { icon: icon.trim() } : {}) };
       await apiPost('/api/treasury-categories', input);
       onSaved();
     } catch (err) {
@@ -171,15 +195,38 @@ function CategoryForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: ()
   return (
     <form onSubmit={submit} className="border-border bg-card space-y-3 rounded-xl border p-3">
       {error && <div className="text-destructive text-sm">{error}</div>}
-      <label className="space-y-1 text-sm">
-        <span className="text-muted-foreground">الاسم</span>
+      <div className="flex flex-wrap gap-3">
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">الأيقونة (إيموجي)</span>
+          <input
+            value={icon}
+            onChange={(e) => setIcon(e.target.value)}
+            placeholder="🖨️"
+            maxLength={8}
+            className="border-input bg-background w-20 rounded-md border px-3 py-2 text-center text-lg"
+          />
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground">الاسم</span>
+          <input
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="مثال: إيجار، مرتبات، كهرباء"
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm sm:w-64"
+          />
+        </label>
+      </div>
+      <label className="flex items-center gap-2 text-sm">
         <input
-          required
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="مثال: إيجار، مرتبات، كهرباء"
-          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm sm:w-64"
+          type="checkbox"
+          checked={calculateByQuantity}
+          onChange={(e) => setCalculateByQuantity(e.target.checked)}
+          className="size-4"
         />
+        <span>
+          تسعير بالكمية (سعر الوحدة × العدد) — لو مفعّل، هيظهر في كتالوج الكاشير خانتين (سعر الوحدة + العدد) بدل سعر واحد
+        </span>
       </label>
       <div className="flex gap-2">
         <Button type="submit" disabled={submitting}>

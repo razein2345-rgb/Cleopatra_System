@@ -3,6 +3,10 @@ import { z } from 'zod';
 export const treasuryCategorySchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1),
+  /** A single emoji, admin-entered — see the Prisma model's own doc comment. Optional. */
+  icon: z.string().max(8).nullable(),
+  /** Owner (2026-09-13, POS "كتالوج التصنيفات") — explicit per-category choice, not a name match. When true, the picker asks for a per-unit price + a count instead of one flat price. */
+  calculateByQuantity: z.boolean(),
   isActive: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -10,11 +14,15 @@ export const treasuryCategorySchema = z.object({
 
 export const createTreasuryCategorySchema = z.object({
   name: z.string().min(1),
+  icon: z.string().max(8).optional(),
+  calculateByQuantity: z.boolean().optional(),
   isActive: z.boolean().optional(),
 });
 
 export const updateTreasuryCategorySchema = z.object({
   name: z.string().min(1).optional(),
+  icon: z.string().max(8).nullable().optional(),
+  calculateByQuantity: z.boolean().optional(),
   isActive: z.boolean().optional(),
 });
 

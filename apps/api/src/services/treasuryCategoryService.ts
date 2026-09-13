@@ -8,6 +8,8 @@ export function mapTreasuryCategoryToDto(category: TreasuryCategoryRecord): Trea
   return {
     id: category.id,
     name: category.name,
+    icon: category.icon,
+    calculateByQuantity: category.calculateByQuantity,
     isActive: category.isActive,
     createdAt: category.createdAt.toISOString(),
     updatedAt: category.updatedAt.toISOString(),

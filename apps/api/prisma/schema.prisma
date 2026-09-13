@@ -3176,6 +3176,20 @@ model CommunicationHubLink {
 model TreasuryCategory {
   id       String  @id @default(uuid()) @db.Uuid
   name     String  @unique
+  /// Owner (2026-09-13, POS "كتالوج التصنيفات") — a single emoji entered by
+  /// the admin, purely visual (no icon library/lookup) — matches the plain
+  /// text-field convention already used elsewhere in this project for
+  /// user-facing emoji icons. Optional: a category with no icon just falls
+  /// back to a generic one wherever it's rendered.
+  icon     String?
+  /// Owner (2026-09-13) — explicit admin choice per category, NOT a name
+  /// match on "طباعة"/"تصوير" (rejected as too fragile — breaks silently if
+  /// the category is renamed). When true, POS's category catalog asks for
+  /// a per-unit price + a count (e.g. "سعر الورقة" × "عدد الورق") instead of
+  /// one flat price, and the two multiply into the line's quantity/unitPrice
+  /// pair — same `MANUAL` pricing shape either way, just how the cashier is
+  /// prompted for the numbers.
+  calculateByQuantity Boolean @default(false)
   isActive Boolean @default(true)
 
   isDeleted Boolean   @default(false)

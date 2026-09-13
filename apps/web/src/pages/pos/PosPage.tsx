@@ -7,6 +7,7 @@ import type {
   BusinessPartner,
   CreateOrderInput,
   CreateOrderItemInput,
+  CreateTreasuryEntryInput,
   InventoryItem,
   Order,
   OrderTemplate,
@@ -14,6 +15,8 @@ import type {
   ProductionTrack,
   ReadyProduct,
   Service,
+  TreasuryCategory,
+  TreasuryEntry,
 } from '@cleopatra/shared';
 import { resolveProductionTrackForTab } from '@cleopatra/shared';
 import { apiGet, apiPost } from '@/lib/api';
@@ -33,13 +36,14 @@ import { PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
  * - "بيع مباشر" reuses `quickSaleFromInventory`
  *   (`POST /api/inventory-items/:id/quick-sale`, one call per cart line —
  *   the exact pattern NewOrderPage.tsx's own QuickSaleDialog already uses
- *   for this endpoint) — deducts stock and records treasury income
- *   directly, with NO Order/invoice at all. This only understands plain
- *   stock items; a Service/ReadyProduct/Boards line has no invoice-less
- *   path anywhere in the system (its WorkOrder, when one applies, only
- *   ever comes from a real OrderItem), so "بيع مباشر" is disabled whenever
- *   the cart holds one of those — that line must go through "إصدار
- *   فاتورة" instead.
+ *   for this endpoint) for INVENTORY lines, and (2026-09-13, "عايزه يشتغل
+ *   مع بيع مباشر كمان") posts directly to `POST /api/treasury-entries` for
+ *   CATEGORY lines (an ad-hoc treasury-category-priced charge with no
+ *   catalog/stock at all) — either way NO Order/invoice. A Service/
+ *   ReadyProduct/Boards line still has no invoice-less path anywhere in the
+ *   system (its WorkOrder, when one applies, only ever comes from a real
+ *   OrderItem), so "بيع مباشر" is disabled whenever the cart holds one of
+ *   those — that line must go through "إصدار فاتورة" instead.
  * - "إصدار فاتورة" reuses `POST /api/orders` (createOrder) as-is,
  *   unchanged — a real Order/invoice, any item kind, requires a real
  *   customer (never a walk-in).
@@ -52,13 +56,17 @@ import { PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
  *   the quick-sale path — no new Backend logic either way.
  */
 
-type CatalogKind = 'INVENTORY' | 'PRODUCT' | 'SERVICE' | 'BOARDS';
+type CatalogKind = 'INVENTORY' | 'PRODUCT' | 'SERVICE' | 'BOARDS' | 'CATEGORY';
 
 type CartLine = {
   key: string;
   kind: CatalogKind;
   catalogId: string;
   name: string;
+  // Only ever set for CATEGORY lines — the TreasuryCategory's own admin-set
+  // emoji (Task "كتالوج التصنيفات", 2026-09-13). Falls back to
+  // `CATALOG_ICON[kind]` wherever an icon is rendered.
+  icon?: string;
   defaultUnitPrice: number;
   salePrice: number;
   quantity: number;
@@ -72,6 +80,7 @@ const CATALOG_ICON: Record<CatalogKind, string> = {
   PRODUCT: '🛍️',
   SERVICE: '🛠️',
   BOARDS: '🪧',
+  CATEGORY: '🏷️',
 };
 
 const CATALOG_LABEL: Record<CatalogKind, string> = {
@@ -79,6 +88,7 @@ const CATALOG_LABEL: Record<CatalogKind, string> = {
   PRODUCT: 'منتجات جاهزة',
   SERVICE: 'خدمات',
   BOARDS: 'لوحات وإعلانات',
+  CATEGORY: 'تصنيف خزينة',
 };
 
 function money(n: number): string {
@@ -101,7 +111,7 @@ function supportsPriceOverride(kind: CatalogKind): boolean {
   return kind !== 'BOARDS';
 }
 
-type CollapsibleSection = 'PRODUCT' | 'SERVICE' | 'TEMPLATES';
+type CollapsibleSection = 'PRODUCT' | 'SERVICE' | 'TEMPLATES' | 'CATEGORY';
 
 const SECTION_VISIBILITY_STORAGE_KEY = 'pos.sectionVisibility';
 
@@ -113,7 +123,7 @@ const SECTION_VISIBILITY_STORAGE_KEY = 'pos.sectionVisibility';
  * server — purely a display preference, defaults to all three open.
  */
 function loadSectionVisibility(): Record<CollapsibleSection, boolean> {
-  const defaults: Record<CollapsibleSection, boolean> = { PRODUCT: true, SERVICE: true, TEMPLATES: true };
+  const defaults: Record<CollapsibleSection, boolean> = { PRODUCT: true, SERVICE: true, TEMPLATES: true, CATEGORY: true };
   try {
     const raw = localStorage.getItem(SECTION_VISIBILITY_STORAGE_KEY);
     if (!raw) return defaults;
@@ -161,6 +171,7 @@ export function PosPage() {
   const [readyProducts, setReadyProducts] = useState<ReadyProduct[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [boardsCatalogItems, setBoardsCatalogItems] = useState<BoardsCatalogItem[]>([]);
+  const [treasuryCategories, setTreasuryCategories] = useState<TreasuryCategory[]>([]);
   const [partners, setPartners] = useState<BusinessPartner[]>([]);
   const [templates, setTemplates] = useState<OrderTemplate[]>([]);
   const [loadingCatalog, setLoadingCatalog] = useState(true);
@@ -201,6 +212,7 @@ export function PosPage() {
           Promise<BoardsCatalogItem[]>,
           Promise<BusinessPartner[]>,
           Promise<OrderTemplate[]>,
+          Promise<TreasuryCategory[]>,
         ] = [
           apiGet<InventoryItem[]>('/api/inventory-items'),
           apiGet<ReadyProduct[]>('/api/ready-products'),
@@ -212,8 +224,12 @@ export function PosPage() {
           // `/orders/new`'s "تحميل من قالب" picker already uses; POS just
           // renders it as another pick-to-add source (see applyTemplate).
           apiGet<OrderTemplate[]>('/api/order-templates'),
+          // Owner (2026-09-13, "كتالوج التصنيفات") — same list Settings'
+          // TreasuryCategoriesManagement.tsx and Treasury's own manual-entry
+          // picker already read from `GET /api/treasury-categories`.
+          apiGet<TreasuryCategory[]>('/api/treasury-categories'),
         ];
-        const [inv, rp, sv, bc, pt, tpl] = await Promise.all(requests);
+        const [inv, rp, sv, bc, pt, tpl, tcat] = await Promise.all(requests);
         if (!active) return;
         setInventoryItems(inv);
         setReadyProducts(rp);
@@ -221,6 +237,7 @@ export function PosPage() {
         setBoardsCatalogItems(bc);
         setPartners(pt);
         setTemplates(tpl);
+        setTreasuryCategories(tcat.filter((c) => c.isActive));
         if (multiBranch) setBranches(await apiGet<BranchSummary[]>('/api/branches'));
       } catch (err) {
         if (active) setLoadError(err instanceof Error ? err.message : 'تعذر تحميل الكتالوج');
@@ -292,10 +309,12 @@ export function PosPage() {
 
   const cartTotal = useMemo(() => cart.reduce((sum, l) => sum + lineTotal(l), 0), [cart]);
   const paymentsTotal = useMemo(() => payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0), [payments]);
-  // Owner (2026-09-12) — "بيع مباشر" only ever reuses `quickSaleFromInventory`
-  // now, which only understands plain stock items; any Service/ReadyProduct/
-  // Boards line has no invoice-less path anywhere in the system.
-  const cartHasNonInventoryItem = cart.some((l) => l.kind !== 'INVENTORY');
+  // Owner (2026-09-12) — "بيع مباشر" reuses `quickSaleFromInventory` for
+  // stock items; any Service/ReadyProduct/Boards line has no invoice-less
+  // path anywhere in the system. Owner (2026-09-13) explicitly extended
+  // "بيع مباشر" to CATEGORY lines too (see `handleDirectSale`) — those post
+  // a plain treasury income entry directly, no stock/catalog involved.
+  const cartHasInvoiceOnlyItem = cart.some((l) => l.kind !== 'INVENTORY' && l.kind !== 'CATEGORY');
 
   const filteredReadyProducts = useMemo(() => readyProducts.filter((p) => p.name.includes(search)), [readyProducts, search]);
   const filteredServices = useMemo(() => services.filter((s) => s.name.includes(search)), [services, search]);
@@ -338,6 +357,33 @@ export function PosPage() {
   }
   function addBoardsItemToCart(b: BoardsCatalogItem) {
     addOrIncrement({ kind: 'BOARDS', catalogId: b.id, name: b.name, defaultUnitPrice: b.price, productionTrack: resolveProductionTrackForTab('BOARDS_SIGNAGE') });
+  }
+
+  /**
+   * Owner (2026-09-13, "كتالوج فيه طباعة تصوير وباقي التصنيفات... أكتب فيها
+   * السعر دايركت") — a category has no catalog price at all, so unlike
+   * every other `add*ToCart` here this always creates a brand-new line
+   * (never merges into an existing one via `addOrIncrement`) — two "طباعة"
+   * entries typed at different per-sheet prices must stay two separate
+   * lines, not silently combine into one with the wrong price.
+   */
+  function addCategoryToCart(category: TreasuryCategory, unitPrice: number, quantity: number) {
+    setCart((prev) => [
+      ...prev,
+      {
+        key: `CATEGORY:${category.id}:${Date.now()}`,
+        kind: 'CATEGORY',
+        catalogId: category.id,
+        name: category.name,
+        icon: category.icon ?? undefined,
+        defaultUnitPrice: unitPrice,
+        salePrice: unitPrice,
+        quantity,
+        discountPercent: 0,
+        productionTrack: null,
+      },
+    ]);
+    barcodeRef.current?.focus();
   }
 
   /**
@@ -448,6 +494,20 @@ export function PosPage() {
           discountPercent,
         };
       }
+      if (line.kind === 'CATEGORY') {
+        // Same `MANUAL` pricing shape NewOrderPage.tsx's own "بند يدوي"
+        // composer already uses for a treasury-category-labeled line — no
+        // separate default/override concept, `salePrice` is the direct
+        // price the cashier typed (per-unit for a calculateByQuantity
+        // category, flat otherwise).
+        return {
+          itemType: line.name,
+          description: line.name,
+          pricing: { kind: 'MANUAL', unitPrice: line.salePrice, quantity: line.quantity },
+          productionTrack: null,
+          discountPercent,
+        };
+      }
       return {
         itemType: line.name,
         boardsCatalogItemId: line.catalogId,
@@ -507,27 +567,31 @@ export function PosPage() {
   /**
    * Owner (2026-09-12, "البيع المباشر ده يعني متعملش فاتورة وبيع على طول
    * واخصم من البضاعه وسجل في الخزينة") — reuses the existing
-   * `quickSaleFromInventory` (`POST /api/inventory-items/:id/quick-sale`),
-   * one call per cart line — the same client-side loop
+   * `quickSaleFromInventory` (`POST /api/inventory-items/:id/quick-sale`)
+   * for INVENTORY lines, one call per line — the same client-side loop
    * NewOrderPage.tsx's own QuickSaleDialog already uses for this exact
-   * endpoint, not a new batching mechanism. No Order/invoice, no partner
-   * of any kind (walk-in or real) — that concept doesn't exist for this
-   * endpoint at all. Each line's own sale price/discount overrides map
-   * directly onto the endpoint's `unitPrice`/`discountPercent`.
+   * endpoint, not a new batching mechanism.
    *
-   * Each call is its own independent atomic transaction (stock movement +
-   * treasury entry paired) — not one all-or-nothing batch across the whole
-   * cart. A line that fails stays in the cart for the cashier to retry or
-   * remove; lines that already succeeded are not rolled back (same
-   * limitation the existing QuickSaleDialog already has for this endpoint).
+   * Owner (2026-09-13) explicitly extended this to CATEGORY lines too
+   * ("عايزه يشتغل مع بيع مباشر كمان") — those have no stock/catalog at all,
+   * so instead of quick-sale they post directly to `POST /api/treasury-
+   * entries` (the exact endpoint Treasury's own manual-entry form uses),
+   * tagged with the category name — a plain income entry, no Order.
+   *
+   * Either way: no Order/invoice, no partner of any kind (walk-in or real).
+   * Each call is its own independent atomic transaction — not one
+   * all-or-nothing batch across the whole cart. A line that fails stays in
+   * the cart for the cashier to retry or remove; lines that already
+   * succeeded are not rolled back (same limitation the existing
+   * QuickSaleDialog already has for the inventory endpoint).
    */
-  async function handleQuickInventorySale() {
+  async function handleDirectSale() {
     setCheckoutError(null);
     if (cart.length === 0) {
       setCheckoutError('السلة فارغة — أضف صنفًا واحدًا على الأقل قبل إتمام البيع.');
       return;
     }
-    if (cartHasNonInventoryItem) {
+    if (cartHasInvoiceOnlyItem) {
       setCheckoutError('في السلة صنف يحتاج فاتورة (خدمة / منتج جاهز / لوحة) — استخدم "إصدار فاتورة" له.');
       return;
     }
@@ -539,18 +603,31 @@ export function PosPage() {
     let successCount = 0;
     let firstError: string | null = null;
     for (const line of cart) {
-      const override = line.salePrice !== line.defaultUnitPrice ? line.salePrice : undefined;
       try {
-        const result = await apiPost<{ item: InventoryItem; treasuryEntry: { amount: number } }>(
-          `/api/inventory-items/${line.catalogId}/quick-sale`,
-          {
-            quantity: line.quantity,
+        if (line.kind === 'CATEGORY') {
+          const entryInput: CreateTreasuryEntryInput = {
+            type: 'INCOME',
+            amount: lineTotal(line),
             method,
-            ...(override !== undefined ? { unitPrice: override } : {}),
-            ...(line.discountPercent > 0 ? { discountPercent: line.discountPercent } : {}),
-          },
-        );
-        totalAmount += result.treasuryEntry.amount;
+            category: line.name,
+            date: new Date().toISOString(),
+            branchId,
+          };
+          const entry = await apiPost<TreasuryEntry>('/api/treasury-entries', entryInput);
+          totalAmount += entry.amount;
+        } else {
+          const override = line.salePrice !== line.defaultUnitPrice ? line.salePrice : undefined;
+          const result = await apiPost<{ item: InventoryItem; treasuryEntry: { amount: number } }>(
+            `/api/inventory-items/${line.catalogId}/quick-sale`,
+            {
+              quantity: line.quantity,
+              method,
+              ...(override !== undefined ? { unitPrice: override } : {}),
+              ...(line.discountPercent > 0 ? { discountPercent: line.discountPercent } : {}),
+            },
+          );
+          totalAmount += result.treasuryEntry.amount;
+        }
         successCount++;
       } catch (err) {
         remaining.push(line);
@@ -675,7 +752,7 @@ export function PosPage() {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    void handleQuickInventorySale();
+                    void handleDirectSale();
                   }
                 }}
                 placeholder="0.00"
@@ -699,15 +776,15 @@ export function PosPage() {
       {checkoutError && <p className="text-destructive text-sm font-medium">{checkoutError}</p>}
 
       <div className="grid grid-cols-1 gap-2">
-        <Button size="lg" disabled={submitting !== null || cartHasNonInventoryItem} onClick={() => void handleQuickInventorySale()}>
+        <Button size="lg" disabled={submitting !== null || cartHasInvoiceOnlyItem} onClick={() => void handleDirectSale()}>
           {submitting === 'DIRECT' ? 'جارٍ البيع…' : 'بيع مباشر'}
         </Button>
-        {/* Owner (2026-09-12) — "بيع مباشر" only ever reuses
-            quickSaleFromInventory now (no invoice, stock deduction +
-            treasury entry only); it has no path at all for a Service/
-            ReadyProduct/Boards line, so the button is disabled outright
-            with a clear reason instead of silently doing the wrong thing. */}
-        {cartHasNonInventoryItem && (
+        {/* Owner (2026-09-12/13) — "بيع مباشر" only ever supports INVENTORY
+            (stock deduction + treasury entry) and CATEGORY (plain treasury
+            entry) lines; it has no path at all for a Service/ReadyProduct/
+            Boards line, so the button is disabled outright with a clear
+            reason instead of silently doing the wrong thing. */}
+        {cartHasInvoiceOnlyItem && (
           <p className="text-muted-foreground text-xs">
             🔒 في السلة صنف يحتاج فاتورة (خدمة / منتج جاهز / لوحة) — استخدم "إصدار فاتورة".
           </p>
@@ -744,7 +821,7 @@ export function PosPage() {
                     // Enter here means "no barcode pending, finish the
                     // sale" rather than "submit an empty barcode".
                     if (!barcodeValue.trim() && cart.length > 0) {
-                      void handleQuickInventorySale();
+                      void handleDirectSale();
                     } else {
                       void handleBarcodeSubmit();
                     }
@@ -871,6 +948,12 @@ export function PosPage() {
           </Card>
         )}
 
+        <TreasuryCategoryCatalog
+          categories={treasuryCategories}
+          onAdd={addCategoryToCart}
+          visible={sectionVisibility.CATEGORY}
+          onToggleVisible={() => toggleSection('CATEGORY')}
+        />
         <CatalogSection
           icon={CATALOG_ICON.PRODUCT}
           label={CATALOG_LABEL.PRODUCT}
@@ -982,6 +1065,150 @@ function CatalogSection<T extends { id: string; name: string }>({
   );
 }
 
+/**
+ * Owner (2026-09-13, "عايز كتالوج فيه طباعة تصوير وباقي التصنيفات... بدوس
+ * عليها بتظهرلي خانة اكتب فيها السعر دايركت — ولو طباعة او تصوير بكتب فيها
+ * سعر الورقه وعدد الورق وبيطلعلي هو الإجمالي") — unlike `CatalogSection`,
+ * a category has no catalog price to add instantly: clicking one expands
+ * an inline price form right there in the grid instead. Which fields it
+ * asks for is driven purely by the category's own `calculateByQuantity`
+ * flag (an explicit admin choice in Settings, never a name match — a
+ * category named "طباعة" that isn't flagged behaves like any flat-price
+ * one, and vice versa).
+ */
+function TreasuryCategoryCatalog({
+  categories,
+  onAdd,
+  visible,
+  onToggleVisible,
+}: {
+  categories: TreasuryCategory[];
+  onAdd: (category: TreasuryCategory, unitPrice: number, quantity: number) => void;
+  visible: boolean;
+  onToggleVisible: () => void;
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [priceInput, setPriceInput] = useState('');
+  const [countInput, setCountInput] = useState('1');
+
+  if (categories.length === 0) return null;
+
+  function openCategory(category: TreasuryCategory) {
+    setOpenId(category.id);
+    setPriceInput('');
+    setCountInput('1');
+  }
+
+  function confirm(category: TreasuryCategory) {
+    const price = Number(priceInput) || 0;
+    if (price <= 0) return;
+    const quantity = category.calculateByQuantity ? Math.max(1, Number(countInput) || 1) : 1;
+    onAdd(category, price, quantity);
+    setOpenId(null);
+  }
+
+  return (
+    <Card>
+      <CardContent className="pt-6">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="font-bold">🏷️ تصنيفات الخزينة</h3>
+          <EyeToggleButton visible={visible} onToggle={onToggleVisible} />
+        </div>
+        {visible && (
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+            {categories.map((category) => {
+              const isOpen = openId === category.id;
+              return (
+                <div key={category.id} className={isOpen ? 'col-span-2 sm:col-span-3 md:col-span-4' : ''}>
+                  {isOpen ? (
+                    <div className="space-y-2 rounded-lg border p-3">
+                      <p className="text-sm font-medium">
+                        {category.icon ?? '🏷️'} {category.name}
+                      </p>
+                      {category.calculateByQuantity ? (
+                        <div className="flex gap-2">
+                          <label className="flex-1 space-y-1 text-xs">
+                            <span className="text-muted-foreground">سعر الوحدة</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              autoFocus
+                              value={priceInput}
+                              onChange={(e) => setPriceInput(e.target.value)}
+                              className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+                              dir="ltr"
+                            />
+                          </label>
+                          <label className="flex-1 space-y-1 text-xs">
+                            <span className="text-muted-foreground">العدد</span>
+                            <input
+                              type="number"
+                              min={1}
+                              step="1"
+                              value={countInput}
+                              onChange={(e) => setCountInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  confirm(category);
+                                }
+                              }}
+                              className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+                              dir="ltr"
+                            />
+                          </label>
+                        </div>
+                      ) : (
+                        <label className="block space-y-1 text-xs">
+                          <span className="text-muted-foreground">السعر</span>
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            autoFocus
+                            value={priceInput}
+                            onChange={(e) => setPriceInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                confirm(category);
+                              }
+                            }}
+                            className="border-input bg-background w-full rounded-md border px-2 py-1.5 text-sm"
+                            dir="ltr"
+                          />
+                        </label>
+                      )}
+                      <div className="flex gap-2">
+                        <Button type="button" size="sm" onClick={() => confirm(category)}>
+                          إضافة للسلة
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => setOpenId(null)}>
+                          إلغاء
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => openCategory(category)}
+                      className="hover:bg-accent flex w-full flex-col items-center gap-1 rounded-lg border p-3 text-center transition-colors"
+                    >
+                      <span className="text-2xl">{category.icon ?? '🏷️'}</span>
+                      <span className="line-clamp-2 text-sm font-medium">{category.name}</span>
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function CartLineRow({ line, onChange, onRemove }: { line: CartLine; onChange: (patch: Partial<CartLine>) => void; onRemove: () => void }) {
   const overPriced = line.availableQty !== undefined && line.quantity > line.availableQty;
   return (
@@ -989,7 +1216,7 @@ function CartLineRow({ line, onChange, onRemove }: { line: CartLine; onChange: (
       <div className="flex items-start justify-between gap-2">
         <div>
           <p className="text-sm font-medium">
-            {CATALOG_ICON[line.kind]} {line.name}
+            {line.icon ?? CATALOG_ICON[line.kind]} {line.name}
           </p>
           <Badge variant="outline" className="mt-1">
             {CATALOG_LABEL[line.kind]}
