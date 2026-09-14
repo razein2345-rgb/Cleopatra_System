@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { hasPermission } from '@cleopatra/shared';
 import type { AiChatTurn, AiConversationContext, AiEntityType } from '@cleopatra/shared';
 import type { AuthenticatedUser } from './authContext.js';
@@ -8,6 +9,8 @@ import { AI_TOOLS } from './ai/tools/index.js';
 import type { AnyAiToolDefinition } from './ai/toolTypes.js';
 import { extractConversationContext } from './ai/conversationContext.js';
 import { selectToolsForRequest } from './ai/toolRouting.js';
+import { isExplicitCorrection } from './ai/correctionDetection.js';
+import { READ_GUARD_ENTITY_TOOLS } from './ai/readGuardMetadata.js';
 
 /**
  * Cleopatra AI — orchestrator (CLEOPATRA_AI_IMPLEMENTATION_PLAN.md Phase 1).
@@ -119,6 +122,35 @@ function toolCallKey(name: string, input: unknown): string {
 }
 
 /**
+ * Task 12 — Guard A/B shared helpers. Neither guard below ever calls a
+ * tool's `execute()` directly — both only ever route through `dispatchTool`
+ * itself, so permission/SUPER_ADMIN/schema checks stay exactly as
+ * authoritative as they are for any other call (see `dispatchTool`'s own
+ * doc comment). The guards only decide whether/how a call reaches that
+ * function, never whether it is authorized once it does.
+ */
+const UUID_SCHEMA = z.string().uuid();
+
+/** Same check every get_* detail tool's own Zod schema already performs — reused here as a pre-check, not a replacement for it. */
+function looksLikeUuid(value: unknown): boolean {
+  return typeof value === 'string' && UUID_SCHEMA.safeParse(value).success;
+}
+
+/** Flat-object scan (this codebase's tool inputs are never nested — see `toolCallKey`'s own doc comment) for an exact match on one specific value, regardless of which field name holds it. */
+function callInputContainsValue(input: unknown, value: string): boolean {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
+  return Object.values(input as Record<string, unknown>).some((v) => v === value);
+}
+
+function buildStaleContextRejection(staleEntityId: string): string {
+  return `الـ ID اللي في سياق المحادثة السابق (${staleEntityId}) بقى غير صالح للاستخدام دلوقتي — المستخدم صحّح اسم الكيان صراحةً في آخر رسالة. متستخدمش هذا الـID تاني في أي استدعاء. ابحث عن الكيان الجديد اللي ذكره المستخدم بأداة search_* المناسبة أولًا، واستخرج الـUUID الصحيح من نتيجتها قبل استخدام أي أداة تفاصيل.`;
+}
+
+function buildSearchSubstitutionNote(originalToolName: string, searchToolName: string): string {
+  return `الـ ID اللي اتبعت لأداة ${originalToolName} مش UUID صالح (يبدو إنه اسم أو رقم مرجعي بشري، مش المعرف الداخلي الحقيقي) — تم رفض تنفيذها. بدل كده تم البحث تلقائيًا بأداة ${searchToolName} بنفس القيمة كنص بحث. نتيجة البحث:`;
+}
+
+/**
  * The single permission-enforcement point for every tool call
  * (CLEOPATRA_AI_SECURITY.md §2) — runs before `execute()`, always. Never
  * trusts the model's own claims about what it's allowed to do.
@@ -176,6 +208,11 @@ export async function runAiChat(
   // few lines down; matching keywords against that note's own words (e.g.
   // "الكيان: عميل") would defeat the topic-change rule on every follow-up.
   const latestUserMessage = turns[turns.length - 1]?.text ?? '';
+  // Task 12 — Guard B signal. Computed once per request (the correction, if
+  // any, is in the current turn's own raw text, which doesn't change across
+  // this request's tool-call iterations) — only meaningful when there is an
+  // existing context to correct away from.
+  const correctionDetectedThisTurn = Boolean(incomingContext) && isExplicitCorrection(latestUserMessage);
   const selectedTools = selectToolsForRequest(AI_TOOLS, auth, latestUserMessage, incomingContext);
   const tools = toLlmToolDefinitions(selectedTools);
   const toolsByName = new Map(AI_TOOLS.map((t) => [t.name, t]));
@@ -214,6 +251,24 @@ export async function runAiChat(
             extractedContext: null as AiConversationContext | null,
           };
         }
+
+        // Task 12 — Guard B: stale context after explicit correction.
+        // Checked before anything else for this call (before the duplicate-
+        // call cache, before dispatchTool) — this specific call must never
+        // reach execute() carrying the entity the user just disowned. Only
+        // intercepts a call whose input actually carries the OLD entityId
+        // value; any other tool call in the same turn (even to the same
+        // tool, with a different id) is completely unaffected.
+        if (correctionDetectedThisTurn && incomingContext && callInputContainsValue(call.input, incomingContext.entityId)) {
+          return {
+            type: 'tool_result' as const,
+            toolCallId: call.id,
+            content: buildStaleContextRejection(incomingContext.entityId),
+            isError: true,
+            extractedContext: null as AiConversationContext | null,
+          };
+        }
+
         toolsUsed.add(tool.name);
 
         const key = toolCallKey(call.name, call.input);
@@ -238,6 +293,38 @@ export async function runAiChat(
             isError: cached.isError,
             extractedContext: null as AiConversationContext | null,
           };
+        }
+
+        // Task 12 — Guard A: invalid get_*/detail reference with an
+        // explicitly registered paired search tool (`READ_GUARD_ENTITY_TOOLS`
+        // — never inferred from the tool's name). A valid UUID always skips
+        // this branch untouched; a tool with no entry here always skips
+        // this branch untouched (today's exact existing behavior). Never
+        // calls `execute()` directly — the substituted call goes through
+        // the exact same `dispatchTool()` as any other call, so that
+        // search tool's own SUPER_ADMIN/permission/schema checks remain
+        // fully active.
+        const guardEntry = READ_GUARD_ENTITY_TOOLS[tool.name];
+        if (guardEntry) {
+          const rawIdValue = (call.input as Record<string, unknown> | null | undefined)?.[guardEntry.idField];
+          if (!looksLikeUuid(rawIdValue)) {
+            const searchTool = toolsByName.get(guardEntry.pairedSearchTool);
+            if (searchTool) {
+              const searchInput = { query: typeof rawIdValue === 'string' ? rawIdValue : '' };
+              const searchDispatched = await dispatchTool(searchTool, searchInput, auth);
+              toolsUsed.add(searchTool.name);
+              const extractedContext = searchDispatched.isError
+                ? null
+                : extractConversationContext(searchTool.name, searchDispatched.content);
+              return {
+                type: 'tool_result' as const,
+                toolCallId: call.id,
+                content: `${buildSearchSubstitutionNote(tool.name, searchTool.name)}\n${searchDispatched.content}`,
+                isError: searchDispatched.isError,
+                extractedContext,
+              };
+            }
+          }
         }
 
         const dispatched = await dispatchTool(tool, call.input, auth);
