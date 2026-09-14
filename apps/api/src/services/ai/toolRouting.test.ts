@@ -207,6 +207,95 @@ describe('selectToolsForRequest — permission pre-filter (Step 20)', () => {
   });
 });
 
+/**
+ * Task 14.2 — dedicated system-help intent lane. Uses its own local tools
+ * array (`TOOLS_WITH_HELP`), never mutating the shared `ALL_TOOLS` used by
+ * every test above — `search_help_topics` didn't exist when those tests
+ * were written, and several of them (the fallback/permission-pre-filter
+ * ones) hardcode exact expected arrays/lengths derived from `ALL_TOOLS`'s
+ * own contents; adding a tool to that shared constant would silently
+ * change what several unrelated, already-passing tests are asserting.
+ */
+describe('selectToolsForRequest — Task 14.2 system-help intent routing', () => {
+  const HELP_TOOL = fakeTool('search_help_topics', null);
+  const TOOLS_WITH_HELP = [...ALL_TOOLS, HELP_TOOL];
+
+  it('1. "إزاي" help phrasing routes exclusively to search_help_topics, not the treasury data tool', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'إزاي أعمل إغلاق اليومية؟'));
+    expect(result).toEqual(['search_help_topics']);
+    expect(result).not.toContain('get_treasury_summary');
+  });
+
+  it('2. "ازاي" (bare-alef spelling variant) is also recognized as help intent', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'ازاي اعمل اغلاق اليومية؟'));
+    expect(result).toEqual(['search_help_topics']);
+  });
+
+  it('3. "بيمشي إزاي؟" workflow question routes to help, not get_production_status/get_work_order', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'أمر الشغل بيمشي إزاي؟'));
+    expect(result).toEqual(['search_help_topics']);
+    expect(result).not.toContain('get_production_status');
+    expect(result).not.toContain('get_work_order');
+  });
+
+  it('4. "فين أقدر أشوف الخزينة؟" navigation question routes to help, not treasury, despite "الخزينة" matching the TREASURY keyword rule', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'فين أقدر أشوف الخزينة؟'));
+    expect(result).toEqual(['search_help_topics']);
+    expect(result).not.toContain('get_treasury_summary');
+  });
+
+  it('5. "يعني إيه أمر شغل؟" conceptual question routes to help, not work-order data tools', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'يعني إيه أمر شغل؟'));
+    expect(result).toEqual(['search_help_topics']);
+    expect(result).not.toContain('get_work_order');
+  });
+
+  it('6. a plain treasury data question still routes to the business data tool, unaffected by the help lane', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'رصيد الخزينة كام؟'));
+    expect(result).toEqual(['get_treasury_summary']);
+    expect(result).not.toContain('search_help_topics');
+  });
+
+  it('7. a plain work-order data question still routes to production/work-order business tools, unaffected', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'هاتلي تفاصيل أمر الشغل رقم ١٢٣'));
+    expect(result).toEqual(expect.arrayContaining(['get_work_order', 'search_production_by_customer', 'get_production_status']));
+    expect(result).not.toContain('search_help_topics');
+  });
+
+  it('8. an ambiguous query (no help signal, no domain keyword) preserves the existing full-fallback behavior', () => {
+    const result = selectToolsForRequest(TOOLS_WITH_HELP, auth({ roleNames: ['SUPER_ADMIN'] }), 'ساعدني');
+    expect(result).toHaveLength(TOOLS_WITH_HELP.length);
+  });
+
+  it('9. help routing still goes through the permission pre-filter — search_help_topics is offered because it genuinely requires no permission, not because the guard was skipped', () => {
+    const restricted = auth({ permissions: [] });
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, restricted, 'إزاي أعمل إغلاق اليومية؟'));
+    expect(result).toEqual(['search_help_topics']);
+  });
+
+  it('10. search_help_topics is the tool selected for a help-intent query', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'إزاي أستخدم النظام؟'));
+    expect(result).toContain('search_help_topics');
+  });
+
+  it('a business-domain word alone (no help phrasing) never triggers the help lane', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'رصيد الخزينة كام؟'));
+    expect(result).not.toContain('search_help_topics');
+  });
+
+  it('defensive: if search_help_topics is absent from the registry, a help-phrased message falls back to normal routing instead of narrowing to nothing', () => {
+    // SUPER_ADMIN so all 23 tools (including the requiresSuperAdmin one)
+    // are genuinely allowed — isolates this fallback behavior from the
+    // separate permission-pre-filter concern, same convention as the
+    // pre-existing "ambiguous / fallback" tests above.
+    const result = selectToolsForRequest(ALL_TOOLS, auth({ roleNames: ['SUPER_ADMIN'] }), 'إزاي أعمل إغلاق اليومية؟');
+    // "إغلاق اليومية" matches no existing KEYWORD_RULES entry either, so
+    // this exercises the full fallback path, same as any other message
+    // with zero domain signal.
+    expect(result).toHaveLength(ALL_TOOLS.length);
+  });
+});
+
 describe('isToolAllowedFor', () => {
   it('mirrors dispatchTool: requiredPermission gate', () => {
     const tool = fakeTool('search_customers', 'partners.view');

@@ -34,7 +34,8 @@ export type ToolDomain =
   | 'LEADS'
   | 'PRICING'
   | 'DASHBOARD'
-  | 'CALL_LOGS';
+  | 'CALL_LOGS'
+  | 'HELP';
 
 /**
  * One entry per registered tool name (`AI_TOOLS`'s own names, not
@@ -78,6 +79,7 @@ const TOOL_DOMAINS: Partial<Record<string, ToolDomain[]>> = {
   calculate_price: ['PRICING'],
   get_dashboard_summary: ['DASHBOARD'],
   search_call_logs: ['CALL_LOGS'],
+  search_help_topics: ['HELP'],
 };
 
 /**
@@ -114,6 +116,52 @@ const KEYWORD_RULES: { domains: ToolDomain[]; pattern: RegExp }[] = [
   { domains: ['DASHBOARD'], pattern: /داشبورد|dashboard|ملخص عام/i },
   { domains: ['CALL_LOGS'], pattern: /مكالمات|المكالمات|اتصالات|سجل المكالمات/ },
 ];
+
+/**
+ * Task 14.2 — dedicated system-help intent detection. Deterministic only
+ * (no LLM call, no embeddings, same constraint as the rest of this file),
+ * and deliberately made of INTENT phrasing only — asking HOW the system
+ * works, WHERE to find something, or WHAT a concept means — never a
+ * business-domain word. Task 14's own audit found a plain domain-keyword
+ * match (e.g. "أمر الشغل" → WORK_ORDERS) was routing a conceptual question
+ * like "أمر الشغل بيمشي إزاي؟" straight to a live-data tool
+ * (`get_production_status`) instead of the new `search_help_topics` tool
+ * (Task 14.1) — this list exists specifically to catch that phrasing
+ * pattern before domain-keyword routing ever runs. No `\b` word-boundary
+ * anchors, same reasoning as `KEYWORD_RULES` above (they silently never
+ * match Arabic text).
+ */
+const HELP_INTENT_PATTERNS: RegExp[] = [
+  /إزاي|ازاي/,
+  /كيف|كيفية/,
+  /طريقة/,
+  /خطوات/,
+  /فين\s*(أقدر|اقدر|ألاقي|الاقي)/,
+  /مكان/,
+  /يعني\s*(إيه|ايه)/,
+  /(ما|إيه|ايه)\s*هو/,
+  /شرح|شرحلي|اشرحلي/,
+  /استخدام|أستخدم|استخدم/,
+];
+
+function isHelpIntent(message: string): boolean {
+  return HELP_INTENT_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+/**
+ * Stricter than `toolMatchesDomains` below on purpose: that function
+ * treats an unclassified tool as "matches everything" — the right default
+ * when merely NARROWING a broad menu (an unlisted future tool should
+ * never be silently hidden). The help lane is the opposite case: it must
+ * be an EXCLUSIVE, small menu (Task 14.2's own examples — a business tool
+ * like `get_treasury_summary` must never appear alongside the help tool),
+ * so an unclassified tool here must be excluded, not included.
+ */
+function toolMatchesDomainsExclusively(tool: AnyAiToolDefinition, domainSet: Set<ToolDomain>): boolean {
+  const toolDomains = TOOL_DOMAINS[tool.name];
+  if (!toolDomains) return false;
+  return toolDomains.some((domain) => domainSet.has(domain));
+}
 
 /** Step 8 — the exact mapping the owner specified. `WORK_ORDER` maps to both WORK_ORDERS and PRODUCTION, same as the tools' own classification above. */
 const CONTEXT_ENTITY_TO_DOMAINS: Record<AiEntityType, ToolDomain[]> = {
@@ -162,6 +210,16 @@ function toolMatchesDomains(tool: AnyAiToolDefinition, domainSet: Set<ToolDomain
  * The V1 routing decision. Always returns a subset of `tools` the caller
  * is actually permitted to use — never more.
  *
+ * Precedence (Task 14.2, highest tier): a clear system-help question
+ * ("إزاي"/"فين أقدر"/"يعني إيه"/...) wins over EVERYTHING below, including
+ * an explicit domain keyword in the same message — "فين أقدر أشوف
+ * الخزينة؟" must expose only `search_help_topics`, never
+ * `get_treasury_summary`, even though "الخزينة" matches the TREASURY
+ * keyword rule. This only fires when the exclusive help-only selection is
+ * actually non-empty (i.e. `search_help_topics` is in `allowedTools`) —
+ * otherwise it falls through to the exact same domain/context/fallback
+ * chain as any other message, never narrowing to nothing.
+ *
  * Precedence (Step 9 "Topic Change"): an explicit domain keyword in the
  * CURRENT message always wins over `context`, never merges with it — a
  * fresh "هاتلي المورد كمال" after a CUSTOMER context routes to SUPPLIERS
@@ -197,6 +255,11 @@ export function selectToolsForRequest(
   const allowedTools = tools.filter((tool) => isToolAllowedFor(tool, auth));
 
   try {
+    if (isHelpIntent(latestUserMessage)) {
+      const helpTools = allowedTools.filter((tool) => toolMatchesDomainsExclusively(tool, new Set<ToolDomain>(['HELP'])));
+      if (helpTools.length > 0) return helpTools;
+    }
+
     const keywordDomains = matchKeywordDomains(latestUserMessage);
     const contextDomains = context ? (CONTEXT_ENTITY_TO_DOMAINS[context.entityType] ?? []) : [];
     const domains = keywordDomains.length > 0 ? keywordDomains : contextDomains;
