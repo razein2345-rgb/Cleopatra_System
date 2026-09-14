@@ -261,6 +261,41 @@ describe('runAiChat — failure handling', () => {
 
     await expect(runAiChat(auth(), turns('سؤال'))).rejects.toThrow('network exploded');
   });
+
+  /**
+   * Task 13.1 — Task 13's audit found `dispatchTool`'s catch around
+   * `tool.execute()` was completely silent, so a real failure (e.g. a
+   * database error inside a tool) was indistinguishable from any other
+   * cause once it reached the model. This test locks the fix: the caught
+   * exception is now logged server-side (`console.error`, this codebase's
+   * existing convention — see `jobs/autoCloseDayJob.ts`), while the
+   * model/user-facing result is completely unchanged — same generic
+   * Arabic fallback, same `isError: true` shape, zero raw exception text
+   * anywhere in what the model or user ever sees.
+   */
+  it('an execute() exception is logged server-side but never leaks past the generic Arabic fallback', async () => {
+    const dbFailure = new Error('ECONNRESET: simulated database failure');
+    readExecute.mockRejectedValueOnce(dbFailure);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const provider = queueProvider([
+      { text: null, toolCalls: [{ id: 'call1', name: 'fake_read', input: { id: VALID_ID } }], stopReason: 'tool_use' },
+      { text: 'معلش، حصل عندي مشكلة', toolCalls: [], stopReason: 'end_turn' },
+    ]);
+    __setProviderForTests(provider);
+
+    await runAiChat(auth({ permissions: ['test.read'] }), turns('سؤال'));
+
+    const toolResultMessage = provider.calls[1].messages.at(-1);
+    const toolResult = toolResultMessage?.content.find((p) => p.type === 'tool_result');
+    expect(toolResult?.isError).toBe(true);
+    expect(toolResult?.content).toBe('تعذر الوصول للبيانات دلوقتي، جرّب تاني بعد لحظة.');
+    expect(toolResult?.content).not.toContain('ECONNRESET');
+    expect(toolResult?.content).not.toContain(dbFailure.message);
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('fake_read'), dbFailure);
+    consoleErrorSpy.mockRestore();
+  });
 });
 
 describe('runAiChat — duplicate read-tool call guard (Gap 3, 2026-09-11)', () => {

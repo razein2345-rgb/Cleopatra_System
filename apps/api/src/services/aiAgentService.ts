@@ -176,9 +176,17 @@ async function dispatchTool(
   try {
     const result = await tool.execute(parsed.data, { auth });
     return { isError: false, content: JSON.stringify(result) };
-  } catch {
+  } catch (err) {
+    // Task 13 audit finding: this catch was completely silent, so a real
+    // tool-execution failure (e.g. a database call inside `execute()`) was
+    // indistinguishable from any other cause once it reached the model —
+    // unfixable from server logs alone. Same convention as the rest of the
+    // codebase's server-side logging (e.g. `jobs/autoCloseDayJob.ts`'s own
+    // `console.error('[tag] ...', err)`) — tool name only, never the raw
+    // input (which may carry customer-identifying search text) or `auth`.
     // Never surface a raw error/stack trace to the model or the end user
     // (CLEOPATRA_AI_SECURITY.md §6, "Tool failure" / "Database/network failure").
+    console.error(`[ai-tool-dispatch] ${tool.name} execute() threw:`, err);
     return { isError: true, content: 'تعذر الوصول للبيانات دلوقتي، جرّب تاني بعد لحظة.' };
   }
 }
