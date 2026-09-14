@@ -22,6 +22,7 @@ import { searchSuppliersTool } from './searchSuppliers.js';
 import { getSupplierStatementTool } from './getSupplierStatement.js';
 import { getPurchaseRequestsDueTool } from './getPurchaseRequestsDue.js';
 import { getMachineStatusTool } from './getMachineStatus.js';
+import { searchHelpTopicsTool } from './searchHelpTopics.js';
 
 /**
  * READ-only tool registry — the Phase 1 catalog (CLEOPATRA_AI_TOOLS.md,
@@ -30,8 +31,10 @@ import { getMachineStatusTool } from './getMachineStatus.js';
  * `get_quotation`; Task 3, 2026-09-10: `search_production_by_customer`;
  * Task 4, 2026-09-10: `search_suppliers`/`get_supplier_statement`; Task 5,
  * 2026-09-10: `get_purchase_requests_due`; Task 6, 2026-09-10:
- * `get_machine_status`). Zero WRITE tools. A tool is only ever appended
- * here after its own specific approval — never speculatively.
+ * `get_machine_status`; Task 14.1, 2026-09-14: `search_help_topics` —
+ * static system-help content, no business data, not yet wired into
+ * automatic routing). Zero WRITE tools. A tool is only ever appended here
+ * after its own specific approval — never speculatively.
  */
 export const AI_TOOLS: AnyAiToolDefinition[] = [
   searchCustomersTool,
@@ -57,4 +60,5 @@ export const AI_TOOLS: AnyAiToolDefinition[] = [
   getSupplierStatementTool,
   getPurchaseRequestsDueTool,
   getMachineStatusTool,
+  searchHelpTopicsTool,
 ] as unknown as AnyAiToolDefinition[];

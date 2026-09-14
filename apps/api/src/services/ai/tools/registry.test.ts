@@ -8,8 +8,9 @@ import { AI_TOOLS } from './index.js';
  * 2026-09-10: `search_quotations`/`get_quotation`; Task 3, 2026-09-10:
  * `search_production_by_customer`; Task 4, 2026-09-10:
  * `search_suppliers`/`get_supplier_statement`; Task 5, 2026-09-10:
- * `get_purchase_requests_due`; Task 6, 2026-09-10: `get_machine_status`),
- * each with the exact permission (or SUPER_ADMIN gate) the catalog
+ * `get_purchase_requests_due`; Task 6, 2026-09-10: `get_machine_status`;
+ * Task 14.1, 2026-09-14: `search_help_topics` — static system-help content,
+ * no business data), each with the exact permission (or SUPER_ADMIN gate) the catalog
  * specifies. A future edit that accidentally widens or removes a
  * permission check fails this test immediately, without needing a live
  * LLM call.
@@ -38,6 +39,7 @@ const EXPECTED = {
   get_supplier_statement: { requiredPermission: 'suppliers.view', requiresSuperAdmin: undefined },
   get_purchase_requests_due: { requiredPermission: 'inventory.view', requiresSuperAdmin: undefined },
   get_machine_status: { requiredPermission: 'machines.view', requiresSuperAdmin: undefined },
+  search_help_topics: { requiredPermission: null, requiresSuperAdmin: undefined },
 } as const;
 
 describe('AI_TOOLS registry', () => {
