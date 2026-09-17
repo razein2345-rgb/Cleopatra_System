@@ -56,10 +56,24 @@ export function apiGet<T>(path: string): Promise<T> {
   return request<T>(path);
 }
 
-export function apiPost<T>(path: string, data?: unknown): Promise<T> {
+/**
+ * Accounting audit fix (2026-09-17, frontend idempotency wiring) — an
+ * optional `Idempotency-Key` header for the handful of financial mutations
+ * that need retry-safety (order creation, payment recording, POS quick
+ * sale, supplier payment, expense mark-paid). The backend
+ * (`idempotencyService.ts`) already fully supports this header and is
+ * unaffected when it's absent, so every OTHER `apiPost` call in the app —
+ * the overwhelming majority — is completely unchanged by this parameter
+ * existing. Deliberately just a header, no body field, no new global
+ * key-generation behavior: callers that need this decide their own key
+ * lifecycle (see `useIdempotencyKey`/`useIdempotencyKeyMap` in
+ * `useIdempotencyKey.ts`) — this function never generates one itself.
+ */
+export function apiPost<T>(path: string, data?: unknown, idempotencyKey?: string): Promise<T> {
   return request<T>(path, {
     method: 'POST',
     body: data === undefined ? undefined : JSON.stringify(data),
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
   });
 }
 

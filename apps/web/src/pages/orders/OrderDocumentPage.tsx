@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import type { BranchSummary, BusinessIdentity, BusinessPartner, Order, OrderItem, Payment, PaymentMethod, User } from '@cleopatra/shared';
 import { PRODUCTION_TRACK_LABELS } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
+import { useIdempotencyKey } from '@/lib/useIdempotencyKey';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Breadcrumbs, PartnerCombobox, useConfirm } from '@/components/cleopatra';
@@ -67,6 +68,8 @@ export function OrderDocumentPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
+  // Accounting audit fix (2026-09-17) — payment-recording idempotency key.
+  const paymentIdempotency = useIdempotencyKey();
   /** Owner (2026-08-20, "تعديل المدفوع... تعديل أي دفعة سابقة") — gated on the dedicated `payments.edit` permission, not `orders.edit`. */
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null);
   const [paymentActionError, setPaymentActionError] = useState<string | null>(null);
@@ -205,7 +208,8 @@ export function OrderDocumentPage() {
     setPaymentError(null);
     setPaymentSaving(true);
     try {
-      const updated = await apiPost<Order>(`/api/orders/${order.id}/payments`, { method: paymentMethod, amount });
+      const updated = await apiPost<Order>(`/api/orders/${order.id}/payments`, { method: paymentMethod, amount }, paymentIdempotency.getKey());
+      paymentIdempotency.resetKey(); // definitive success — the next payment (if any) is a genuinely new operation
       setOrder(updated);
       setShowAddPayment(false);
       setPaymentAmount('');

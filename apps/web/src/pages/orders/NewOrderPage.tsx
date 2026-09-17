@@ -48,6 +48,7 @@ import {
 } from '@cleopatra/shared';
 import { findCategoryForKind, ORDER_ITEM_CATEGORIES, PRODUCTION_TRACK_LABELS, resolveProductionTrackForTab } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
+import { useIdempotencyKey, useIdempotencyKeyMap } from '@/lib/useIdempotencyKey';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -2575,6 +2576,10 @@ function NewOrderForm({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<'SAVE_ONLY' | 'SAVE_AND_PRINT' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Accounting audit fix (2026-09-17) — order-creation idempotency key.
+  // Scoped to order CREATE only (the `else` branch of `submit` below) —
+  // quotation create/update and order update aren't in scope here.
+  const orderCreateIdempotency = useIdempotencyKey();
 
   // FEATURE-012 (2026-08-14, owner: "لو بدأت اعمل اوردر وخرجت يديني تحذير
   // إن الاوردر اللي بعمله دلوقتي هيتلغى") — warns before closing the tab/
@@ -3072,7 +3077,8 @@ function NewOrderForm({
           items: outputItems,
           payments: paymentInputs.length ? paymentInputs : undefined,
         };
-        const order = await apiPost<Order>('/api/orders', input);
+        const order = await apiPost<Order>('/api/orders', input, orderCreateIdempotency.getKey());
+        orderCreateIdempotency.resetKey(); // definitive success — the next click (if any) is a genuinely new order
         if (intent === 'SAVE_AND_PRINT') {
           navigate(`/orders/${order.id}`);
         } else {
@@ -5540,6 +5546,10 @@ function QuickSaleDialog({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Accounting audit fix (2026-09-17) — one idempotency key per cart line
+  // (not one for the whole batch), same reasoning as PosPage.tsx's own
+  // quick-sale dialog: each line is its own independent atomic request.
+  const quickSaleIdempotency = useIdempotencyKeyMap<string>();
 
   const updateLine = (key: string, patch: Partial<QuickSaleLine>) => {
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -5600,9 +5610,12 @@ function QuickSaleDialog({
         note: note.trim() || undefined,
       };
       try {
-        await apiPost(`/api/inventory-items/${line.item!.id}/quick-sale`, input);
+        await apiPost(`/api/inventory-items/${line.item!.id}/quick-sale`, input, quickSaleIdempotency.getKey(line.key));
+        quickSaleIdempotency.resetKey(line.key); // this line definitively succeeded
         updateLine(line.key, { done: true });
       } catch (err) {
+        // Deliberately NOT resetting the key here — "إعادة محاولة الباقي"
+        // must retry this still-failed line with the SAME key.
         failedCount += 1;
         setError(`تعذر بيع "${line.item!.name}": ${err instanceof Error ? err.message : 'خطأ غير معروف'}`);
         break; // stop at the first failure — already-done lines stay marked done, not resubmitted on retry.

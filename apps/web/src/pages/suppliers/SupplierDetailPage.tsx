@@ -6,6 +6,7 @@ import type {
   SupplierStatement,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost } from '@/lib/api';
+import { useIdempotencyKey } from '@/lib/useIdempotencyKey';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/state/AuthContext';
 import { CommercialTab } from '@/pages/partners/CommercialTab';
@@ -279,6 +280,8 @@ function AddPaymentForm({ partnerId, onSaved }: { partnerId: string; onSaved: ()
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Accounting audit fix (2026-09-17) — supplier-payment idempotency key.
+  const paymentIdempotency = useIdempotencyKey();
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -291,7 +294,8 @@ function AddPaymentForm({ partnerId, onSaved }: { partnerId: string; onSaved: ()
         note: note || undefined,
         date: new Date(date).toISOString(),
       };
-      await apiPost(`/api/suppliers/${partnerId}/payments`, input);
+      await apiPost(`/api/suppliers/${partnerId}/payments`, input, paymentIdempotency.getKey());
+      paymentIdempotency.resetKey(); // definitive success — the next payment (if any) is a genuinely new operation
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر تسجيل الدفعة');

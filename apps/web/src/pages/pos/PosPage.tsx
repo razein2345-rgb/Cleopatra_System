@@ -20,6 +20,7 @@ import type {
 } from '@cleopatra/shared';
 import { resolveProductionTrackForTab } from '@cleopatra/shared';
 import { apiGet, apiPost } from '@/lib/api';
+import { useIdempotencyKey, useIdempotencyKeyMap } from '@/lib/useIdempotencyKey';
 import { useAuth } from '@/state/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -200,6 +201,11 @@ export function PosPage() {
   // "بيع مباشر" only — no Order/invoice exists for this path at all, just
   // the sum actually collected across the quick-sale calls that succeeded.
   const [quickSaleSuccess, setQuickSaleSuccess] = useState<{ totalAmount: number; itemCount: number } | null>(null);
+  // Accounting audit fix (2026-09-17) — "إصدار فاتورة" (order creation) key;
+  // "بيع مباشر" needs one PER cart line, not one for the whole batch (see
+  // `handleDirectSale`'s own comment), so it gets the map variant.
+  const invoiceIdempotency = useIdempotencyKey();
+  const quickSaleIdempotency = useIdempotencyKeyMap<string>();
 
   useEffect(() => {
     let active = true;
@@ -552,7 +558,8 @@ export function PosPage() {
         items: buildOrderItems(),
         ...(validPayments.length > 0 ? { payments: validPayments } : {}),
       };
-      const order = await apiPost<Order>('/api/orders', payload);
+      const order = await apiPost<Order>('/api/orders', payload, invoiceIdempotency.getKey());
+      invoiceIdempotency.resetKey(); // definitive success — the next invoice (if any) is a genuinely new order
       setSuccessOrder(order);
       setCart([]);
       setPartnerId('');
@@ -625,13 +632,18 @@ export function PosPage() {
               ...(override !== undefined ? { unitPrice: override } : {}),
               ...(line.discountPercent > 0 ? { discountPercent: line.discountPercent } : {}),
             },
+            quickSaleIdempotency.getKey(line.key),
           );
+          quickSaleIdempotency.resetKey(line.key); // this line definitively succeeded — it won't be resubmitted, but keep the map tidy
           totalAmount += result.treasuryEntry.amount;
         }
         successCount++;
       } catch (err) {
         remaining.push(line);
         firstError ??= err instanceof Error ? err.message : 'تعذر بيع أحد الأصناف.';
+        // Deliberately NOT resetting quickSaleIdempotency's key for this
+        // line — "إعادة محاولة الباقي" must retry a still-failed line with
+        // the SAME key, not a fresh one (see the map's own doc comment).
       }
     }
     setCart(remaining);
