@@ -3958,3 +3958,38 @@ model AuditLog {
   @@index([performedById])
   @@index([partnerId, createdAt])
 }
+
+/// Accounting audit fix (2026-09-17, Phase 3 E) — generic, reusable
+/// idempotency-key store for financial mutations that accept an optional
+/// client-supplied `Idempotency-Key` header (order creation, payment
+/// recording, POS quick sale, SupplierPayment — see `idempotencyService.ts`).
+/// `key` is the primary key (a client-generated UUID, globally unique —
+/// never scoped per staff, since UUIDs don't collide across users and a
+/// global unique constraint is what actually blocks two concurrent
+/// requests racing on the exact same key). A request with NO key header is
+/// completely unaffected — this table is opt-in, not a redesign of any
+/// existing endpoint's contract.
+///
+/// `requestFingerprint` (owner's own Phase 3 continuation, §3D) — a hash of
+/// the meaningful request payload, checked on every replay: the SAME key
+/// reused with a DIFFERENT payload is a caller bug (or a key collision),
+/// never silently treated as "the same request" — it gets a clear conflict
+/// error instead of replaying an unrelated cached result.
+///
+/// `statusCode: 0`/`responseBody: {}` marks a reservation still in flight
+/// (the real request hasn't finished yet, or the process crashed before
+/// reaching the update/delete step — see `STALE_RESERVATION_MS` in
+/// `idempotencyService.ts` for how a crashed reservation is safely
+/// reclaimed rather than blocking that key forever); any other
+/// `statusCode` means `responseBody` is the final, safe-to-replay result.
+model IdempotencyKey {
+  key                String   @id
+  staffId            String   @db.Uuid
+  endpoint           String
+  requestFingerprint String
+  statusCode         Int
+  responseBody       Json
+  createdAt          DateTime @default(now())
+
+  @@index([createdAt])
+}
