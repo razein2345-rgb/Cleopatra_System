@@ -135,6 +135,22 @@ export class OllamaProvider implements LlmProvider {
       // measured 10x faster (26-30s) with identical tool-selection
       // correctness in a direct before/after test.
       think: false,
+      // Task 15.1 (root-cause investigation) found NO sampling parameter
+      // was ever set, so Ollama sampled the model's response with its own
+      // non-zero default temperature — a live A/B trial (7 fresh
+      // "إزاي أعمل إغلاق اليومية؟" runs) showed the model discard a
+      // correctly-returned, byte-identical `search_help_topics` tool
+      // result and answer "لا يوجد معلومات متوفرة" in 3/7 runs, purely
+      // from generation-to-generation sampling variance (the tool call
+      // itself and its result were proven deterministic and correct every
+      // time). `temperature: 0` — Ollama's own documented per-request
+      // `options` field (https://github.com/ollama/ollama/blob/main/docs/api.md) —
+      // makes token selection greedy/argmax instead of sampled, which is
+      // the smallest possible change to test whether this fixes/reduces
+      // that variance (Task 15.2). Deliberately only this one dimension —
+      // no `seed`/`top_p` — so the before/after comparison stays
+      // interpretable to a single cause.
+      options: { temperature: 0 },
       messages: [{ role: 'system', content: input.system }, ...toOllamaMessages(input.messages)],
       tools: input.tools.map((tool) => ({
         type: 'function',

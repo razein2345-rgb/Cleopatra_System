@@ -80,8 +80,69 @@ const fakeSearchQuotationsTool: AnyAiToolDefinition = {
   execute: searchQuotationsExecute as unknown as AnyAiToolDefinition['execute'],
 };
 
+/**
+ * Task 15.7 — named exactly `search_help_topics` for the same reason the
+ * Task 12 fakes above are named after their real tools: `toolRouting.ts`'s
+ * `TOOL_DOMAINS`/`HELP_INTENT_PATTERNS` (NOT mocked here) key their HELP
+ * classification by this literal real tool name, so the fallback's own
+ * `selectedTools[0]?.name === 'search_help_topics'` check exercises the
+ * real routing decision end-to-end while `execute()` stays fully fake and
+ * controllable.
+ */
+const helpTopicsExecute = vi.fn(async (input: { query: string }) => [{ id: 'test_topic', title: 'Test Topic', category: 'test', answer: `topic answer for: ${input.query}` }]);
+
+const fakeSearchHelpTopicsTool: AnyAiToolDefinition = {
+  name: 'search_help_topics',
+  description: 'Fake search_help_topics for Task 15.7 fallback tests',
+  requiredPermission: null,
+  inputSchema: z.object({ query: z.string().trim().min(1).max(200) }),
+  inputJsonSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+  execute: helpTopicsExecute as unknown as AnyAiToolDefinition['execute'],
+};
+
+/**
+ * Task 15.7 fix — the real `AI_TOOLS` registry has THREE `requiredPermission:
+ * null` tools (`calculate_price`, `get_dashboard_summary`,
+ * `search_help_topics`), never just one. Before this fix, this fixture only
+ * had `fakeSearchHelpTopicsTool` as a null-permission tool, so a
+ * default-permission `auth()` with no matching domain/context keyword made
+ * `selectToolsForRequest`'s `allowedTools` fallback accidentally resolve to
+ * exactly `[fakeSearchHelpTopicsTool]` — colliding with the new
+ * `isHelpExclusiveRequest` check for tests that have nothing to do with
+ * HELP. These two mirror the real tools' names (so the real, unmocked
+ * `toolRouting.ts` classifies them under PRICING/DASHBOARD, never HELP) and
+ * null permission, restoring the real 3-tool composition.
+ */
+const fakeCalculatePriceTool: AnyAiToolDefinition = {
+  name: 'calculate_price',
+  description: 'Fake calculate_price for Task 15.7 fallback-collision fix',
+  requiredPermission: null,
+  inputSchema: z.object({}),
+  inputJsonSchema: { type: 'object', properties: {} },
+  execute: vi.fn(async () => ({})) as unknown as AnyAiToolDefinition['execute'],
+};
+
+const fakeDashboardSummaryTool: AnyAiToolDefinition = {
+  name: 'get_dashboard_summary',
+  description: 'Fake get_dashboard_summary for Task 15.7 fallback-collision fix',
+  requiredPermission: null,
+  inputSchema: z.object({}),
+  inputJsonSchema: { type: 'object', properties: {} },
+  execute: vi.fn(async () => ({})) as unknown as AnyAiToolDefinition['execute'],
+};
+
 vi.mock('./ai/tools/index.js', () => ({
-  AI_TOOLS: [fakeReadTool, fakeSuperAdminTool, fakeGetCustomerTool, fakeSearchCustomersTool, fakeGetQuotationTool, fakeSearchQuotationsTool],
+  AI_TOOLS: [
+    fakeReadTool,
+    fakeSuperAdminTool,
+    fakeGetCustomerTool,
+    fakeSearchCustomersTool,
+    fakeGetQuotationTool,
+    fakeSearchQuotationsTool,
+    fakeSearchHelpTopicsTool,
+    fakeCalculatePriceTool,
+    fakeDashboardSummaryTool,
+  ],
 }));
 
 /**
@@ -145,6 +206,7 @@ beforeEach(() => {
   searchCustomersExecute.mockClear();
   getQuotationExecute.mockClear();
   searchQuotationsExecute.mockClear();
+  helpTopicsExecute.mockClear();
   __setProviderForTests(null);
   // Default: no tool call in these pre-existing tests is meant to produce a
   // context — matches their original behavior exactly (none of them assert
@@ -754,4 +816,120 @@ describe('runAiChat — Task 12 Guard B (stale context after explicit correction
   // either guard — see the "runAiChat — duplicate read-tool call guard"
   // describe block earlier in this same file, re-run as part of this same
   // suite (final pass count in the task report, not re-declared here).
+});
+
+/**
+ * Task 15.7 — deterministic HELP fallback. Tasks 15.5/15.6 proved qwen3
+ * sometimes emits zero tool calls even when routing has already narrowed
+ * the offered tools to exactly `search_help_topics`, and that Ollama has
+ * no `tool_choice` mechanism to force this. These tests lock the
+ * application-level fallback that replaces the model's decision with a
+ * deterministic dispatch in that one narrow, unambiguous case only.
+ *
+ * "إزاي أستخدم النظام؟" is used as the canonical HELP-triggering message
+ * throughout (already proven to match `HELP_INTENT_PATTERNS` in Task
+ * 14.2's own tests) — none of these tests mock `toolRouting.ts`, so
+ * routing runs for real against `fakeSearchHelpTopicsTool` above.
+ */
+describe('runAiChat — Task 15.7 deterministic HELP fallback', () => {
+  it('A. HELP-exclusive request where the model calls search_help_topics normally — unchanged, fallback never fires', async () => {
+    const provider = queueProvider([
+      { text: null, toolCalls: [{ id: 'call1', name: 'search_help_topics', input: { query: 'إزاي أستخدم النظام؟' } }], stopReason: 'tool_use' },
+      { text: 'دي الإجابة', toolCalls: [], stopReason: 'end_turn' },
+    ]);
+    __setProviderForTests(provider);
+
+    const result = await runAiChat(auth(), turns('إزاي أستخدم النظام؟'));
+
+    expect(helpTopicsExecute).toHaveBeenCalledTimes(1);
+    expect(helpTopicsExecute).toHaveBeenCalledWith({ query: 'إزاي أستخدم النظام؟' }, expect.anything());
+    expect(result.reply).toBe('دي الإجابة');
+    expect(result.toolsUsed).toEqual(['search_help_topics']);
+  });
+
+  it('B. HELP-exclusive request where the model emits zero tool calls — fallback dispatches search_help_topics with the latest user message as query', async () => {
+    const provider = queueProvider([
+      { text: 'مش عارف أساعدك في الحاجة دي', toolCalls: [], stopReason: 'end_turn' },
+      { text: 'الإجابة الصح المبنية على المعلومة', toolCalls: [], stopReason: 'end_turn' },
+    ]);
+    __setProviderForTests(provider);
+
+    const result = await runAiChat(auth(), turns('إزاي أستخدم النظام؟'));
+
+    expect(helpTopicsExecute).toHaveBeenCalledTimes(1);
+    expect(helpTopicsExecute).toHaveBeenCalledWith({ query: 'إزاي أستخدم النظام؟' }, expect.anything());
+    expect(result.toolsUsed).toEqual(['search_help_topics']);
+    expect(result.reply).toBe('الإجابة الصح المبنية على المعلومة');
+
+    // The second provider call must genuinely have received the grounded
+    // tool result in its message history — proves the model got a real
+    // chance to use it, not that the final text was fabricated.
+    const secondCallMessages = provider.calls[1]!.messages;
+    const toolResultMsg = secondCallMessages.at(-1);
+    const toolResultPart = toolResultMsg?.content.find((p) => p.type === 'tool_result');
+    expect(toolResultPart?.content).toContain('topic answer for: إزاي أستخدم النظام؟');
+    expect(toolResultPart?.isError).toBe(false);
+  });
+
+  it('C. the fallback fires at most once — a second empty-tool-calls turn returns normally, no repeated dispatch', async () => {
+    const provider = queueProvider([
+      { text: null, toolCalls: [], stopReason: 'end_turn' },
+      { text: 'لسه معنديش إجابة واضحة', toolCalls: [], stopReason: 'end_turn' },
+    ]);
+    __setProviderForTests(provider);
+
+    const result = await runAiChat(auth(), turns('إزاي أستخدم النظام؟'));
+
+    expect(helpTopicsExecute).toHaveBeenCalledTimes(1);
+    expect(result.reply).toBe('لسه معنديش إجابة واضحة');
+  });
+
+  it('D. a business-data query ("رصيد الخزينة كام؟") never triggers the HELP fallback', async () => {
+    const provider = queueProvider([{ text: 'مش لاقي أداة مناسبة', toolCalls: [], stopReason: 'end_turn' }]);
+    __setProviderForTests(provider);
+
+    const result = await runAiChat(auth({ permissions: ['*'] }), turns('رصيد الخزينة كام؟'));
+
+    expect(helpTopicsExecute).not.toHaveBeenCalled();
+    expect(result.reply).toBe('مش لاقي أداة مناسبة');
+  });
+
+  it('E. a production/machines-shaped query ("إيه حالة الماكينات؟") never triggers the HELP fallback', async () => {
+    const provider = queueProvider([{ text: 'مفيش بيانات', toolCalls: [], stopReason: 'end_turn' }]);
+    __setProviderForTests(provider);
+
+    await runAiChat(auth({ permissions: ['*'] }), turns('إيه حالة الماكينات؟'));
+
+    expect(helpTopicsExecute).not.toHaveBeenCalled();
+  });
+
+  it('F. when routing falls back to multiple tools (search_help_topics among them), the fallback does not activate', async () => {
+    const provider = queueProvider([{ text: 'ازاي أقدر أساعدك؟', toolCalls: [], stopReason: 'end_turn' }]);
+    __setProviderForTests(provider);
+
+    // "ساعدني" matches no HELP_INTENT_PATTERN and no domain keyword, so
+    // selectToolsForRequest() falls back to the FULL allowedTools set
+    // (every fake here, including fakeSearchHelpTopicsTool, since it has
+    // no requiredPermission) — length > 1, so isHelpExclusiveRequest must
+    // be false even though the help tool is technically among those offered.
+    const result = await runAiChat(auth({ roleNames: ['SUPER_ADMIN'], permissions: ['*'] }), turns('ساعدني'));
+
+    expect(helpTopicsExecute).not.toHaveBeenCalled();
+    expect(result.reply).toBe('ازاي أقدر أساعدك؟');
+  });
+
+  it('G. if the fallback dispatch itself fails, the existing tool-error convention applies — no exception, no fabricated answer', async () => {
+    helpTopicsExecute.mockRejectedValueOnce(new Error('boom'));
+    const provider = queueProvider([
+      { text: null, toolCalls: [], stopReason: 'end_turn' },
+      { text: 'تعذر الوصول للبيانات دلوقتي، جرّب تاني بعد لحظة.', toolCalls: [], stopReason: 'end_turn' },
+    ]);
+    __setProviderForTests(provider);
+
+    const result = await runAiChat(auth(), turns('إزاي أستخدم النظام؟'));
+
+    expect(helpTopicsExecute).toHaveBeenCalledTimes(1);
+    expect(result.reply).toBe('تعذر الوصول للبيانات دلوقتي، جرّب تاني بعد لحظة.');
+    expect(result.toolsUsed).toEqual(['search_help_topics']);
+  });
 });

@@ -296,6 +296,87 @@ describe('selectToolsForRequest — Task 14.2 system-help intent routing', () =>
   });
 });
 
+/**
+ * Task 15.4 — Task 15.3's audit found six natural-language help questions
+ * that either fell through to business-data routing or got no narrowing
+ * at all, purely because no HELP pattern recognized their phrasing. Each
+ * new pattern is a hand-curated whitelist or a question-word PAIRED with a
+ * specific qualifying word — never a bare question word — precisely
+ * because Task 15.3 found bare `فين`/`إمتى`/`مين`/`هل`/`إيه` each has a
+ * real business-data collision (see the negative tests below, especially
+ * "إيه حالة الماكينات؟", the exact case that proves why).
+ */
+describe('selectToolsForRequest — Task 15.4 additional safe help patterns', () => {
+  const HELP_TOOL = fakeTool('search_help_topics', null);
+  const TOOLS_WITH_HELP = [...ALL_TOOLS, HELP_TOOL];
+
+  it('1. "فين الخزينة؟" (bare module name, no أقدر/ألاقي) routes to HELP only', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'فين الخزينة؟'));
+    expect(result).toEqual(['search_help_topics']);
+  });
+
+  it('2. "أمر الشغل بيتعمل إمتى؟" routes to HELP, not WORK_ORDERS/PRODUCTION data tools', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'أمر الشغل بيتعمل إمتى؟'));
+    expect(result).toEqual(['search_help_topics']);
+    expect(result).not.toContain('get_production_status');
+  });
+
+  it('3. "العميل بيتحدد إزاي؟" routes to HELP', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'العميل بيتحدد إزاي؟'));
+    expect(result).toEqual(['search_help_topics']);
+  });
+
+  it('4. "مين يقدر يعيد فتح اليوم؟" routes to HELP via the "مين يقدر" capability-question pattern', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'مين يقدر يعيد فتح اليوم؟'));
+    expect(result).toEqual(['search_help_topics']);
+  });
+
+  it('5. "هل التصميم إجباري؟" routes to HELP via the "هل ... إجباري/اختياري/لازم" pattern', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'هل التصميم إجباري؟'));
+    expect(result).toEqual(['search_help_topics']);
+  });
+
+  it('6. "المخزون بيتابع إزاي؟" routes to HELP (already worked via bare إزاي, unaffected by this task)', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'المخزون بيتابع إزاي؟'));
+    expect(result).toEqual(['search_help_topics']);
+  });
+
+  it('negative: "رصيد الخزينة كام؟" still routes to TREASURY, not HELP', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'رصيد الخزينة كام؟'));
+    expect(result).toEqual(['get_treasury_summary']);
+  });
+
+  it('negative: "وريني أوامر الشغل المفتوحة" still routes to WORK_ORDERS/PRODUCTION, not HELP', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'وريني أوامر الشغل المفتوحة'));
+    expect(result).toEqual(expect.arrayContaining(['get_work_order', 'get_production_status', 'search_production_by_customer']));
+    expect(result).not.toContain('search_help_topics');
+  });
+
+  it('negative: "عندي كام عميل؟" still routes to CUSTOMERS, not HELP', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'عندي كام عميل؟'));
+    expect(result).toEqual(expect.arrayContaining(['search_customers', 'get_customer']));
+    expect(result).not.toContain('search_help_topics');
+  });
+
+  it('negative: "هات تفاصيل العميل أحمد" still routes to CUSTOMERS, not HELP', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'هات تفاصيل العميل أحمد'));
+    expect(result).toEqual(expect.arrayContaining(['search_customers', 'get_customer']));
+    expect(result).not.toContain('search_help_topics');
+  });
+
+  it('negative: "المورد كمال سعد" still routes to SUPPLIERS, not HELP', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'المورد كمال سعد'));
+    expect(result).toEqual(expect.arrayContaining(['search_suppliers', 'get_supplier_statement']));
+    expect(result).not.toContain('search_help_topics');
+  });
+
+  it('negative (most important): "إيه حالة الماكينات؟" must NOT enter the HELP-exclusive lane', () => {
+    const result = names(selectToolsForRequest(TOOLS_WITH_HELP, auth(), 'إيه حالة الماكينات؟'));
+    expect(result).toEqual(['get_machine_status']);
+    expect(result).not.toContain('search_help_topics');
+  });
+});
+
 describe('isToolAllowedFor', () => {
   it('mirrors dispatchTool: requiredPermission gate', () => {
     const tool = fakeTool('search_customers', 'partners.view');

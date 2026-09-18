@@ -222,6 +222,15 @@ export async function runAiChat(
   // existing context to correct away from.
   const correctionDetectedThisTurn = Boolean(incomingContext) && isExplicitCorrection(latestUserMessage);
   const selectedTools = selectToolsForRequest(AI_TOOLS, auth, latestUserMessage, incomingContext);
+  // Task 15.7 — deterministic HELP fallback trigger condition, computed
+  // once (identical for every loop iteration below, since `selectedTools`
+  // never changes within one request). Uses the actual selected tool
+  // OBJECT's own `.name` — the exact same array `toLlmToolDefinitions()`
+  // turns into what the model is offered — never a re-match against the
+  // raw message, so this can never drift from what Ollama was actually
+  // told exists. Task 15.4's own routing tests already prove no business-
+  // data query ever produces this exact single-tool set.
+  const isHelpExclusiveRequest = selectedTools.length === 1 && selectedTools[0]?.name === 'search_help_topics';
   const tools = toLlmToolDefinitions(selectedTools);
   const toolsByName = new Map(AI_TOOLS.map((t) => [t.name, t]));
   const toolsUsed = new Set<string>();
@@ -234,6 +243,13 @@ export async function runAiChat(
   // because a turn used an unrelated/non-qualifying tool — the previous
   // entity may still be exactly what the user is talking about.
   let candidateContext: AiConversationContext | undefined = incomingContext;
+  // Task 15.7 — guards the fallback to at most once per request. Set the
+  // moment the fallback fires (before the extra provider round-trip even
+  // resolves), so nothing about the model's SECOND response — another
+  // empty response, a real tool call, anything — can ever re-trigger it;
+  // every later iteration of this loop behaves exactly as it did before
+  // this task.
+  let helpFallbackUsed = false;
 
   const messages: LlmMessage[] = turnsToMessages(turns);
   if (incomingContext) injectContextNote(messages, incomingContext);
@@ -242,6 +258,58 @@ export async function runAiChat(
     const result = await provider.converse({ system: CLEOPATRA_AI_SYSTEM_PROMPT, messages, tools });
 
     if (result.toolCalls.length === 0) {
+      // Task 15.7 — deterministic HELP fallback. Task 15.5/15.6 proved
+      // qwen3 sometimes emits zero tool calls even when routing already
+      // narrowed the offered tools to exactly `search_help_topics`, and
+      // that Ollama 0.33.3 has no `tool_choice` mechanism to force this
+      // (Task 15.6's own direct-API experiment: identical behavior with
+      // or without it). This is the smallest safe alternative: when
+      // routing has ALREADY made the "which tool" decision unambiguous —
+      // exactly one tool offered, and it's the read-only help lookup —
+      // the application supplies the call the model chose not to make,
+      // through the exact same `dispatchTool()` path any model-generated
+      // call uses, so permission/schema/audit behavior is identical to a
+      // normal call. The model's own (discarded) text from this turn is
+      // never returned to the user — it's what Task 15.5 proved is
+      // ungrounded guessing; the synthetic assistant/tool_result pair
+      // below gives the model one more turn to phrase a grounded answer
+      // from the real topic content instead.
+      // `toolsUsed.size === 0` is required alongside `!helpFallbackUsed`:
+      // without it, a model that correctly calls `search_help_topics` on
+      // iteration 0 and then returns plain text with zero tool calls on
+      // iteration 1 (the normal, correct "final answer" turn) would hit
+      // this same branch again and get a REDUNDANT second dispatch —
+      // `toolsUsed` only grows on a real dispatch (model-initiated or this
+      // fallback's own), so a non-empty set means the model already did
+      // the right thing this request and the fallback must stay out of it.
+      if (isHelpExclusiveRequest && !helpFallbackUsed && toolsUsed.size === 0) {
+        helpFallbackUsed = true;
+        const helpTool = selectedTools[0]!;
+        const fallbackInput = { query: latestUserMessage };
+        const dispatched = await dispatchTool(helpTool, fallbackInput, auth);
+        // Registered in the same Task 7 duplicate-call cache as any normal
+        // dispatch — if the model's next turn redundantly calls
+        // `search_help_topics` with this exact same query itself, the
+        // existing guard echoes this cached result instead of dispatching
+        // again (harmless either way, since this tool is read-only and
+        // deterministic, but keeps this path consistent with every other).
+        seenToolCalls.set(toolCallKey(helpTool.name, fallbackInput), dispatched);
+        toolsUsed.add(helpTool.name);
+        const extractedContext = dispatched.isError ? null : extractConversationContext(helpTool.name, dispatched.content);
+        if (extractedContext) candidateContext = extractedContext;
+
+        const fallbackToolCallId = 'help-fallback-1';
+        messages.push({
+          role: 'assistant',
+          content: [{ type: 'tool_call', id: fallbackToolCallId, name: helpTool.name, input: fallbackInput }],
+        });
+        messages.push({
+          role: 'user',
+          content: [{ type: 'tool_result', toolCallId: fallbackToolCallId, content: dispatched.content, isError: dispatched.isError }],
+        });
+        continue;
+      }
+
       return { reply: result.text ?? 'معنديش رد على السؤال ده دلوقتي.', toolsUsed: [...toolsUsed], context: candidateContext };
     }
 

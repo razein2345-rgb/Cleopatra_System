@@ -142,6 +142,33 @@ const HELP_INTENT_PATTERNS: RegExp[] = [
   /(ما|إيه|ايه)\s*هو/,
   /شرح|شرحلي|اشرحلي/,
   /استخدام|أستخدم|استخدم/,
+  // Task 15.4 — Task 15.3's audit found each of these four gaps live and
+  // explicitly warned against bare `فين`/`إمتى`/`مين`/`هل` (each has a real
+  // business-data collision — e.g. bare `إيه`/`هل` would wrongly capture
+  // "إيه حالة الماكينات؟", a live-verified business query). Every pattern
+  // below is a hand-curated, explicit whitelist or a question-word PAIRED
+  // with a specific qualifying word — never the question word alone.
+  //
+  // "فين + <specific screen/module name>" — an explicit enumerated list
+  // (the exact same screens NAVIGATION_MAP already answers with), not a
+  // generic noun match, so "فين الفاتورة بتاعت العميل أحمد؟" (a real
+  // business lookup naming a business entity, not a screen) never matches.
+  /فين\s*(الخزينة|المخزون|الموردين|العملاء|التقارير|لوحة الإنتاج|عروض الأسعار|الطلبات|الماكينات)/,
+  // "<creation/start verb> + إمتى" — إمتى AFTER a narrow, specific set of
+  // procedural verbs, matching the owner's own example word order
+  // ("أمر الشغل بيتعمل إمتى؟"). A business question like "الطلب هيتسلم
+  // إمتى؟" uses a different verb (هيتسلم) and never matches.
+  /(بيتعمل|بيتنشئ|بيتنشأ|بيبدأ|بيحصل)\s*إمتى/,
+  // "مين + يقدر/المسؤول" — a capability/permission question shape ("who is
+  // ABLE to ...", "who is RESPONSIBLE for ..."), distinct from an audit-
+  // style business question like "مين اللي عمل الطلب ده؟", which never
+  // contains "يقدر" or "المسؤول" right after "مين".
+  /مين\s*(يقدر|المسؤول)/,
+  // "هل ... إجباري/اختياري/لازم" — bounded gap (≤20 chars, same spirit as
+  // `correctionDetection.ts`'s own bounded gap) so this only fires for a
+  // genuine mandatory/optional question, never a generic "هل" business
+  // question like "هل الفاتورة اتدفعت؟" (no إجباري/اختياري/لازم present).
+  /هل\s*[\s\S]{0,20}(إجباري|اختياري|لازم)/,
 ];
 
 function isHelpIntent(message: string): boolean {

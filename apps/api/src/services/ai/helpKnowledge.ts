@@ -53,7 +53,25 @@ export interface HelpTopicMatch {
 const DAILY_CLOSURE: SystemHelpTopic = {
   id: 'daily_closure',
   title: 'تقفيل حساب اليوم (الخزينة)',
-  keywords: ['اغلاق اليومية', 'إغلاق اليومية', 'تقفيل اليوم', 'تقفيل الحساب', 'قفل اليومية', 'اقفال اليومية', 'تقفيل الخزينة', 'اعادة فتح اليوم', 'إعادة فتح اليوم'],
+  keywords: [
+    'اغلاق اليومية',
+    'إغلاق اليومية',
+    'تقفيل اليوم',
+    'تقفيل الحساب',
+    'قفل اليومية',
+    'اقفال اليومية',
+    'تقفيل الخزينة',
+    'اعادة فتح اليوم',
+    'إعادة فتح اليوم',
+    // Task 15.4 — the real phrasing has "يعيد" (verb) where the topic's
+    // own answer text says "إعادة" (noun); the current matcher is plain
+    // substring, so this exact grounded phrase is added as its own
+    // keyword rather than changing the matcher (Task 15.4's own
+    // constraint) — verified against the same `reopenTreasuryDayHandler`
+    // restriction (SUPER_ADMIN/ADMIN only, mandatory reason) this topic's
+    // answer already states.
+    'مين يقدر يعيد فتح اليوم',
+  ],
   category: 'treasury',
   answer:
     'تقفيل حساب اليوم بيتم من شاشة الخزينة (/treasury)، قسم "تقفيل حساب اليوم (كاش)". بيعرض الرصيد الافتتاحي والداخل والخارج تلقائيًا، وانت بتدخل "النقدية الفعلية" (الكاش اللي اتعد فعليًا في الدرج) وتضغط زرار "تقفيل حساب اليوم" — من ساعتها معدش تقدر تسجّل حركات نقدية جديدة على نفس اليوم إلا لو اتعمله إعادة فتح. لو فيه وقت تقفيل تلقائي متحدد في الإعدادات (Setting.autoCloseDayTime)، النظام بيقفل كل الفروع لوحده أول ما الوقت ده يجي، وبيحسب النقدية الفعلية = الرصيد المتوقع نفسه (لأن محدش عدّ الدرج فعليًا). إعادة فتح يوم مقفول مقصورة على المسؤول العام/الأدمن بس، ومحتاجة سبب إجباري.',
@@ -111,7 +129,18 @@ const OFFSET_VS_DIGITAL: SystemHelpTopic = {
 const NEW_ORDER: SystemHelpTopic = {
   id: 'new_order',
   title: 'إنشاء طلب/فاتورة جديدة',
-  keywords: ['اعمل طلب جديد', 'إنشاء طلب', 'طلب جديد', 'فاتورة جديدة', 'اعمل فاتورة'],
+  keywords: [
+    'اعمل طلب جديد',
+    'إنشاء طلب',
+    'طلب جديد',
+    'فاتورة جديدة',
+    'اعمل فاتورة',
+    // Task 15.4 — the answer already explains search/select vs. the
+    // walk-in/cash-sale exception; this keyword just lets that exact
+    // question phrasing reach it.
+    'العميل بيتحدد ازاي',
+    'العميل بيتحدد إزاي',
+  ],
   category: 'orders',
   answer:
     'الطلب الجديد بيتعمل من شاشة "/orders/new". أول خطوة اختيار أو البحث عن العميل (أو تعليم الطلب كـ"بيع نقدي/كاش" لو مفيش عميل محدد ومفيش تتبع مطلوب). بعدين تضيف بنود الطلب (أوفست، ديجيتال، لوحات وإعلانات، منتجات جاهزة، خدمات، بضاعة من المخزون، أو بند يدوي حر) — النظام بيحسب السعر تلقائيًا بمحرك التسعير الحقيقي لكل بند. تقدر تسجّل دفعة عند الحفظ أو تسيبها لاحقًا. نفس الشاشة تستخدم لعمل عرض سعر (Quotation) بدل فاتورة مباشرة.',
@@ -158,10 +187,57 @@ const ORDER_FULL_LIFECYCLE: SystemHelpTopic = {
 const WORK_ORDER_BASICS: SystemHelpTopic = {
   id: 'work_order_basics',
   title: 'يعني إيه أمر شغل، وبيمشي إزاي',
-  keywords: ['يعني ايه امر شغل', 'يعني إيه أمر شغل', 'امر الشغل بيمشي', 'أمر الشغل بيمشي', 'امر شغل ايه', 'work order'],
+  keywords: [
+    'يعني ايه امر شغل',
+    'يعني إيه أمر شغل',
+    'امر الشغل بيمشي',
+    'أمر الشغل بيمشي',
+    'امر شغل ايه',
+    'work order',
+    // Task 15.4 — verified against `orderService.ts::createOrder` (calls
+    // `tryAutoCreateWorkOrders` — `workOrderService.ts` — only there, never
+    // on quotation save) and `tryAutoCreateWorkOrders`'s own `if
+    // (!item.productionTrack) continue` guard.
+    'امر الشغل بيتعمل امتى',
+    'أمر الشغل بيتعمل إمتى',
+  ],
   category: 'production',
   answer:
-    'أمر الشغل (Work Order) هو الوحدة اللي بيتتبع بيها تصنيع بند واحد محتاج إنتاج فعلي جوه المصنع — كل بند من بنود الطلب المحتاج تصنيع بياخد أمر شغل مستقل بيه. أمر الشغل بيتبع مسار وركفلو محدد (أوفست/ديجيتال/لوحات وإعلانات/منتجات جاهزة/خدمات...)، وبيعدي على مراحل هذا المسار قسم بقسم لحد ما يوصل لمرحلة التسليم. تقدر تتابع كل أوامر الشغل الشغالة لحظيًا من لوحة الإنتاج (/production-board) — فيها تاب "الكل" يجمع كل الأقسام، وتاب "حسب الوركفلو" بيعرضها Kanban حسب مرحلتها.',
+    'أمر الشغل (Work Order) هو الوحدة اللي بيتتبع بيها تصنيع بند واحد محتاج إنتاج فعلي جوه المصنع — كل بند من بنود الطلب المحتاج تصنيع بياخد أمر شغل مستقل بيه. أمر الشغل بيتبع مسار وركفلو محدد (أوفست/ديجيتال/لوحات وإعلانات/منتجات جاهزة/خدمات...)، وبيعدي على مراحل هذا المسار قسم بقسم لحد ما يوصل لمرحلة التسليم. أمر الشغل بيتعمل تلقائيًا لحظة حفظ الطلب الحقيقي (Order) — مش عرض السعر — ولكل بند محتاج تصنيع فعلي بس (مش كل بند في الطلب). تقدر تتابع كل أوامر الشغل الشغالة لحظيًا من لوحة الإنتاج (/production-board) — فيها تاب "الكل" يجمع كل الأقسام، وتاب "حسب الوركفلو" بيعرضها Kanban حسب مرحلتها.',
+};
+
+/**
+ * Verified against `apps/api/prisma/seed.ts`'s `WORKFLOW_TEMPLATES` — the
+ * design stage carries `isMandatory: false, canSkip: true` for OFFSET,
+ * DIGITAL, and SUBLIMATION_GIFTS, but has NEITHER field set (defaults to
+ * mandatory/non-skippable) for BOARDS_SIGNAGE and OTHER_PRODUCTS, and
+ * SERVICES has no design stage at all. Deliberately not a single global
+ * rule — the tracks genuinely differ.
+ */
+const DESIGN_REQUIREMENT: SystemHelpTopic = {
+  id: 'design_requirement',
+  title: 'هل التصميم إجباري ولا اختياري؟',
+  keywords: ['هل التصميم اجباري', 'هل التصميم إجباري', 'التصميم اجباري', 'التصميم إجباري', 'التصميم اختياري'],
+  category: 'production',
+  answer:
+    'بيختلف حسب مسار الإنتاج: في الأوفست والديجيتال والطباعة الحرارية (سبليميشن)، مرحلة التصميم اختيارية وممكن تتخطى لو الشغل مش محتاج تصميم جديد. في مسار اللوحات والإعلانات ومسار المنتجات الأخرى (أختام، أكريليك، إلخ)، مرحلة التصميم إجبارية ومش قابلة للتخطي. مسار خدمات الوكالة مفيهوش مرحلة تصميم منفصلة أصلاً.',
+};
+
+/**
+ * Verified against `inventoryService.ts`'s real exported functions:
+ * `recordStockMovement`/`listStockMovements` (movement history),
+ * `deductStockForOrderItem`/`restockForOrderItem` (automatic deduction on
+ * sale, automatic restock on return), `getInventoryItemByBarcode` (barcode
+ * lookup), and `listItemsNeedingSupplier` (feeds the "قائمة شراء عاجل"
+ * purchase-request flow for items that ran negative).
+ */
+const INVENTORY_TRACKING: SystemHelpTopic = {
+  id: 'inventory_tracking',
+  title: 'إزاي المخزون بيتابع في النظام',
+  keywords: ['المخزون بيتابع ازاي', 'المخزون بيتابع إزاي', 'متابعة المخزون', 'تتبع المخزون'],
+  category: 'inventory',
+  answer:
+    'كل صنف مخزون بيتسجل بكمية حالية وبيتتبع بحركات دخول/خروج — الحركة بتتسجل تلقائيًا لما الصنف يتباع في طلب أو يترجع، وممكن كمان تتسجل يدويًا. تقدر تدوّر على أي صنف بالاسم أو بالباركود. لو صنف نزل تحت الصفر، النظام بيسجله تلقائيًا في "قائمة شراء عاجل" علشان يتلحق بمورده. شاشة المخزون: "/inventory".',
 };
 
 /**
@@ -173,7 +249,20 @@ const WORK_ORDER_BASICS: SystemHelpTopic = {
 const NAVIGATION_MAP: SystemHelpTopic = {
   id: 'navigation_map',
   title: 'أماكن الشاشات الرئيسية في النظام',
-  keywords: ['فين اقدر اشوف', 'فين أقدر أشوف', 'فين ألاقي', 'مكان شاشة', 'وين اشوف'],
+  keywords: [
+    'فين اقدر اشوف',
+    'فين أقدر أشوف',
+    'فين ألاقي',
+    'مكان شاشة',
+    'وين اشوف',
+    // Task 15.4 — the bare-module-name "فين X؟" phrasing, matching the new
+    // routing whitelist in `toolRouting.ts` exactly.
+    'فين الخزينة',
+    'فين المخزون',
+    'فين الموردين',
+    'فين العملاء',
+    'فين التقارير',
+  ],
   category: 'navigation',
   answer:
     'أهم الشاشات: الخزينة "/treasury"، الطلبات الجديدة "/orders/new"، عروض الأسعار "/quotations"، لوحة الإنتاج "/production-board"، المخزون "/inventory"، العملاء "/partners"، الموردين "/suppliers"، الموظفين "/users"، الماكينات "/machines"، قوالب الوركفلو "/workflow-templates"، التقارير "/reports".',
@@ -188,6 +277,8 @@ export const SYSTEM_HELP_TOPICS: readonly SystemHelpTopic[] = [
   QUOTATION_VS_ORDER,
   ORDER_FULL_LIFECYCLE,
   WORK_ORDER_BASICS,
+  DESIGN_REQUIREMENT,
+  INVENTORY_TRACKING,
   NAVIGATION_MAP,
 ];
 

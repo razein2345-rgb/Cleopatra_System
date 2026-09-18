@@ -56,3 +56,43 @@ describe('findHelpTopics', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+/**
+ * Task 15.4 — grounded keyword/topic additions for the six natural-
+ * language questions Task 15.3 found unreachable. Each expected topic id
+ * matches the grounded fact verified against real code (see
+ * `helpKnowledge.ts`'s own per-topic doc comments for the exact source).
+ */
+describe('findHelpTopics — Task 15.4 natural-language coverage', () => {
+  it('1. "فين الخزينة؟" resolves to the navigation map', () => {
+    const results = findHelpTopics('فين الخزينة؟');
+    expect(results.some((r) => r.id === 'navigation_map')).toBe(true);
+  });
+
+  it('2. "أمر الشغل بيتعمل إمتى؟" resolves to work_order_basics', () => {
+    const results = findHelpTopics('أمر الشغل بيتعمل إمتى؟');
+    expect(results.some((r) => r.id === 'work_order_basics')).toBe(true);
+  });
+
+  it('3. "العميل بيتحدد إزاي؟" resolves to new_order', () => {
+    const results = findHelpTopics('العميل بيتحدد إزاي؟');
+    expect(results.some((r) => r.id === 'new_order')).toBe(true);
+  });
+
+  it('4. "مين يقدر يعيد فتح اليوم؟" resolves to daily_closure despite the يعيد/إعادة mismatch', () => {
+    const results = findHelpTopics('مين يقدر يعيد فتح اليوم؟');
+    expect(results.some((r) => r.id === 'daily_closure')).toBe(true);
+  });
+
+  it('5. "هل التصميم إجباري؟" resolves to the new design_requirement topic, with the track-dependent answer', () => {
+    const results = findHelpTopics('هل التصميم إجباري؟');
+    expect(results[0]?.id).toBe('design_requirement');
+    expect(results[0]?.answer).toContain('اللوحات والإعلانات');
+    expect(results[0]?.answer).toContain('اختيارية');
+  });
+
+  it('6. "المخزون بيتابع إزاي؟" resolves to the new inventory_tracking topic', () => {
+    const results = findHelpTopics('المخزون بيتابع إزاي؟');
+    expect(results.some((r) => r.id === 'inventory_tracking')).toBe(true);
+  });
+});

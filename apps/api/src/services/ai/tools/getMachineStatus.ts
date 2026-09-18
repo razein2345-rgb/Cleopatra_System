@@ -17,7 +17,8 @@ const inputSchema = z.object({
 
 export const getMachineStatusTool: AiToolDefinition<z.infer<typeof inputSchema>> = {
   name: 'get_machine_status',
-  description: 'List machines and their current status (RUNNING/STOPPED/MAINTENANCE), optionally filtered to one branch.',
+  description:
+    "List machines and their current equipment status (RUNNING/STOPPED/MAINTENANCE), optionally filtered to one branch. Use this tool ONLY when the user is asking about physical machine/equipment status. It is NOT for work orders, production jobs, or work-order details (the Arabic 'أمر الشغل' is unrelated to a machine's 'تشغيل'/'شغالة' status) — use search_production_by_customer or get_work_order for those instead.",
   requiredPermission: 'machines.view',
   inputSchema,
   inputJsonSchema: {

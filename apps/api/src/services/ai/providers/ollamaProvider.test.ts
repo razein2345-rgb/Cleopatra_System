@@ -73,6 +73,22 @@ describe('OllamaProvider — request shape', () => {
     const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
     expect(body.model).toBe('qwen3');
   });
+
+  /**
+   * Task 15.2 — pins sampling to eliminate the run-to-run non-determinism
+   * Task 15.1 proved (identical tool result, 3/7 final answers still
+   * discarded it). `temperature: 0` makes generation greedy instead of
+   * sampled.
+   */
+  it('sends options: { temperature: 0 } to make generation deterministic (Task 15.2)', async () => {
+    const fetchMock = mockFetchOnce({ ok: true, json: () => ({ message: { role: 'assistant', content: 'ok' } }) });
+    const provider = new OllamaProvider('http://localhost:11434', 'qwen3');
+
+    await provider.converse(baseInput);
+
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body.options).toEqual({ temperature: 0 });
+  });
 });
 
 describe('OllamaProvider — response parsing', () => {
