@@ -1,94 +1,75 @@
 # Cleopatra AI — Tool Catalog
 
-**Status:** Proposal / Phase 0 audit output. No tool listed here is implemented.
+**Status (updated 2026-09-18):** 24 tools implemented, all READ, zero WRITE tools. This is the actual registry in `apps/api/src/services/ai/tools/index.ts`, verified against source — not a proposal.
 
-**Ground rule (from `CLEOPATRA_AI_ARCHITECTURE.md` §1):** every tool is a thin wrapper around an existing service function. A tool's own code should be close to: check permission → call existing service → shape the result for the model. If a tool's implementation is starting to look like new business logic, that is a sign the tool is wrong, not a sign the service layer needs a new function written *for* the AI.
+**Ground rule (unchanged, and confirmed true by inspection):** every tool is a thin wrapper around an existing service function — check permission → call existing service → shape the result for the model. `grep` for `.create(`/`.update(`/`.delete(`/`.upsert(` across every file in this directory returns nothing.
 
-**Every tool below is scoped to the calling user's own permissions and branch access** — never a superset. `CLEOPATRA_AI_SECURITY.md` §2 defines exactly how that check is made per tool; this document defines *which* tools exist and what each one does.
+**Every tool is scoped to the calling user's own permissions and branch access** — `CLEOPATRA_AI_SECURITY.md` §2 defines exactly how; this document defines *which* tools exist.
 
 ---
 
 ## How to read this catalog
 
-- **Kind:** `READ` (queries data, no side effect, never needs confirmation) or `WRITE` (creates/changes a real record, always a confirmation candidate — see `CLEOPATRA_AI_SECURITY.md` §4 for exactly which WRITE tools require confirmation vs. which are low-risk enough not to).
-- **Phase:** which `CLEOPATRA_AI_IMPLEMENTATION_PLAN.md` phase first ships this tool. Phase 1 is READ-only by design (per the user's own stated preference: ship Q&A + real data first, prove it before adding execution).
-- **Wraps:** the exact existing function/endpoint it calls — nothing here invents new service logic.
+- **Kind:** all 24 current tools are `READ`. No `WRITE` tool exists.
+- **Required permission:** the exact `requiredPermission` string checked by the dispatcher before `execute()` ever runs, or `null` if the tool needs no permission beyond being authenticated. `requiresSuperAdmin: true` is called out separately where present.
+- **Added by:** the task that introduced the tool (see `CLEOPATRA_AI_IMPLEMENTATION_PLAN.md` for the full task history).
 
-## Phase 1 — Read tools (no confirmation ever needed)
+## The 24 tools (apps/api/src/services/ai/tools/index.ts)
 
-| Tool | Kind | Required permission | Wraps |
-|---|---|---|---|
-| `search_customers` | READ | `partners.view` | `businessPartnerService.ts` list/search (same as `PartnersPage.tsx`'s own search) |
-| `get_customer` | READ | `partners.view` | `businessPartnerService.ts::getPartnerById` |
-| `get_customer_balance` | READ | `orders.view` | `GET /api/orders?partnerId=` + the exact `remainingBalance` math already in `orderService.ts::mapOrderToDto` — **never re-derived**, see `CLEOPATRA_AI_ARCHITECTURE.md` §7 |
-| `search_leads` | READ | `leads.view` | `leadService.ts` list/search |
-| `search_orders` | READ | `orders.view` | `orderService.ts::listOrders` filters (status, partner, date range, branch) |
-| `get_order` | READ | `orders.view` | `orderService.ts::getOrderById` (returns items, payments, returns, computed balance) |
-| `get_work_order` | READ | `work-orders.view` | `workOrderService.ts::getWorkOrderById` |
-| `get_production_status` | READ | `work-orders.view` | `workflowInstanceService.ts::getWorkflowDashboardSummary` / `getWorkflowInstance` (current stage, delayed flag, per-department counts) |
-| `get_treasury_summary` | READ | `treasury.view` | `treasuryService.ts::getTreasuryBalance` (branch-scoped — the tool must pass the caller's own `accessibleBranchIds`, never `'all'`, unless the caller is SUPER_ADMIN, identically to how `treasuryEntries` controller already scopes it) |
-| `search_inventory` | READ | `inventory.view` | `inventoryService.ts` list/search by name or barcode |
-| `get_inventory_item` | READ | `inventory.view` (cost price fields additionally require `inventory.costPrice`, same as the existing UI) | `inventoryService.ts::getInventoryItemById` |
-| `calculate_price` | READ | *(none beyond being logged in — pricing preview is not currently permission-gated in the composer UI either)* | `pricingEngineService.ts`'s preview path — the **exact same function** `NewOrderPage.tsx`'s live preview calls. Never persists an item. This is the one tool that touches the Pricing Engine, and it is read-only by construction — see rule 3/4 discussion in `CLEOPATRA_AI_ARCHITECTURE.md` §7 |
-| `search_call_logs` | READ | `call-logs.view` | `callLogService.ts::listCallLogs` |
-| `get_reorder_due` | READ | `orders.view` | `lib/reorderPrediction.ts` — the same computation `/reorder-due` already renders |
-| `get_dashboard_summary` | READ | *(whatever each underlying widget already requires — the tool composes several existing summaries, each individually permission-checked)* | `getWorkflowDashboardSummary` + `getCompanyFinancialSummary`, branch-scoped |
-| `get_employee_payroll` | READ | **SUPER_ADMIN only** — hard-coded check, not a normal permission string, matching `EmployeeProfilePage.tsx`'s own gate exactly | `employeePayrollService.ts::computeEmployeePayroll` / `computePreviousClosedPeriod` |
+| Tool | Required permission | Added by |
+|---|---|---|
+| `search_customers` | `partners.view` | Phase 1 |
+| `get_customer` | `partners.view` | Phase 1 |
+| `get_customer_balance` | `orders.view` | Phase 1 |
+| `search_leads` | `leads.view` | Phase 1 |
+| `search_orders` | `orders.view` | Phase 1 |
+| `get_order` | `orders.view` | Phase 1 |
+| `get_work_order` | `work-orders.view` | Phase 1 |
+| `get_production_status` | `work-orders.view` | Phase 1 |
+| `get_treasury_summary` | `treasury.view` | Phase 1 |
+| `search_inventory` | `inventory.view` | Phase 1 |
+| `get_inventory_item` | `inventory.view` | Phase 1 |
+| `calculate_price` | *(none — `null`; matches the composer's own unrestricted preview)* | Phase 1 |
+| `search_call_logs` | `call-logs.view` | Phase 1 |
+| `get_reorder_due` | `orders.view` | Phase 1 |
+| `get_dashboard_summary` | *(none at its own level — `null`; composes several summaries, each individually permission-checked inside)* | Phase 1 |
+| `get_employee_payroll` | *(none as a normal permission string — `requiresSuperAdmin: true` instead)*, matching `EmployeeProfilePage.tsx`'s own gate exactly | Phase 1 |
+| `search_quotations` | `quotations.view` | Task 1 (2026-09-10) |
+| `get_quotation` | `quotations.view` | Task 1 |
+| `search_production_by_customer` | `work-orders.view` | Task 3 |
+| `search_suppliers` | `suppliers.view` | Task 4 |
+| `get_supplier_statement` | `suppliers.view` | Task 4 |
+| `get_purchase_requests_due` | `inventory.view` | Task 5 |
+| `get_machine_status` | `machines.view` | Task 6 |
+| `search_help_topics` | *(none — `null`; pure static in-memory string match, no Prisma import, no data that could differ per caller)* | Task 14.1 |
 
-Deliberately **excluded** from Phase 1 even as read tools, pending a real need: full campaign/content-calendar listings, supplier ledger detail, full audit-log search. Nothing stops adding these later; they are omitted now because nothing in the request or the system's actual daily-use pattern (per this session's own history) suggests staff will ask an AI about them on day one, and every tool added is one more thing to keep in sync with its underlying service and to security-review.
+Two tools received hardening fixes after shipping, with no permission change: `search_quotations`/`search_suppliers` (Task 7 — customer-name matching, supplier-name prefix tolerance), and `get_machine_status` (an additive description-text clarification distinguishing "machine/equipment status" from "work order," steering the model to `search_production_by_customer`/`get_work_order` instead when a query is actually about a production job).
 
-## Phase 2+ — Write tools (require confirmation, see `CLEOPATRA_AI_SECURITY.md` §4)
+## Tool routing (which subset the model is actually offered)
 
-Ordered by risk, lowest first. **Phase 2 ships only the first group** (low-risk, easily reversible, soft-deletable); the higher-risk groups are separate later phases per the implementation plan, each requiring its own explicit sign-off before being enabled.
+Not every request offers all 24 tools — `toolRouting.ts` narrows the offered set per request via keyword/domain matching, conversation-context carry-over, and a HELP-intent whitelist. See `CLEOPATRA_AI_ARCHITECTURE.md` §4 for the full routing design. This is orthogonal to permission checking: routing decides what the model is *offered*; the dispatcher's permission check decides what may actually *execute*, and always applies regardless of what routing offered.
 
-### Low risk (Phase 2 candidates)
+## Write tools — not implemented
 
-| Tool | Required permission | Wraps | Why low risk |
-|---|---|---|---|
-| `create_lead` | `leads.create` | `leadService.ts::createLead` | Purely additive, soft-deletable, no financial/production effect |
-| `log_call` | `call-logs.create` | `callLogService.ts::createCallLog` | Same — additive record of something that already happened |
-| `update_lead_field` | `leads.edit` | `leadService.ts::updateLead` (single field, e.g. source/stage) | Matches the existing inline-edit UI exactly; no destructive path |
+**No write tool exists.** The original proposal below sequenced future low/medium/high-risk write tools (`create_lead`, `advance_workflow_instance`, `create_treasury_entry`, etc.) behind a confirmation-token architecture. None of that has been built. This section is kept only as a historical record of what was proposed — not as a current or scheduled roadmap — per the standing rule that AI scope stays 100% read-only until the owner gives separate, explicit approval for write capability.
 
-### Medium risk (later phase)
+If that approval is ever given, the same shape the proposal described remains the reasonable starting point: risk-tiered, one tool at a time, each requiring its own confirmation step and its own audit trail — but none of this is in progress, and nothing in the current implementation depends on it existing.
 
-| Tool | Required permission | Wraps | Why it needs confirmation |
-|---|---|---|---|
-| `create_order` | `orders.create` | `orderService.ts::createOrder` | Real invoice, real stock deduction, real work orders spawned — but soft-deletable and correctable afterward like any manually-entered order |
-| `advance_workflow_instance` | `work-orders.edit` | `workflowInstanceService.ts::advanceWorkflowInstance` | Moves real production state; reversible via `revertWorkflowInstance` (تكملة 85), which lowers — but does not remove — the risk |
-| `record_payment` | `orders.edit` | `orderService.ts::addPayment` | Real money recorded against a real invoice |
-
-### High risk (later phase, most conservative confirmation copy — see `CLEOPATRA_AI_SECURITY.md` §4)
-
-| Tool | Required permission | Wraps | Why high risk |
-|---|---|---|---|
-| `create_treasury_entry` | `treasury.create` | `treasuryService.ts::createManualTreasuryEntry` | Directly represents real cash movement |
-| `close_treasury_day` | `treasury.*` (matches the existing route's own gate) | `treasuryService.ts::closeTreasuryDay` | Financial reconciliation checkpoint, branch-wide effect |
-| `delete_order` / any `DELETE`-shaped tool | matches the underlying route's own delete permission | the existing soft-delete service function | Even soft-deleted, a delete is the single most consequence-bearing action class — see rule 19 |
-
-**Never a tool, at any phase:** anything that would change the Pricing Engine's output formula, anything that writes directly to `Setting` fields that gate other business rules (thresholds, VAT rate, etc.) without going through the existing Settings screens' own validation, and anything that touches `AuditLog` itself (the AI is audited, it does not get to edit its own trail).
-
-## Tool Definition Shape (illustrative)
+## Tool Definition Shape (actual, from a real tool file)
 
 ```typescript
-// apps/api/src/services/ai/tools/searchOrders.ts — illustrative, not final.
-export const searchOrdersTool: AiToolDefinition = {
-  name: 'search_orders',
-  kind: 'READ',
-  requiredPermission: 'orders.view',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      partnerId: { type: 'string', format: 'uuid' },
-      status: { type: 'string', enum: ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'] },
-      query: { type: 'string', description: 'free-text match on item name or invoice number' },
-    },
-    additionalProperties: false,
-  },
-  async execute(input, ctx: AiToolContext) {
-    // ctx carries the resolved req.auth — same shape every controller already gets.
-    return listOrders({ ...input, branchIds: ctx.accessibleBranchIds });
+// apps/api/src/services/ai/tools/getMachineStatus.ts — real, current code.
+export const getMachineStatusTool: AiToolDefinition<z.infer<typeof inputSchema>> = {
+  name: 'get_machine_status',
+  description:
+    "List machines and their current equipment status (RUNNING/STOPPED/MAINTENANCE), optionally filtered to one branch. Use this tool ONLY when the user is asking about physical machine/equipment status. It is NOT for work orders, production jobs, or work-order details ...",
+  requiredPermission: 'machines.view',
+  inputSchema,
+  inputJsonSchema: { /* ... */ },
+  async execute(input, ctx) {
+    // calls the existing machine service function — zero new business logic
   },
 };
 ```
 
-Every tool follows this same three-part shape: declared permission (checked by the dispatcher before `execute` ever runs, not inside it — see `CLEOPATRA_AI_SECURITY.md` §2), a strict input schema (Zod, reusing `packages/shared` schemas wherever one already exists for the equivalent API input — e.g. `createLeadSchema` for `create_lead`'s input shape, never a hand-rolled duplicate), and an `execute` that calls one existing service function.
+Every tool follows this same shape: a declared permission (checked by the dispatcher before `execute` ever runs, not inside it — `CLEOPATRA_AI_SECURITY.md` §2), a strict Zod input schema, and an `execute` that calls exactly one existing service function.

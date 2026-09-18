@@ -1,108 +1,40 @@
 # Cleopatra AI — Implementation Plan
 
-**Status:** Proposal / Phase 0 audit output. **No phase below has been started.** Each phase requires its own explicit go-ahead from the owner before work begins — this document is the menu, not a commitment to build all of it.
+**Status (updated 2026-09-18):** Read-only assistant shipped and hardened through **Task 15.7**. This supersedes the original Phase 0 proposal below in one material way: the provider is **local Ollama (`qwen3`)**, not the hosted Anthropic API this document originally proposed — the owner's explicit instruction was that no Cleopatra business data may leave the building to a hosted LLM. Everything else about the phased structure (read-only first, write tools only with separate explicit approval per phase) held.
 
-Cross-reference: `CLEOPATRA_AI_ARCHITECTURE.md` (system design), `CLEOPATRA_AI_TOOLS.md` (tool catalog), `CLEOPATRA_AI_SECURITY.md` (permission/confirmation/audit design). This document sequences them into buildable, independently-reviewable phases.
-
----
-
-## Phase 1 — Foundation: read-only Q&A
-
-**Objective:** A staff member can open a chat panel inside the existing app, ask a question in Arabic, and get an answer grounded in real data — with zero ability to change anything. This is the slice the owner explicitly asked to ship and validate before any execution capability is added.
-
-**Files likely to change / added:**
-- `apps/api/src/services/ai/llmProvider.ts` (new — interface, `CLEOPATRA_AI_ARCHITECTURE.md` §3)
-- `apps/api/src/services/ai/providers/anthropicProvider.ts` (new)
-- `apps/api/src/services/ai/systemKnowledge.ts` (new — the static System Knowledge content, `CLEOPATRA_AI_ARCHITECTURE.md` §4)
-- `apps/api/src/services/ai/tools/*.ts` (new — the Phase 1 READ tools from `CLEOPATRA_AI_TOOLS.md`)
-- `apps/api/src/services/aiAgentService.ts` (new — the orchestrator loop)
-- `apps/api/src/controllers/ai.ts`, `apps/api/src/routes/ai.ts` (new — `POST /api/ai/chat`)
-- `apps/web/src/components/ai/AiChatPanel.tsx` (new — the chat UI)
-- `apps/web/src/lib/ai/*` — thin API client for the new endpoint
-- `packages/shared/src/schemas/ai.ts` (new — request/response Zod schemas for the chat endpoint, following the exact pattern every other module's schema file already uses)
-- `package.json` (apps/api) — add `@anthropic-ai/sdk` (the one new dependency this phase requires; nothing else)
-
-**Dependencies:** an `ANTHROPIC_API_KEY` (see Final Report — this is an external, owner-provided prerequisite, not something this plan can satisfy on its own). Added the same way every other secret already is — `sync: false` in `render.yaml`, entered directly into Render's Environment tab, listed (empty) in `apps/api/.env.example`. Never in source, never pasted into chat.
-
-**Database impact:** **none.** Phase 1 is deliberately migration-free — no conversation-history table, no new AuditLog column. Conversation state for a single chat session can live in the browser/request payload (the frontend resends recent turns) rather than being persisted server-side; if that turns out to be too limiting once real usage starts, persisting conversations is a small, self-contained addition to propose *after* Phase 1 is live, not before.
-
-**API impact:** one new route, additive, gated by `requireAuth` (any logged-in staff member, per the owner's own answer on who can use this) — no existing endpoint changes.
-
-**Security impact:** read-only by construction (§2 above); every tool call still passes through the exact permission checks `CLEOPATRA_AI_SECURITY.md` §2 describes, so a user with narrow permissions gets narrow answers, never an escalation.
-
-**Tests:** unit tests for each tool's permission-gating (a user without `treasury.view` gets a rejection, not data); a small eval set (see `claude-api` skill's `build-eval` flow) covering: correct tool selection for a sample of realistic Arabic staff questions, refusal to state a number without a tool call, correct branch-scoping for a non-SUPER_ADMIN user, graceful "I don't know how to check that" for an out-of-scope question.
-
-**Rollback:** delete the new route/service/component files and the one new dependency; zero database state to unwind, since none was created.
+Cross-reference: `CLEOPATRA_AI_ARCHITECTURE.md` (system design, as actually built), `CLEOPATRA_AI_TOOLS.md` (the 24-tool catalog, as actually built), `CLEOPATRA_AI_SECURITY.md` (permission/read-only boundary, as actually built).
 
 ---
 
-## Phase 2 — Confirmation infrastructure + first write tools
+## Phase 1 — Foundation: read-only Q&A (SHIPPED)
 
-**Objective:** The AI can *propose* an action, a human explicitly confirms it, and it executes through the real service layer with a full audit trail — starting with the lowest-risk write tools only (`create_lead`, `log_call`, `update_lead_field`, per `CLEOPATRA_AI_TOOLS.md`'s low-risk tier).
+**What actually shipped**, in order:
 
-**Files likely to change:**
-- `apps/api/src/services/ai/confirmationToken.ts` (new — sign/verify, `CLEOPATRA_AI_SECURITY.md` §4)
-- `apps/api/src/controllers/ai.ts` — add `POST /api/ai/confirm`
-- `apps/api/src/services/ai/tools/createLead.ts`, `logCall.ts`, `updateLeadField.ts` (new)
-- `apps/web/src/components/ai/AiChatPanel.tsx` — render the confirmation card + confirm/cancel actions
-- Every write-tool call site adds a `recordAudit()` call carrying the `_source: 'cleopatra_ai'` marker (`CLEOPATRA_AI_SECURITY.md` §5)
+1. Read-only assistant, `POST /api/ai/chat`, `requireAuth`-gated, orchestrator loop in `apps/api/src/services/aiAgentService.ts`.
+2. Same day, the provider was switched from the originally-proposed Anthropic API to a local **Ollama** provider (`apps/api/src/services/ai/providers/ollamaProvider.ts`, model `qwen3`) — owner: no Cleopatra business data to a hosted LLM API. `think: false` disabled Qwen3's reasoning trace for responsiveness.
+3. Fifteen numbered hardening/expansion tasks followed (Task 1 through Task 15.7 — see `CLEOPATRA_AI_TOOLS.md` for the tool-by-tool history and `CLEOPATRA_AI_ARCHITECTURE.md` for the routing/guard architecture that grew out of them). Several of these tasks were live-testing/root-cause investigations with no code of their own (Tasks 2, 9, 11, 15.1, 15.3, 15.5, 15.6) whose findings were fixed by the task immediately following.
 
-**Dependencies:** Phase 1 complete and validated (the owner has actually used the read-only assistant and is satisfied it understands the system correctly) — this is an explicit gate, not just a suggested order.
+**Current state:** 24 read-only tools, zero write tools, deterministic tool routing (keyword/domain matching, conversation-context carry-over, and a HELP-intent whitelist), two deterministic code-level guards (Guard A: search-before-get substitution; Guard B: stale-context rejection after an explicit correction), a deterministic HELP fallback when the model returns zero tool calls, and `temperature: 0` for reproducible tool-selection behavior. 218 AI-specific tests passing; 432 tests passing across the full backend suite.
 
-**Database impact:** none required to ship this phase (the JSON-embedded provenance marker needs no migration). The `AuditLog.initiatedByAgent` column described in `CLEOPATRA_AI_SECURITY.md` §5 is an **optional, separately-approved** addition if/when reporting on AI actions specifically becomes a real need — not bundled into this phase by default.
+**Database impact:** none — confirmed as of Task 15.7, zero AI-specific migrations exist anywhere in the schema.
 
-**API impact:** one new endpoint (`/api/ai/confirm`); no existing endpoint changes; the three new write tools call existing, unmodified service functions.
-
-**Security impact:** this is where the confirmation architecture is proven end-to-end on genuinely low-consequence actions before any financial or production-state tool is considered. Each of the three tools' `requiredPermission` matches its equivalent existing UI action exactly.
-
-**Tests:** a confirmation token cannot be replayed after use or after expiry; a token issued to user A cannot be confirmed by user B even if intercepted; every confirmed action produces exactly one `AuditLog` row with the correct entity/action/performedBy.
-
-**Rollback:** disable the three write tools (config flag, not a code revert) while keeping Phase 1's read-only capability live; the confirmation infrastructure itself is inert with no write tools registered against it.
+**Security impact:** read-only by construction — every one of the 24 tools is confirmed to contain zero `.create(`/`.update(`/`.delete(`/`.upsert(` calls. Every tool call still passes through the same permission check every existing controller uses, so a narrow-permission caller gets narrower answers, never an escalation.
 
 ---
 
-## Phase 3 — Medium-risk write tools
+## Phases 2–4 — Confirmation infrastructure and write tools: still not started, still not approved
 
-**Objective:** `create_order`, `advance_workflow_instance`, `record_payment` — each individually reviewed and enabled only after Phase 2's confirmation/audit path has a real track record.
+The original proposal below sequenced future write-tool phases (low/medium/high risk, gated behind a confirmation-token architecture). **None of this has been built, approved, or scheduled.** It is kept here only as a record of what was proposed, not as an active roadmap:
 
-**Files likely to change:** one new tool file per action under `apps/api/src/services/ai/tools/`, each wrapping the named existing service function with zero new business logic.
+- No confirmation infrastructure exists.
+- No write tool of any kind exists (`create_lead`, `advance_workflow_instance`, `create_treasury_entry`, or otherwise).
+- No `AuditLog.initiatedByAgent` column or any other AI-specific schema change exists.
+- Nothing in the current implementation assumes or depends on a future write phase.
 
-**Dependencies:** Phase 2, plus **explicit, separate owner approval for `create_order` specifically** — order creation is the single most complex composer in the app (multi-kind pricing, production-track routing, multi-material notebooks, etc.); this plan does not assume the AI should attempt to replicate that composer's full flexibility in v1. A narrower first version (e.g. only `MANUAL`/`INVENTORY` kinds, the same safe subset the existing quick-paste feature already limits itself to per its own documented reasoning) is the recommended scope, not the full composer surface, unless the owner asks for more.
+Any of this remains possible in principle, but — per this project's standing rules — would need its own explicit, separate owner approval before a single line of it is written, exactly as the original proposal said. This document does not speculate about when or whether that happens.
 
-**Database impact:** none.
+## Explicitly out of scope (unchanged)
 
-**API impact:** none beyond new tool registrations.
-
-**Security impact:** `advance_workflow_instance` is the first tool that changes real production state; its confirmation copy must name the exact work order, current stage, and destination stage, per `CLEOPATRA_AI_SECURITY.md` §4's plain-language requirement.
-
-**Tests:** an order created via the AI tool must produce byte-identical pricing/stock/work-order side effects to the same order entered through the normal composer (same reasoning already applied to `previewItemTotal` reuse — same input, same output, because it's the same function).
-
-**Rollback:** disable the specific tool via config flag; no data migration to reverse.
-
----
-
-## Phase 4 — High-risk write tools (financial / destructive)
-
-**Objective:** `create_treasury_entry`, `close_treasury_day`, and any delete-shaped tool — each gated behind its own explicit owner sign-off, evaluated individually, not as a batch.
-
-**Files likely to change:** one tool file per action, plus (if requested) the `AuditLog.initiatedByAgent` migration described in Phase 2's Database impact note, promoted here if by this point the volume of AI-initiated financial actions justifies dedicated reporting.
-
-**Dependencies:** Phases 1–3 live and stable for a meaningful period; this is deliberately the last phase, not scheduled on any fixed timeline.
-
-**Database impact:** possibly the one optional `AuditLog` column noted above — a real migration, requiring the standard migration workflow and explicit approval per rule 10, proposed only if needed.
-
-**API impact:** none beyond new tool registrations.
-
-**Security impact:** highest scrutiny in the whole plan. Recommend the owner personally reviews the exact confirmation copy for these three tools before they're enabled, not just the code.
-
-**Tests:** identical-effect tests as Phase 3, plus an explicit test that a malformed/borderline-ambiguous request (e.g. an amount that doesn't parse cleanly) is refused rather than guessed.
-
-**Rollback:** disable via config flag; if the optional migration was applied, it is purely additive and requires no rollback of existing data — dropping the column, if ever desired, affects no other feature.
-
----
-
-## Explicitly out of scope for this plan
-
-- **RAG / vector search** — see `CLEOPATRA_AI_ARCHITECTURE.md` §6. Not needed at any phase above; revisit only if a concrete, observed need appears.
-- **Local/self-hosted LLM** — see `CLEOPATRA_AI_ARCHITECTURE.md` §5. The `LlmProvider` abstraction keeps this possible later without touching any phase above, but no phase here assumes it.
-- **Customer-facing chat** (the request and every design decision above is for internal staff use only, per the owner's own answer — "كل الموظفين المسجلين دخول"). A customer-facing assistant is a materially different security surface (unauthenticated or lower-trust callers) and is not addressed by this plan at all.
+- **RAG / vector search** — not needed; the static system-prompt knowledge is a few thousand tokens, and live data is fetched via exact tool calls, not similarity search.
+- **A different/hosted LLM provider** — deliberately rejected; Ollama stays local-only per explicit owner instruction. `LlmProvider`-style abstraction was not built as a separate interface, but `ollamaProvider.ts` is the sole call site — nothing else in the codebase imports an LLM SDK directly.
+- **Customer-facing chat** — this remains an internal-staff-only tool (`requireAuth`, no separate customer-facing surface exists).
