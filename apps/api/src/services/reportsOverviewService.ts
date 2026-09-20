@@ -24,6 +24,8 @@ export async function getReportsOverview(from?: Date, to?: Date): Promise<Report
     treasuryEntries,
     supplierPurchases,
     stockMovements,
+    approvedCustomerOpenings,
+    consumedOpeningCreditByPartner,
   ] = await Promise.all([
     prisma.treasuryEntry.groupBy({
       by: ['method', 'type'],
@@ -92,6 +94,28 @@ export async function getReportsOverview(from?: Date, to?: Date): Promise<Report
       select: { id: true, date: true, type: true, quantity: true, reference: true, inventoryItem: { select: { name: true } } },
       orderBy: { date: 'desc' },
     }),
+    // Opening State / Cutover (Phase 3C.2 §16) — point-in-time, same as
+    // customer debt above, never period-bound. Only APPROVED counts.
+    prisma.customerOpening.findMany({
+      where: { status: 'APPROVED' },
+      include: { partner: { select: { nameAr: true } } },
+    }),
+    prisma.payment.groupBy({
+      by: ['orderId'],
+      where: { sourceType: 'OPENING_CREDIT_APPLICATION', isDeleted: false },
+      _sum: { amount: true },
+    }).then(async (rows) => {
+      if (rows.length === 0) return new Map<string, number>();
+      const orders = await prisma.order.findMany({ where: { id: { in: rows.map((r) => r.orderId) } }, select: { id: true, partnerId: true } });
+      const partnerByOrder = new Map(orders.map((o) => [o.id, o.partnerId]));
+      const byPartner = new Map<string, number>();
+      for (const r of rows) {
+        const partnerId = partnerByOrder.get(r.orderId);
+        if (!partnerId) continue;
+        byPartner.set(partnerId, (byPartner.get(partnerId) ?? 0) + (r._sum.amount?.toNumber() ?? 0));
+      }
+      return byPartner;
+    }),
   ]);
 
   const byMethodTotals = new Map<string, number>();
@@ -119,6 +143,24 @@ export async function getReportsOverview(from?: Date, to?: Date): Promise<Report
     const entry = debtByPartner.get(order.partnerId) ?? { nameAr: order.partner.nameAr, outstanding: 0 };
     entry.outstanding += remaining;
     debtByPartner.set(order.partnerId, entry);
+  }
+  // Opening State / Cutover (Phase 3C.2 §16) — the exact formula from
+  // Phase 3A.1 §12: live order debt (above) + opening receivable −
+  // remaining opening credit. Added here, never into Order/Payment
+  // themselves. A partner with zero live order debt but a real opening
+  // receivable still needs an entry — hence the separate loop rather than
+  // only adjusting entries the orders loop above already created.
+  for (const opening of approvedCustomerOpenings) {
+    const consumed = consumedOpeningCreditByPartner.get(opening.partnerId) ?? 0;
+    const remainingCredit = Math.max(0, opening.creditAmount.toNumber() - consumed);
+    const adjustment = opening.receivableAmount.toNumber() - remainingCredit;
+    if (adjustment === 0) continue;
+    const entry = debtByPartner.get(opening.partnerId) ?? { nameAr: opening.partner.nameAr, outstanding: 0 };
+    entry.outstanding += adjustment;
+    debtByPartner.set(opening.partnerId, entry);
+  }
+  for (const [partnerId, entry] of debtByPartner) {
+    if (entry.outstanding <= 0) debtByPartner.delete(partnerId);
   }
   const customerDebts = Array.from(debtByPartner.entries())
     .map(([partnerId, v]) => ({ partnerId, nameAr: v.nameAr, outstanding: v.outstanding }))
