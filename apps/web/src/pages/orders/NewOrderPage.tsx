@@ -1490,6 +1490,19 @@ function describeFromPricingInput(
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
 /**
+ * Cutover-revision-round decision (post-3D, Decision B3) — the single
+ * `inventoryItemId` a line's pricing input resolves to, when it has one
+ * (LOOSE_PAPER/DIGITAL/FOLDER/etc. all declare it directly on the pricing
+ * kind). Multi-material NOTEBOOK-style lines have no single answer here
+ * (each of `line.breakdown?.materials` has its own) — deliberately out of
+ * scope for this pass's frontend; the backend itself already supports
+ * multiple entries per item, just not exposed in this composer yet.
+ */
+function getLineSingleInventoryItemId(line: CartLine): string | undefined {
+  return 'inventoryItemId' in line.pricing ? line.pricing.inventoryItemId : undefined;
+}
+
+/**
  * Owner (2026-08-17, "عايز يظهرلي تحت السلة سعر بنود الحسبة... وعدد الأفرخ من
  * كل نوع ورق وحساب الورق الكلي") — the cart list's per-line cost/material
  * breakdown, built from the same `PricingPreviewResult` already computed at
@@ -2404,6 +2417,15 @@ interface CartLine {
   /** Owner (2026-08-17, "عايز يظهرلي تحت السلة سعر بنود الحسبة... وعدد الأفرخ من كل نوع ورق") — the full pricing-engine result captured at add-time, rendered as a line-item cost/material breakdown under the cart. Frozen the same way `total` already is (never recomputed just for display); undefined for kinds with nothing to break down (PRODUCT/SERVICE/INVENTORY_RETAIL). */
   breakdown?: PricingPreviewResult;
   /**
+   * Cutover-revision-round decision (post-3D, Decision B3) — only shown/
+   * editable when the order-level "continues a pre-cutover commitment"
+   * checkbox is on, and only for a line whose pricing resolves to a
+   * single `inventoryItemId` (see `getLineSingleInventoryItemId` below) —
+   * multi-material NOTEBOOK-style lines aren't covered by this pass's
+   * frontend and simply submit with no compensating ADJUSTMENT for now.
+   */
+  alreadyConsumedOffSystem?: number;
+  /**
    * "تصميم واحد بمتغيرات إنتاج متعددة" (2026-08-19) — a client-side
    * correlation key shared by two or more lines built from "كرر بمقاس/كمية
    * مختلفة" (see `duplicateLineAsVariant`). Sent through as `groupKey` on
@@ -2476,9 +2498,14 @@ function NewOrderForm({
   /** Owner (2026-08-20, "زرار 'اعمله عرض سعر' من شاشة الـLead") — forces the composer to open on the Quotation tab (`/orders/new?documentType=QUOTATION`), not whatever `canInvoice` would otherwise default to. Ignored once editOrder/editQuotation already fix the document type. */
   presetDocumentType?: 'QUOTATION';
 }) {
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
   const canInvoice = can('orders.create');
   const canQuotation = can('quotations.create');
+  // Cutover-revision-round decision (post-3D, Decision B) — no permission
+  // string exists for this feature by design (see cutover.ts's own route
+  // comment); same raw-role-check pattern CutoverPage.tsx already uses.
+  const roleNames = authContext?.user.roles.map((r) => r.name) ?? [];
+  const isAdminOrAbove = roleNames.includes('ADMIN') || roleNames.includes('SUPER_ADMIN');
   const isEditing = Boolean(editOrder) || Boolean(editQuotation);
   const [documentType, setDocumentType] = useState<DocumentType>(
     editOrder ? 'INVOICE' : editQuotation ? 'QUOTATION' : (presetDocumentType ?? (canInvoice ? 'INVOICE' : 'QUOTATION')),
@@ -2507,6 +2534,32 @@ function NewOrderForm({
   const [walkIn, setWalkIn] = useState(
     Boolean((editOrder && !editOrder.partnerId) || (editQuotation && !editQuotation.partnerId)),
   );
+  /**
+   * Cutover-revision-round decision (post-3D, Decision B) — ADMIN+ only
+   * (hidden entirely below for anyone else, not shown-then-rejected — see
+   * this page's own `can('partners.create')`/`can('inventory.create')`
+   * precedent for hiding rather than disabling). Only ever offered for a
+   * brand-new Order (never `isEditing`) and never for a walk-in sale.
+   * `approvedCustomerOpeningId` is fetched below the moment a real
+   * customer is selected; the checkbox itself only appears once one
+   * actually exists for that customer.
+   */
+  const [continuesPreCutoverCommitment, setContinuesPreCutoverCommitment] = useState(false);
+  const [approvedCustomerOpeningId, setApprovedCustomerOpeningId] = useState<string | null>(null);
+
+  // Cutover-revision-round decision (post-3D, Decision B) — same fetch
+  // OrderDocumentPage.tsx already does for the Opening Credit payment
+  // toggle. Deliberately no synchronous setState in this effect's own
+  // body outside the .then/.catch callbacks (react-hooks/set-state-in-effect
+  // — see OrderDocumentPage.tsx's own fix for this exact pattern);
+  // resetting on a partner/walk-in change instead happens directly in
+  // those fields' own onChange handlers below.
+  useEffect(() => {
+    if (!isAdminOrAbove || walkIn || isEditing || !partnerId) return;
+    apiGet<{ opening: { id: string; status: string } | null }>(`/api/opening-state/customer/${partnerId}`)
+      .then((data) => setApprovedCustomerOpeningId(data.opening?.status === 'APPROVED' ? data.opening.id : null))
+      .catch(() => setApprovedCustomerOpeningId(null));
+  }, [isAdminOrAbove, walkIn, isEditing, partnerId]);
   const [branchId, setBranchId] = useState(editOrder?.branchId ?? editQuotation?.branchId ?? branches[0]?.id ?? '');
   // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16, owner: "الغيها خالص —
   // النظام يحدد لوحده") — supersedes the old single order-level
@@ -3015,6 +3068,13 @@ function NewOrderForm({
       discountPercent: line.discountPercent,
       preferredSupplierId: line.preferredSupplierId,
       supplierTasks: line.supplierTasks,
+      // Cutover-revision-round decision (post-3D, Decision B3) — only ever
+      // populated on the actual create-Order path below (Quotation/edit
+      // never set `continuesPreCutoverCommitment`), and only when the
+      // staff member actually entered a value for this line's material.
+      ...(continuesPreCutoverCommitment && getLineSingleInventoryItemId(line) && line.alreadyConsumedOffSystem
+        ? { alreadyConsumedOffSystem: [{ inventoryItemId: getLineSingleInventoryItemId(line)!, quantity: line.alreadyConsumedOffSystem }] }
+        : {}),
     }));
 
     setSubmitting(intent);
@@ -3067,6 +3127,10 @@ function NewOrderForm({
         const input: CreateOrderInput = {
           partnerId: walkIn ? undefined : partnerId,
           branchId,
+          // Cutover-revision-round decision (post-3D, Decision B) —
+          // traceability only, see Order.customerOpeningId's own schema
+          // doc comment.
+          customerOpeningId: continuesPreCutoverCommitment ? approvedCustomerOpeningId : undefined,
           discountPercent: discountNum,
           vatOn,
           deliveryDate: deliveryDate ? new Date(deliveryDate).toISOString() : undefined,
@@ -3275,6 +3339,26 @@ function NewOrderForm({
                       <span>إجمالي الورق</span>
                       <span dir="ltr">{totalSheets} فرخ</span>
                     </div>
+                  )}
+                  {/* Cutover-revision-round decision (post-3D, Decision B3) — only for the single-material kinds this pass's frontend supports (see getLineSingleInventoryItemId's own doc comment). Optional: an empty/zero value simply means nothing was already consumed off-system for this material. */}
+                  {continuesPreCutoverCommitment && getLineSingleInventoryItemId(line) && (
+                    <label
+                      className="text-muted-foreground mt-1.5 flex items-center justify-between gap-2 border-t pt-1.5 text-xs"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span>منها اتصرف بره النظام بالفعل</span>
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.001"
+                        value={line.alreadyConsumedOffSystem ?? ''}
+                        onChange={(e) => {
+                          const value = e.target.value === '' ? undefined : Number(e.target.value);
+                          setCart((prev) => prev.map((l) => (l.key === line.key ? { ...l, alreadyConsumedOffSystem: value } : l)));
+                        }}
+                        className="border-input bg-background w-24 rounded-md border px-2 py-1 text-xs"
+                      />
+                    </label>
                   )}
                   </div>
                 );
@@ -3651,7 +3735,16 @@ function NewOrderForm({
                 <p className="border-input bg-muted/30 text-muted-foreground rounded-md border px-3 py-2">عميل — بدون اسم</p>
               ) : (
                 <div className="flex items-center gap-1">
-                  <PartnerCombobox partners={localPartners} value={partnerId} onChange={setPartnerId} disabled={isEditing} />
+                  <PartnerCombobox
+                    partners={localPartners}
+                    value={partnerId}
+                    onChange={(id) => {
+                      setPartnerId(id);
+                      setApprovedCustomerOpeningId(null);
+                      setContinuesPreCutoverCommitment(false);
+                    }}
+                    disabled={isEditing}
+                  />
                   {can('partners.create') && (
                     <Button type="button" variant="secondary" size="sm" onClick={() => setShowAddPartner(true)}>
                       + عميل جديد
@@ -3665,8 +3758,27 @@ function NewOrderForm({
                   again at submit time, this is just the entry point. */}
               {!isEditing && (
                 <label className="text-muted-foreground flex items-center gap-1.5 pt-0.5 text-xs font-normal">
-                  <input type="checkbox" checked={walkIn} onChange={(e) => setWalkIn(e.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={walkIn}
+                    onChange={(e) => {
+                      setWalkIn(e.target.checked);
+                      setApprovedCustomerOpeningId(null);
+                      setContinuesPreCutoverCommitment(false);
+                    }}
+                  />
                   <span>فاتورة بدون عميل — للبضاعة من المخزون والبنود اليدوية فقط</span>
+                </label>
+              )}
+              {/* Cutover-revision-round decision (post-3D, Decision B) — ADMIN+ only, hidden entirely otherwise (not shown-then-rejected), matching this page's own can('partners.create')/can('inventory.create') precedent. Only offered while composing a brand-new Order for a real (non-walk-in) customer who already has an APPROVED opening credit. */}
+              {isAdminOrAbove && !walkIn && !isEditing && approvedCustomerOpeningId && (
+                <label className="text-muted-foreground flex items-center gap-1.5 pt-0.5 text-xs font-normal">
+                  <input
+                    type="checkbox"
+                    checked={continuesPreCutoverCommitment}
+                    onChange={(e) => setContinuesPreCutoverCommitment(e.target.checked)}
+                  />
+                  <span>هذا الأوردر استمرار لشغلانة قبل التفعيل (سيُربط برصيد افتتاحي هذا العميل)</span>
                 </label>
               )}
             </label>

@@ -201,6 +201,10 @@ export const orderSchema = z.object({
   // sales (INVENTORY_RETAIL/MANUAL items only); see createOrderSchema.
   partnerId: z.string().uuid().nullable(),
   staffId: z.string().uuid(),
+  // Cutover-revision-round decision (post-3D, Decision B) — traceability
+  // only, see createOrderSchema's own comment on this same field for the
+  // full "must never feed Income/Revenue/Profitability" rule.
+  customerOpeningId: z.string().uuid().nullable(),
   date: z.string(),
   subtotal: z.number(),
   discountPercent: z.number(),
@@ -319,6 +323,18 @@ export const createOrderItemSchema = z.object({
   // يدوي... عدد 2 مورد") — see `ItemSupplierTask`'s own doc comment.
   // Applies to any item kind/track, not just MANUAL.
   supplierTasks: z.array(orderItemSupplierTaskInputSchema).max(10).optional(),
+  // Cutover-revision-round decision (post-3D, Decision B3) — per-material
+  // quantity already physically consumed off-system before cutover, for
+  // an item on an Order continuing a pre-cutover commitment
+  // (createOrderSchema.customerOpeningId). orderService.createOrder
+  // rejects any entry here whose quantity exceeds that material's own
+  // total requirement for this item BEFORE opening any transaction (see
+  // AlreadyConsumedExceedsRequirementError) — a real quantity movement
+  // can never compensate for more than the item itself needs.
+  alreadyConsumedOffSystem: z
+    .array(z.object({ inventoryItemId: z.string().uuid(), quantity: z.number().positive() }))
+    .max(20)
+    .optional(),
 });
 
 /**
@@ -336,6 +352,11 @@ export const createOrderSchema = z.object({
   // the only place both the partner and the items are known together.
   partnerId: z.string().uuid().nullable().optional(),
   branchId: z.string().uuid(),
+  // Cutover-revision-round decision (post-3D, Decision B) — see
+  // Order.customerOpeningId's schema doc comment: traceability only, must
+  // never feed Income/Revenue/Profitability. Validated server-side to
+  // exist and belong to the same partnerId (orderService.createOrder).
+  customerOpeningId: z.string().uuid().nullable().optional(),
   discountPercent: z.number().min(0).max(100).optional(),
   vatOn: z.boolean().optional(),
   paymentTerms: z.string().trim().min(1).max(200).optional(),
