@@ -41,6 +41,10 @@ const ContentCalendarPage = lazy(() =>
   import('@/pages/content-calendar/ContentCalendarPage').then((m) => ({ default: m.ContentCalendarPage })),
 );
 const CampaignsPage = lazy(() => import('@/pages/campaigns/CampaignsPage').then((m) => ({ default: m.CampaignsPage })));
+const CutoverPage = lazy(() => import('@/pages/cutover/CutoverPage').then((m) => ({ default: m.CutoverPage })));
+const CustomerOpeningPage = lazy(() =>
+  import('@/pages/cutover/CustomerOpeningPage').then((m) => ({ default: m.CustomerOpeningPage })),
+);
 const CommunicationHubPage = lazy(() =>
   import('@/pages/communication-hub/CommunicationHubPage').then((m) => ({ default: m.CommunicationHubPage })),
 );
@@ -112,6 +116,10 @@ function App() {
                   prop, same as the dashboard above (managing the link
                   list itself is gated inside the page via `settings.edit`). */}
               <Route path="/communication-hub" element={<CommunicationHubPage />} />
+              {/* Opening State / Cutover (Phase 3C.2) — server-side re-checks every sensitive action; no route-level permission gate here (see routes/cutover.ts's own comment on why no new permission module was added this phase). */}
+              <Route path="/cutover" element={<CutoverPage />} />
+              {/* Cutover-revision-round decision (post-3D) — CustomerOpening's own minimal screen; same "no route-level permission gate, server re-checks everything" reasoning as /cutover above. */}
+              <Route path="/customer-opening" element={<CustomerOpeningPage />} />
 
               {/* Owner (2026-09-09, Cleopatra AI Phase 1 approval, "usable
                   by كل الموظفين المسجلين دخول") — open to every logged-in
