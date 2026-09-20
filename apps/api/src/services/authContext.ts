@@ -78,6 +78,17 @@ export function canAccessBranch(user: AuthenticatedUser, branchId: string): bool
 }
 
 /**
+ * Cutover-revision-round decision (post-3D) — the minimum-approver-role
+ * check, extracted here so the 4 Opening State verify-line actions
+ * (Treasury/Inventory/Customer/SupplierOpening) can share it with
+ * `assertCanApprove` in cutoverService.ts instead of each re-inlining
+ * the same `roleNames.includes(...)` boolean a 5th–8th time.
+ */
+export function isAdminOrAbove(roleNames: string[]): boolean {
+  return roleNames.includes('ADMIN') || roleNames.includes('SUPER_ADMIN');
+}
+
+/**
  * Shared 403 response for every `canAccessBranch` check across controllers
  * (audit pass, 2026-08-20 — see orders.ts's `loadOrderBranchOr404` for the
  * original write-up of the gap this closes). One shared function instead
