@@ -371,7 +371,8 @@ export async function listStockMovements(inventoryItemId: string): Promise<Stock
   }));
 }
 
-function movementDelta(type: 'IN' | 'OUT' | 'ADJUSTMENT', quantity: number): number {
+/** Exported for cutoverService.ts's activation reconciliation (Phase 3C.2) — reused as-is, never modified for Opening State (ADJUSTMENT stays off-limits for a signed decrease, see cutoverService.ts's own comment). */
+export function movementDelta(type: 'IN' | 'OUT' | 'ADJUSTMENT', quantity: number): number {
   return type === 'OUT' ? -quantity : quantity;
 }
 
@@ -564,6 +565,38 @@ export async function deductStockForOrderItem(
     where: { inventoryItemId_branchId: { inventoryItemId, branchId } },
     create: { inventoryItemId, branchId, quantityOnHand: -sheetsConsumed },
     update: { quantityOnHand: { decrement: sheetsConsumed } },
+  });
+}
+
+/**
+ * Cutover-revision-round decision (post-3D, Decision B3) — the
+ * compensating ADJUSTMENT for material already physically consumed
+ * off-system before cutover, on an Order continuing a pre-cutover
+ * commitment (`Order.customerOpeningId`). Extracted as its own function,
+ * mirroring `deductStockForOrderItem`'s shape above, specifically so it is
+ * independently unit-testable without needing to exercise `createOrder`'s
+ * entire transaction. ADJUSTMENT is a positive-only movement type (see
+ * `movementDelta`) — the caller (`orderService.createOrder`) must only
+ * call this with a `quantity` already proven, via
+ * `assertAlreadyConsumedWithinRequirement` before the transaction opens,
+ * to be <= the item's own requirement; this function performs no
+ * validation of its own.
+ */
+export async function applyAlreadyConsumedAdjustment(
+  tx: Prisma.TransactionClient,
+  inventoryItemId: string,
+  branchId: string,
+  quantity: number,
+  reference: string,
+  orderId: string,
+): Promise<void> {
+  await tx.stockMovement.create({
+    data: { inventoryItemId, branchId, type: 'ADJUSTMENT', quantity, reference, orderId },
+  });
+  await tx.stockLevel.upsert({
+    where: { inventoryItemId_branchId: { inventoryItemId, branchId } },
+    create: { inventoryItemId, branchId, quantityOnHand: quantity },
+    update: { quantityOnHand: { increment: movementDelta('ADJUSTMENT', quantity) } },
   });
 }
 
