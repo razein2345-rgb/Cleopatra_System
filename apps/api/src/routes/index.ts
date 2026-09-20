@@ -46,6 +46,8 @@ import { communicationHubLinksRouter } from './communicationHubLinks.js';
 import { callLogsRouter } from './callLogs.js';
 import { contentCalendarRouter } from './contentCalendar.js';
 import { campaignsRouter } from './campaigns.js';
+import { cutoverRouter } from './cutover.js';
+import { openingStateRouter } from './openingState.js';
 import { aiRouter } from './ai.js';
 import { posRouter } from './pos.js';
 
@@ -75,6 +77,8 @@ api.use('/communication-hub-links', communicationHubLinksRouter);
 api.use('/call-logs', callLogsRouter);
 api.use('/content-calendar', contentCalendarRouter);
 api.use('/campaigns', campaignsRouter);
+api.use('/cutover', cutoverRouter);
+api.use('/opening-state', openingStateRouter);
 api.use('/ai', aiRouter);
 api.use('/pos', posRouter);
 api.use('/suppliers', suppliersRouter);
