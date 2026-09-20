@@ -1,5 +1,46 @@
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { resolveItemProfit } from './branchFinancialsService.js';
+
+const currentDir = dirname(fileURLToPath(import.meta.url));
+
+// Cutover-revision-round decision (post-3D, Decision B1) — module-level
+// mocks needed by the "B1 exclusion guarantee" behavioral test further
+// below. Must live at the true top level (Vitest hoists `vi.mock` above
+// every import regardless of where it's textually placed) — harmless to
+// the `resolveItemProfit` tests above/below, since that function is pure
+// and never touches `prisma` or `fixedExpensesService.js`.
+const branchFindMany = vi.fn();
+const treasuryGroupBy = vi.fn();
+const treasuryAggregate = vi.fn();
+const orderFindMany = vi.fn();
+const orderItemReturnFindMany = vi.fn();
+const paymentFindMany = vi.fn();
+const inventoryItemFindMany = vi.fn();
+const readyProductFindMany = vi.fn();
+const settingFindFirst = vi.fn();
+const getDailyFixedCostByBranchMock = vi.fn();
+
+vi.mock('../lib/prisma.js', () => ({
+  prisma: {
+    branch: { findMany: (...args: unknown[]) => branchFindMany(...args) },
+    treasuryEntry: {
+      groupBy: (...args: unknown[]) => treasuryGroupBy(...args),
+      aggregate: (...args: unknown[]) => treasuryAggregate(...args),
+    },
+    order: { findMany: (...args: unknown[]) => orderFindMany(...args) },
+    orderItemReturn: { findMany: (...args: unknown[]) => orderItemReturnFindMany(...args) },
+    payment: { findMany: (...args: unknown[]) => paymentFindMany(...args) },
+    inventoryItem: { findMany: (...args: unknown[]) => inventoryItemFindMany(...args) },
+    readyProduct: { findMany: (...args: unknown[]) => readyProductFindMany(...args) },
+    setting: { findFirst: (...args: unknown[]) => settingFindFirst(...args) },
+  },
+}));
+vi.mock('./fixedExpensesService.js', () => ({
+  getDailyFixedCostByBranch: (...args: unknown[]) => getDailyFixedCostByBranchMock(...args),
+}));
 
 // Owner (2026-08-26, "لازم علشان يكون واضح صافي الربح بالظبط يحسب فلوس
 // نسبة الربح فقط") — resolveItemProfit's per-item resolution order:
@@ -270,5 +311,82 @@ describe('resolveItemProfit', () => {
       expect(result.revenue).toBe(180);
       expect(result.profit).toBeCloseTo(129.6, 5);
     });
+  });
+});
+
+/**
+ * Cutover-revision-round decision (post-3D, Decision B1) — regression
+ * coverage for the B1 exclusion guarantee: `Order.customerOpeningId`
+ * (traceability only, linking a continuation Order to a prior pre-cutover
+ * commitment) must never feed Income/Revenue/Profitability. `grep`
+ * confirms today that the field, and its forced Prisma back-relation
+ * `CustomerOpening.ordersContinuingThisOpening`, are never referenced in
+ * this file or in `reportsOverviewService.ts` — this test pins that fact
+ * so a future edit that starts reading either one here fails loudly
+ * instead of silently reintroducing a profitability special-case. The
+ * behavioral half (below) proves the same thing dynamically: an order
+ * carrying `customerOpeningId` must compute the exact same salesTotal/
+ * netProfit/realProfit as an otherwise-identical ordinary order.
+ */
+describe('B1 exclusion guarantee — customerOpeningId must never feed profitability', () => {
+  it('customerOpeningId and ordersContinuingThisOpening are referenced zero times in the profitability-computing source files', () => {
+    const filesToCheck = ['branchFinancialsService.ts', 'reportsOverviewService.ts'];
+    for (const file of filesToCheck) {
+      const source = readFileSync(join(currentDir, file), 'utf8');
+      expect(source, `customerOpeningId leaked into ${file}`).not.toMatch(/customerOpeningId/);
+      expect(source, `ordersContinuingThisOpening leaked into ${file}`).not.toMatch(/ordersContinuingThisOpening/);
+    }
+  });
+
+  it('an order with customerOpeningId set contributes to salesTotal/netProfit/realProfit exactly like an ordinary order with the same numbers', async () => {
+    branchFindMany.mockReset().mockResolvedValue([{ id: 'branch-1', name: 'الفرع الرئيسي' }]);
+    treasuryGroupBy.mockReset().mockResolvedValue([]);
+    inventoryItemFindMany.mockReset().mockResolvedValue([{ id: 'inv-1', costPrice: { toNumber: () => 5 }, sheetType: null }]);
+    readyProductFindMany.mockReset().mockResolvedValue([]);
+    settingFindFirst.mockReset().mockResolvedValue({ zincSupplierCost: { toNumber: () => 0 } });
+    getDailyFixedCostByBranchMock.mockReset().mockResolvedValue({ perBranch: new Map(), companyWideDaily: 0 });
+    const { getCompanyFinancialSummary } = await import('./branchFinancialsService.js');
+    const { todayInBusinessTimezone } = await import('../lib/businessTimezone.js');
+    // Deliberately NOT `new Date()` — the "today" bucket this function
+    // computes against is `todayInBusinessTimezone()` (Cairo business day),
+    // which can disagree with the test runner's own local wall-clock day
+    // for a window around any midnight. Anchoring to the exact same
+    // function the code under test uses keeps this assertion meaningful
+    // regardless of the machine's local timezone or the moment it runs.
+    const definitelyToday = new Date(todayInBusinessTimezone().getTime() + 60 * 60 * 1000);
+
+    function buildOrder(customerOpeningId: string | null) {
+      return {
+        branchId: 'branch-1',
+        date: definitelyToday,
+        finalTotal: { toNumber: () => 100 },
+        discountPercent: { toNumber: () => 0 },
+        customerOpeningId,
+        items: [
+          {
+            itemTotal: { toNumber: () => 100 },
+            discountAmount: { toNumber: () => 0 },
+            breakdown: { quantity: 10, unitPrice: 10 },
+            inventoryItemId: 'inv-1',
+            readyProductId: null,
+            modelName: null,
+            supplierTasks: [],
+          },
+        ],
+      };
+    }
+
+    orderFindMany.mockResolvedValue([buildOrder(null)]);
+    const ordinary = await getCompanyFinancialSummary();
+
+    orderFindMany.mockResolvedValue([buildOrder('opening-1')]);
+    const continuation = await getCompanyFinancialSummary();
+
+    const [ordinaryBranch, continuationBranch] = [ordinary.branches[0]!, continuation.branches[0]!];
+    expect(continuationBranch.salesTotal).toBe(ordinaryBranch.salesTotal);
+    expect(continuationBranch.netProfit).toBe(ordinaryBranch.netProfit);
+    expect(continuationBranch.realProfit).toBe(ordinaryBranch.realProfit);
+    // Sanity pin, same math as the time-basis tests above: (10-5)*10 = 50.
+    expect(continuationBranch.netProfit).toBeCloseTo(50, 5);
   });
 });
