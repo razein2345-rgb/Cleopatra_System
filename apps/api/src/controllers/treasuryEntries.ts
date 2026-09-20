@@ -16,11 +16,11 @@ import {
   DayAlreadyClosedError,
   DayNotClosedError,
   deleteManualTreasuryEntry,
+  getCashPosition,
   getDayClosurePreview,
   getEmployeeCashCustody,
   getMyTreasurySummary,
   getTodayClosure,
-  getTreasuryBalance,
   listTreasuryEntries,
   ManualEntryOnlyError,
   reopenTreasuryDay,
@@ -80,11 +80,19 @@ export async function listTreasuryEntriesHandler(req: Request, res: Response) {
  * branch scoping here; everyone else — "sees totals" or not — is clamped
  * to `accessibleBranchIds` via the same `resolveBranchScope` helper the
  * entries list above already used this pattern for.
+ *
+ * Opening State / Cutover (3C.2 correction) — this is the Treasury page's
+ * top-line "الرصيد" card: a point-in-time running balance (no date filter
+ * accepted), i.e. genuinely Cash Position, not a period income/expense
+ * metric. Switched from `getTreasuryBalance` to `getCashPosition` so a
+ * branch with an ACTIVE cutover correctly includes its `TreasuryOpening`
+ * seed here; a branch with no cutover is completely unaffected (that
+ * function falls through to `getTreasuryBalance` per-branch unchanged).
  */
 export async function getTreasuryBalanceHandler(req: Request, res: Response) {
   const auth = req.auth!;
   const requestedBranchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
-  const balance = await getTreasuryBalance(resolveBranchScope(auth, true, requestedBranchId));
+  const balance = await getCashPosition(resolveBranchScope(auth, true, requestedBranchId));
   res.json({ success: true, data: balance });
 }
 
