@@ -15,6 +15,7 @@ import {
   updateOrderHandler,
   updatePaymentHandler,
 } from '../controllers/orders.js';
+import { applyOpeningCreditHandler } from '../controllers/openingState.js';
 
 export const ordersRouter = Router();
 
@@ -43,6 +44,11 @@ ordersRouter.post('/:id/payments', requirePermission('orders.edit'), recordPayme
 // that module for why this must stay a separate, explicit grant.
 ordersRouter.put('/:id/payments/:paymentId', requirePermission('payments.edit'), updatePaymentHandler);
 ordersRouter.delete('/:id/payments/:paymentId', requirePermission('payments.edit'), deletePaymentHandler);
+// Opening State / Cutover (Phase 3C.2 §18) — applying already-held
+// customer opening credit is the same authority level as recording a
+// normal payment (`orders.edit`), an existing, already-seeded permission
+// — no new permission module needed for this specific action.
+ordersRouter.post('/:id/opening-credit', requirePermission('orders.edit'), applyOpeningCreditHandler);
 // Owner (2026-08-20, "فاتورة كانت معمولة عند نادي المهندسين... محتاج اعدلها
 // واخليها بدون عميل") — assign/remove the customer on an existing invoice.
 ordersRouter.put('/:id/partner', requirePermission('orders.edit'), setOrderPartnerHandler);

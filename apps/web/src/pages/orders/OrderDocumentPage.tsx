@@ -68,6 +68,16 @@ export function OrderDocumentPage() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [paymentSaving, setPaymentSaving] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
+  /**
+   * Opening State / Cutover (Phase 3C.2 §37/§38) — lets staff settle part of
+   * an order using a customer's already-held opening credit (an off-system
+   * deposit recognized once at cutover) instead of a normal cash payment.
+   * Deliberately a separate, clearly-labeled toggle inside the same dialog
+   * rather than a hidden payment-method value — this must never be
+   * presented as "cash received," per the locked Cash/Income semantics.
+   */
+  const [remainingOpeningCredit, setRemainingOpeningCredit] = useState<number | null>(null);
+  const [useOpeningCredit, setUseOpeningCredit] = useState(false);
   // Accounting audit fix (2026-09-17) — payment-recording idempotency key.
   const paymentIdempotency = useIdempotencyKey();
   /** Owner (2026-08-20, "تعديل المدفوع... تعديل أي دفعة سابقة") — gated on the dedicated `payments.edit` permission, not `orders.edit`. */
@@ -99,6 +109,18 @@ export function OrderDocumentPage() {
       })
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل الفاتورة'));
   }, [id]);
+
+  // Opening State / Cutover (Phase 3C.2 §38) — only fetched when the payment
+  // dialog opens and the order actually has a customer; a walk-in/no-partner
+  // order can never have opening credit to apply. Must sit above the
+  // loading-state early returns below (Rules of Hooks — hooks can't be
+  // called conditionally), hence the `order?.` guards.
+  useEffect(() => {
+    if (!showAddPayment || !order?.partnerId) return;
+    apiGet<{ opening: unknown; position: { remainingOpeningCredit: number } }>(`/api/opening-state/customer/${order.partnerId}`)
+      .then((data) => setRemainingOpeningCredit(data.position.remainingOpeningCredit))
+      .catch(() => setRemainingOpeningCredit(null));
+  }, [showAddPayment, order?.partnerId]);
 
   if (error) return <div className="text-destructive">{error}</div>;
   if (!order || !business) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
@@ -205,14 +227,23 @@ export function OrderDocumentPage() {
       setPaymentError('اكتب مبلغ أكبر من صفر');
       return;
     }
+    if (useOpeningCredit && remainingOpeningCredit !== null && amount > remainingOpeningCredit) {
+      setPaymentError(`المبلغ أكبر من الرصيد الافتتاحي المتاح (${remainingOpeningCredit.toLocaleString('en-US', { minimumFractionDigits: 2 })} ج.م)`);
+      return;
+    }
     setPaymentError(null);
     setPaymentSaving(true);
     try {
-      const updated = await apiPost<Order>(`/api/orders/${order.id}/payments`, { method: paymentMethod, amount }, paymentIdempotency.getKey());
+      // Opening State / Cutover (Phase 3C.2 §38) — a separate endpoint that
+      // creates a Payment with sourceType OPENING_CREDIT_APPLICATION and no
+      // TreasuryEntry, never the normal /payments path.
+      const path = useOpeningCredit ? `/api/orders/${order.id}/opening-credit` : `/api/orders/${order.id}/payments`;
+      const updated = await apiPost<Order>(path, { method: paymentMethod, amount }, paymentIdempotency.getKey());
       paymentIdempotency.resetKey(); // definitive success — the next payment (if any) is a genuinely new operation
       setOrder(updated);
       setShowAddPayment(false);
       setPaymentAmount('');
+      setUseOpeningCredit(false);
     } catch (err) {
       setPaymentError(err instanceof Error ? err.message : 'تعذر تسجيل الدفعة');
     } finally {
@@ -305,6 +336,10 @@ export function OrderDocumentPage() {
               <Link to={`/quotations/${order.quotationOriginId}`} className="text-primary hover:underline">
                 عرض السعر الأصلي
               </Link>
+            )}
+            {/* Cutover-revision-round decision (post-3D, Decision B) — traceability-only display; not a link (Customer Opening's own screen is search-based, no deep-link-by-id target yet). Was round-tripping correctly through the API already, just never rendered anywhere until this fix. */}
+            {order.customerOpeningId && (
+              <span className="text-muted-foreground text-xs">🔗 استمرار لالتزام سابق قبل التفعيل (Opening Credit)</span>
             )}
           </div>
           {/* Owner (2026-08-20, "وهل ممكن اكتب عميل فقط بلاش عميل نقدي") —
@@ -401,7 +436,14 @@ export function OrderDocumentPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {can('orders.edit') && order.remainingBalance > 0 && (
-            <Button type="button" variant="secondary" onClick={() => setShowAddPayment(true)}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setRemainingOpeningCredit(null);
+                setShowAddPayment(true);
+              }}
+            >
               + تسجيل دفعة
             </Button>
           )}
@@ -597,6 +639,16 @@ export function OrderDocumentPage() {
               <p className="text-muted-foreground text-sm">
                 المتبقي: <span className="font-bold" dir="ltr">{order.remainingBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span> ج.م
               </p>
+              {remainingOpeningCredit !== null && remainingOpeningCredit > 0 && (
+                <label className="border-input bg-muted/40 flex items-center gap-2 rounded-md border p-2 text-sm">
+                  <input type="checkbox" checked={useOpeningCredit} onChange={(e) => setUseOpeningCredit(e.target.checked)} />
+                  <span>
+                    استخدام رصيد افتتاحي متاح للعميل (
+                    <span dir="ltr" className="font-bold">{remainingOpeningCredit.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    {' '}ج.م) — ليس تحصيل نقدي جديد ولا يُحسب كإيراد
+                  </span>
+                </label>
+              )}
               <label className="block space-y-1 text-sm">
                 <span className="text-muted-foreground">المبلغ</span>
                 <input
