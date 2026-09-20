@@ -110,6 +110,20 @@ const NAV_ITEMS: NavEntry[] = [
         permission: ['treasury.view', 'treasury.create'],
       },
       { kind: 'link', to: '/reports', label: 'التقارير', icon: FileBarChart, permission: 'reports.view' },
+      // Opening State / Cutover (Phase 3C.2) — gated on the existing
+      // treasury.view permission as the closest available proxy for
+      // "financially sensitive area," since no dedicated permission was
+      // added this phase (would need a seed run outside this phase's
+      // read-only-database rule). The server independently re-checks
+      // every actual action (create/approve/activate/reopen/supersede)
+      // regardless of what this nav gate shows.
+      { kind: 'link', to: '/cutover', label: 'الرصيد الافتتاحي (Cutover)', icon: Wallet, permission: 'treasury.view' },
+      // Cutover-revision-round decision (post-3D) — CustomerOpening's own
+      // minimal screen (list + detail + correction), separate from
+      // CutoverPage.tsx since CustomerOpening is company-wide, not a
+      // branch-scoped Cutover child. Same nav-gate reasoning as the
+      // Cutover link above — no dedicated permission this phase either.
+      { kind: 'link', to: '/customer-opening', label: 'الرصيد الافتتاحي للعملاء', icon: Wallet, permission: 'treasury.view' },
     ],
   },
   {
