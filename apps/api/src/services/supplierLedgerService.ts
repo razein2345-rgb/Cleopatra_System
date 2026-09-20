@@ -121,9 +121,17 @@ export function buildStatement(
   entriesSortedByDate: RawLedgerEntry[],
   from?: Date,
   to?: Date,
+  openingSeed = 0,
 ): { openingBalance: number; entries: SupplierStatement['entries']; closingBalance: number } {
-  let openingBalance = 0;
-  let runningBalance = 0;
+  // Opening State / Cutover (Phase 3C.2 §27) — openingSeed is the approved
+  // SupplierOpening's net figure (payableAmount − creditAmount), folded in
+  // as one more term alongside the pre-`from` real-row fold-in this
+  // function already does — extending the existing computed-rollup
+  // mechanism rather than building a parallel one (Phase 3A.1 §13's
+  // locked recommendation). Defaults to 0 so every existing caller/test
+  // is unaffected.
+  let openingBalance = openingSeed;
+  let runningBalance = openingSeed;
   const entries: SupplierStatement['entries'] = [];
 
   for (const entry of entriesSortedByDate) {
@@ -159,9 +167,10 @@ export async function getSupplierStatement(
   });
   if (!partner || partner.isDeleted) return null;
 
-  const [purchases, payments] = await Promise.all([
+  const [purchases, payments, supplierOpening] = await Promise.all([
     prisma.supplierPurchase.findMany({ where: { partnerId, isDeleted: false }, orderBy: { date: 'asc' } }),
     prisma.supplierPayment.findMany({ where: { partnerId, isDeleted: false }, orderBy: { date: 'asc' } }),
+    prisma.supplierOpening.findUnique({ where: { partnerId } }),
   ]);
 
   const merged: RawLedgerEntry[] = [
@@ -169,7 +178,15 @@ export async function getSupplierStatement(
     ...payments.map((p) => ({ kind: 'PAYMENT' as const, id: p.id, date: p.date, description: p.note, amount: p.amount.toNumber() })),
   ].sort((a, b) => a.date.getTime() - b.date.getTime());
 
-  const { openingBalance, entries, closingBalance } = buildStatement(merged, from, to);
+  // Opening State / Cutover (Phase 3C.2 §27) — only an APPROVED
+  // SupplierOpening contributes; DRAFT/REVIEW figures are not yet
+  // certified and must never leak into a real statement.
+  const openingSeed =
+    supplierOpening && supplierOpening.status === 'APPROVED'
+      ? supplierOpening.payableAmount.toNumber() - supplierOpening.creditAmount.toNumber()
+      : 0;
+
+  const { openingBalance, entries, closingBalance } = buildStatement(merged, from, to, openingSeed);
 
   return { partnerId: partner.id, nameAr: partner.nameAr, openingBalance, entries, closingBalance };
 }
