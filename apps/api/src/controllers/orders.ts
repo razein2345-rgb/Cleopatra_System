@@ -11,8 +11,11 @@ import {
 } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
+  AlreadyConsumedExceedsRequirementError,
+  AlreadyConsumedWithoutCustomerOpeningError,
   createOrder,
   createReturn,
+  CustomerOpeningReferenceInvalidError,
   deletePayment,
   DeliveryDateBeforeOrderDateError,
   deleteOrder,
@@ -189,6 +192,36 @@ export async function createOrderHandler(req: Request, res: Response) {
     }
     if (err instanceof ItemDiscountExceedsTotalError) {
       res.status(400).json({ success: false, error: { message: err.message, code: 'ITEM_DISCOUNT_EXCEEDS_TOTAL' } });
+      return;
+    }
+    // Cutover-revision-round decision (post-3D) — these 3 are new errors,
+    // so they get an Arabic message here per the owner's explicit rule for
+    // this revision round; the English-message errors above are
+    // pre-existing and intentionally left untouched (KNOWN_ISSUES.md).
+    if (err instanceof CustomerOpeningReferenceInvalidError) {
+      res.status(400).json({
+        success: false,
+        error: { message: 'الرصيد الافتتاحي (Opening Credit) المرتبط بهذا الأوردر غير موجود، أو لا يخص نفس العميل.', code: err.name },
+      });
+      return;
+    }
+    if (err instanceof AlreadyConsumedWithoutCustomerOpeningError) {
+      res.status(400).json({
+        success: false,
+        error: { message: 'إدخال كمية "مستهلكة بالفعل بره النظام" يتطلب ربط الأوردر برصيد افتتاحي (Opening Credit) أولًا.', code: err.name },
+      });
+      return;
+    }
+    if (err instanceof AlreadyConsumedExceedsRequirementError) {
+      const item = await prisma.inventoryItem.findUnique({ where: { id: err.inventoryItemId }, select: { name: true } });
+      const itemLabel = item?.name ?? err.inventoryItemId;
+      res.status(400).json({
+        success: false,
+        error: {
+          message: `الكمية اللي أدخلتها كـ"مستهلكة بالفعل بره النظام" لصنف "${itemLabel}" (${err.declared}) أكبر من احتياج هذا البند الفعلي (${err.required}) — راجع الكمية وحاول تاني.`,
+          code: err.name,
+        },
+      });
       return;
     }
     throw err;
