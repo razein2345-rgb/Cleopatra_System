@@ -53,7 +53,7 @@ import { canAccessBranch, forbidBranch } from '../services/authContext.js';
  * for this report — a read-only cross-branch document lookup is a
  * different, likely-intentional behavior).
  */
-async function loadOrderBranchOr404(id: string, res: Response): Promise<string | null> {
+export async function loadOrderBranchOr404(id: string, res: Response): Promise<string | null> {
   const order = await prisma.order.findUnique({ where: { id }, select: { branchId: true, isDeleted: true } });
   if (!order || order.isDeleted) {
     res.status(404).json({ success: false, error: { message: 'Order not found' } });
