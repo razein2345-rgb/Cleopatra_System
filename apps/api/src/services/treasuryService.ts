@@ -11,6 +11,7 @@ import type {
   UpdateTreasuryEntryInput,
 } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
+import { businessDayRangeUtc } from '../lib/businessTimezone.js';
 
 type TreasuryEntryRecord = Prisma.TreasuryEntryGetPayload<object>;
 
@@ -221,6 +222,115 @@ export async function getTreasuryBalance(branchId?: string | string[]): Promise<
   };
 }
 
+/**
+ * Opening State / Cutover (Phase 3C.2) — single-branch, cutover-aware Cash
+ * Position: `TreasuryOpening` (all methods) + TreasuryEntry since
+ * `goLiveDate` (Cairo business-day boundary, via `businessDayRangeUtc` —
+ * never naive UTC midnight). Deliberately a NEW, separate function rather
+ * than a change to `getTreasuryBalance` above: that function's existing
+ * multi-branch/all-branch aggregation (used by dashboards, AI tools, and
+ * company-wide reports) would need a per-branch cutover lookup for every
+ * branch in an arbitrary set, a materially bigger and riskier change than
+ * this feature needs. A branch with no ACTIVE, non-superseded cutover
+ * behaves exactly like `getTreasuryBalance(branchId)` — full backward
+ * compatibility. This is a Cash Position figure ONLY — it must never be
+ * read as period income/expense/revenue (see branchFinancialsService.ts's
+ * `periodPayments` fix for the sibling rule on the "Cash Received" side).
+ */
+export async function getBranchCashPosition(branchId: string): Promise<TreasuryBalance> {
+  const cutover = await prisma.cutoverRecord.findFirst({ where: { branchId, isSuperseded: false, status: 'ACTIVE' } });
+  if (!cutover) return getTreasuryBalance(branchId);
+
+  const boundary = businessDayRangeUtc(cutover.goLiveDate.toISOString().slice(0, 10)).start;
+  const [openings, grouped, groupedByMethod] = await Promise.all([
+    prisma.treasuryOpening.findMany({ where: { cutoverId: cutover.id } }),
+    prisma.treasuryEntry.groupBy({
+      by: ['type'],
+      where: { isDeleted: false, branchId, date: { gte: boundary } },
+      _sum: { amount: true },
+    }),
+    prisma.treasuryEntry.groupBy({
+      by: ['method', 'type'],
+      where: { isDeleted: false, branchId, method: { not: null }, type: { in: ['INCOME', 'EXPENSE'] }, date: { gte: boundary } },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  const totals: Record<'INCOME' | 'EXPENSE' | 'TRANSFER', number> = { INCOME: 0, EXPENSE: 0, TRANSFER: 0 };
+  for (const g of grouped) totals[g.type] = g._sum.amount?.toNumber() ?? 0;
+
+  const byMethodTotals = new Map<string, number>();
+  for (const o of openings) byMethodTotals.set(o.method, o.amount.toNumber());
+  for (const g of groupedByMethod) {
+    if (!g.method) continue;
+    const amount = g._sum.amount?.toNumber() ?? 0;
+    const delta = g.type === 'INCOME' ? amount : -amount;
+    byMethodTotals.set(g.method, (byMethodTotals.get(g.method) ?? 0) + delta);
+  }
+  const openingTotal = openings.reduce((sum, o) => sum + o.amount.toNumber(), 0);
+
+  return {
+    totalIncome: totals.INCOME,
+    totalExpense: totals.EXPENSE,
+    totalTransfer: totals.TRANSFER,
+    balance: openingTotal + totals.INCOME - totals.EXPENSE,
+    byMethod: [...byMethodTotals.entries()].map(([method, balance]) => ({
+      method: method as TreasuryBalance['byMethod'][number]['method'],
+      balance,
+    })),
+  };
+}
+
+/**
+ * Opening State / Cutover (3C.2 correction) — the multi/all-branch entry
+ * point for Cash Position, matching `getTreasuryBalance`'s own
+ * `string | string[] | undefined` convention (single branch, an explicit
+ * set, or "every branch" for a Super Admin with no filter) so the two
+ * genuinely-Cash-Position callers that need that full range —
+ * `getTreasuryBalanceHandler` and the AI `get_treasury_summary` tool — can
+ * simply swap which function they call, no other change to their own
+ * branch-resolution logic. Deliberately pure aggregation: sums
+ * `getBranchCashPosition` per branch rather than re-deriving a second
+ * calculation, so a branch with no ACTIVE cutover still resolves through
+ * that function's own unchanged `getTreasuryBalance(branchId)` fallback,
+ * and adding a cutover to one branch never affects any other branch's
+ * contribution to the combined total.
+ */
+export async function getCashPosition(branchId?: string | string[]): Promise<TreasuryBalance> {
+  const ids = Array.isArray(branchId)
+    ? branchId
+    : branchId
+      ? [branchId]
+      : (await prisma.branch.findMany({ where: { isDeleted: false }, select: { id: true } })).map((b) => b.id);
+
+  if (ids.length === 0) return { totalIncome: 0, totalExpense: 0, totalTransfer: 0, balance: 0, byMethod: [] };
+
+  const positions = await Promise.all(ids.map((id) => getBranchCashPosition(id)));
+
+  const totals = positions.reduce(
+    (acc, p) => ({
+      totalIncome: acc.totalIncome + p.totalIncome,
+      totalExpense: acc.totalExpense + p.totalExpense,
+      totalTransfer: acc.totalTransfer + p.totalTransfer,
+      balance: acc.balance + p.balance,
+    }),
+    { totalIncome: 0, totalExpense: 0, totalTransfer: 0, balance: 0 },
+  );
+
+  const byMethodTotals = new Map<string, number>();
+  for (const p of positions) {
+    for (const m of p.byMethod) byMethodTotals.set(m.method, (byMethodTotals.get(m.method) ?? 0) + m.balance);
+  }
+
+  return {
+    ...totals,
+    byMethod: [...byMethodTotals.entries()].map(([method, balance]) => ({
+      method: method as TreasuryBalance['byMethod'][number]['method'],
+      balance,
+    })),
+  };
+}
+
 export async function createManualTreasuryEntry(
   input: CreateTreasuryEntryInput,
   staffId: string,
@@ -403,13 +513,38 @@ async function computeCashFlows(
   return { inflows, outflows, entryCount };
 }
 
+/**
+ * Opening State / Cutover (Phase 3C.1 §4, 3C.2 §14) — a real implementation
+ * gap identified during the audit: with no prior closed day, this used to
+ * always return 0, even for a branch that just went live with a real,
+ * physically-verified opening cash position (`TreasuryOpening`). Only
+ * consulted when NO prior `TreasuryDayClosure` row exists at all — the
+ * moment any real closure exists, the normal carry-forward chain above
+ * takes over exactly as before, so a branch with pre-cutover Cleopatra
+ * history (Case 1 — it used Cleopatra before an outage) is completely
+ * unaffected. A branch with no `CutoverRecord` at all behaves exactly as
+ * today (returns 0) — full backward compatibility, by construction.
+ */
+async function getCutoverCashSeed(branchId: string): Promise<number> {
+  const cutover = await prisma.cutoverRecord.findFirst({
+    where: { branchId, isSuperseded: false, status: 'ACTIVE' },
+  });
+  if (!cutover) return 0;
+
+  const cashOpening = await prisma.treasuryOpening.findUnique({
+    where: { cutoverId_method: { cutoverId: cutover.id, method: 'CASH' } },
+  });
+  return cashOpening?.amount.toNumber() ?? 0;
+}
+
 /** The counted cash left in the drawer at the last *actually closed* (not currently reopened) prior day for this branch — 0 if the branch has never closed a day before. */
 async function getCarryForwardOpeningBalance(branchId: string, beforeDate: Date): Promise<number> {
   const previous = await prisma.treasuryDayClosure.findFirst({
     where: { branchId, date: { lt: beforeDate }, isOpen: false },
     orderBy: { date: 'desc' },
   });
-  return previous?.actualCountedCash.toNumber() ?? 0;
+  if (previous) return previous.actualCountedCash.toNumber();
+  return getCutoverCashSeed(branchId);
 }
 
 /** The live numbers for today (or any not-yet-closed day) before the employee commits a close — same math `closeTreasuryDay` persists, computed fresh on every call. */
