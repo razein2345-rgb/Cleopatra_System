@@ -6,16 +6,16 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
  * — this tool must pass their own `accessibleBranchIds`, never `'all'`/
  * `undefined`, unless they are actually SUPER_ADMIN.
  */
-const getTreasuryBalance = vi.fn<typeof import('../../treasuryService.js').getTreasuryBalance>(
+const getCashPosition = vi.fn<typeof import('../../treasuryService.js').getCashPosition>(
   async () => ({ totalIncome: 0, totalExpense: 0, totalTransfer: 0, balance: 0, byMethod: [] }) as never,
 );
 
-vi.mock('../../treasuryService.js', () => ({ getTreasuryBalance }));
+vi.mock('../../treasuryService.js', () => ({ getCashPosition }));
 
 const { getTreasurySummaryTool } = await import('./getTreasurySummary.js');
 
 beforeEach(() => {
-  getTreasuryBalance.mockClear();
+  getCashPosition.mockClear();
 });
 
 describe('get_treasury_summary tool — branch isolation', () => {
@@ -24,7 +24,7 @@ describe('get_treasury_summary tool — branch isolation', () => {
       {},
       { auth: { roleNames: ['CASHIER'], accessibleBranchIds: ['branch-cleopatra'] } as never },
     );
-    expect(getTreasuryBalance).toHaveBeenCalledWith(['branch-cleopatra']);
+    expect(getCashPosition).toHaveBeenCalledWith(['branch-cleopatra']);
   });
 
   it('never restricts a SUPER_ADMIN caller — passes undefined (every branch)', async () => {
@@ -32,6 +32,6 @@ describe('get_treasury_summary tool — branch isolation', () => {
       {},
       { auth: { roleNames: ['SUPER_ADMIN'], accessibleBranchIds: ['branch-cleopatra'] } as never },
     );
-    expect(getTreasuryBalance).toHaveBeenCalledWith(undefined);
+    expect(getCashPosition).toHaveBeenCalledWith(undefined);
   });
 });
