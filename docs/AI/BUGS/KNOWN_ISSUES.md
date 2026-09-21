@@ -108,3 +108,116 @@ function — it doesn't. A repo-wide search turned up no test file
 referencing `getCustomerOpeningPosition` at all. Pre-existing gap, not
 introduced or widened by this revision round — left untouched, owner's
 explicit decision (answer-only, no action requested).
+
+---
+
+## `OrderItemReturn.orderId` has no foreign key or index live
+
+**Found:** 2026-09-21, while constructing the Cutover migration
+(`20260921195220_opening_state_cutover`) via `prisma migrate diff
+--from-config-datasource --to-schema` against the live database. The raw
+diff proposed adding both `OrderItemReturn_orderId_fkey` and
+`OrderItemReturn_orderId_idx`, which was surprising — `orderId` was
+supposedly already added by the separate, still-uncommitted
+`order_item_return_history_fix` migration (applied live 2026-09-16, see
+`_prisma_migrations`). Verified directly against `pg_constraint`/
+`pg_indexes`: the `NOT NULL` column genuinely exists live, but **neither
+the foreign key nor the index were ever created** — that migration added
+the column only.
+
+**Concrete consequence:** referential integrity between `OrderItemReturn.
+orderId` and `Order.id` is not enforced at the database level at all right
+now (an orphaned `orderId` pointing at a deleted/nonexistent order would
+currently be silently accepted), and any query filtering or joining on
+`orderId` (e.g. `mapOrderToDto`'s per-order sum, per its own accounting-
+fix doc comment) runs a full sequential scan rather than an index lookup.
+
+**Why it wasn't fixed here:** `OrderItemReturn` has nothing to do with
+Cutover — fixing this is that other, still-uncommitted feature's own
+migration to write and review, not something to fold into an unrelated
+migration silently. Excluded from the Cutover migration by deliberate,
+confirmed decision (verified the two are fully independent — different
+table, different constraint names, zero overlap).
+
+**What a real fix would look like:** a small follow-up migration —
+`ALTER TABLE "OrderItemReturn" ADD CONSTRAINT "OrderItemReturn_orderId_fkey"
+FOREIGN KEY ("orderId") REFERENCES "Order"("id") ON DELETE RESTRICT ON
+UPDATE CASCADE;` + `CREATE INDEX "OrderItemReturn_orderId_idx" ON
+"OrderItemReturn"("orderId");` — reviewed and applied alongside (or as
+part of) that other migration's own eventual commit, not standalone.
+
+---
+
+## "Connection terminated unexpectedly" — root cause identified (external), two downstream effects now mitigated, one still open
+
+**Found:** 2026-09-22, during the live browser verification of the Cutover
+screens (`PENDING_VERIFICATION.md`) — hit repeatedly (5+ times) across a
+single session: on `POST /api/auth/login` itself (20-30s before failing),
+on `/orders/new`'s initial load (`/api/partners`), and once mid-save. This
+is the exact same error the `keepAlive`/`idleTimeoutMillis` fix in
+`apps/api/src/lib/prisma.ts` (commit `815fc58`, documented in `CLAUDE.md`
+as resolving "Issue 1") was believed to have closed. It has not.
+
+**Root cause, now identified as external:** a direct `pg_stat_activity`
+check during the incident showed only 18/60 connections in use (ruling out
+pool exhaustion), the API process never restarted during the session
+(ruling out `tsx watch`/HMR cold-starts), and every failure hung for a
+fixed ~10s/~20s/~30s before erroring — a "the pooler layer itself is stuck"
+shape, not "the connection was refused." This matches a still-open Supabase
+upstream issue, **[supabase/supabase#49991](https://github.com/supabase/supabase/issues/49991)**
+("Both Supavisor poolers intermittently take 12–93s to accept a connection
+while PostgREST against the same database stays at 0.35s median — so
+Postgres is healthy and the pooler layer is not"). Full write-up, and why
+this must be re-checked before assuming any regression is "the same bug
+again," in `docs/AI/BUGS/EXTERNAL_DEPENDENCY_SUPAVISOR_49991.md`.
+
+**Two concrete downstream consequences found this session — now mitigated
+(commit `04b9380`, 2026-09-22, independent of Cutover):**
+
+1. ~~A transient backend failure sometimes surfaces to the frontend as a
+   401, which the app treats as "session invalid" and force-reloads —
+   silently wiping any in-progress form/cart state.~~ **The forced reload
+   itself is still not fixed** (see "Still open" below) — what's fixed is
+   its worst consequence: a real Opening Credit payment succeeded
+   server-side, then an unrelated crash blanked the page; reloading right
+   then used to mint a brand-new idempotency key, unaware it might be
+   retrying an operation that already succeeded. `useIdempotencyKey` now
+   stores its key in `sessionStorage` (survives the reload, clears on tab
+   close) instead of a bare `useRef`, wired into all four of its call
+   sites (order creation, payment recording). A stale key reused for a
+   genuinely different payload still fails safely — the backend's
+   fingerprint check in `idempotencyService.ts` rejects the mismatch with
+   a 409 rather than silently returning someone else's result.
+2. ~~An uncaught frontend crash (`Cannot read properties of undefined
+   (reading 'every')` in `react-dom`, blank black page, no error
+   boundary) — the backend operation had already succeeded (confirmed via
+   DB) but the UI gave zero feedback.~~ **Fixed** — a new `ErrorBoundary`
+   now wraps `NewOrderPage`/`OrderDocumentPage` at the route level
+   (`App.tsx`), page-level rather than just around the payment dialog,
+   because the crash actually observed originated from an `order` state
+   update rippling through `react-dom`'s own reconciliation, not code
+   confined to the dialog's subtree. Shows a clear Arabic recovery message
+   ("تأكد من حالة العملية... قبل ما تحاول تاني") instead of a blank page.
+
+**Still open — not fixed by the above, deliberately out of scope for that
+narrow commit:**
+
+- The frontend still treats a 5xx/timeout as if it were a genuine 401 and
+  force-reloads/logs out. The *consequences* of that reload (duplicate
+  submission, a dead blank page) are now covered, but the reload — and
+  the confusing "you got logged out for no reason" UX, and the lost
+  in-progress form data for anything that ISN'T behind
+  `useIdempotencyKey` — still happens. A real fix means the frontend
+  should never treat a 5xx/network failure as a 401 (only an explicit
+  auth rejection should trigger a forced logout).
+- `useIdempotencyKeyMap` (`ExpensesPage.tsx`'s mark-paid,
+  `PosPage.tsx`/`NewOrderPage.tsx`'s batch quick-sale line items) has the
+  exact same `useRef`-only weakness `useIdempotencyKey` had — a crash +
+  reload mid-batch would lose its keys too. **Known, not fixed** — narrower
+  blast radius than the main fix (shorter-lived, per-line-item operations,
+  not a single large payment/order), deliberately left out of the
+  2026-09-22 commit to keep it scoped; a future pass should apply the same
+  `sessionStorage` treatment here too.
+- The stall inside Supavisor itself has no fix on our end at all — see
+  `docs/AI/BUGS/EXTERNAL_DEPENDENCY_SUPAVISOR_49991.md` for what would
+  actually resolve it (none of which is ours to build).
