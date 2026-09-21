@@ -558,8 +558,8 @@ export function PosPage() {
         items: buildOrderItems(),
         ...(validPayments.length > 0 ? { payments: validPayments } : {}),
       };
-      const order = await apiPost<Order>('/api/orders', payload, invoiceIdempotency.getKey());
-      invoiceIdempotency.resetKey(); // definitive success — the next invoice (if any) is a genuinely new order
+      const order = await apiPost<Order>('/api/orders', payload, invoiceIdempotency.getKey('pos-invoice'));
+      invoiceIdempotency.resetKey('pos-invoice'); // definitive success — the next invoice (if any) is a genuinely new order
       setSuccessOrder(order);
       setCart([]);
       setPartnerId('');

@@ -238,8 +238,8 @@ export function OrderDocumentPage() {
       // creates a Payment with sourceType OPENING_CREDIT_APPLICATION and no
       // TreasuryEntry, never the normal /payments path.
       const path = useOpeningCredit ? `/api/orders/${order.id}/opening-credit` : `/api/orders/${order.id}/payments`;
-      const updated = await apiPost<Order>(path, { method: paymentMethod, amount }, paymentIdempotency.getKey());
-      paymentIdempotency.resetKey(); // definitive success — the next payment (if any) is a genuinely new operation
+      const updated = await apiPost<Order>(path, { method: paymentMethod, amount }, paymentIdempotency.getKey(`payment:${order.id}`));
+      paymentIdempotency.resetKey(`payment:${order.id}`); // definitive success — the next payment (if any) is a genuinely new operation
       setOrder(updated);
       setShowAddPayment(false);
       setPaymentAmount('');

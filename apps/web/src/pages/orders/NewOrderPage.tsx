@@ -3141,8 +3141,8 @@ function NewOrderForm({
           items: outputItems,
           payments: paymentInputs.length ? paymentInputs : undefined,
         };
-        const order = await apiPost<Order>('/api/orders', input, orderCreateIdempotency.getKey());
-        orderCreateIdempotency.resetKey(); // definitive success — the next click (if any) is a genuinely new order
+        const order = await apiPost<Order>('/api/orders', input, orderCreateIdempotency.getKey('order-create'));
+        orderCreateIdempotency.resetKey('order-create'); // definitive success — the next click (if any) is a genuinely new order
         if (intent === 'SAVE_AND_PRINT') {
           navigate(`/orders/${order.id}`);
         } else {

@@ -5,6 +5,7 @@ import { ThemeProvider } from '@/state/ThemeContext';
 import { ConfirmProvider } from '@/components/cleopatra';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { AppShell } from '@/components/AppShell';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LoginPage } from '@/pages/login/LoginPage';
 import { AcceptInvitePage } from '@/pages/accept-invite/AcceptInvitePage';
 import { RoleHome } from '@/pages/dashboard/RoleHome';
@@ -199,7 +200,14 @@ function App() {
                   as Invoice (orders.create) or Quotation (quotations.create) —
                   either permission alone is enough to reach it. */}
               <Route element={<ProtectedRoute permission={['orders.create', 'quotations.create']} />}>
-                <Route path="/orders/new" element={<NewOrderPage />} />
+                <Route
+                  path="/orders/new"
+                  element={
+                    <ErrorBoundary>
+                      <NewOrderPage />
+                    </ErrorBoundary>
+                  }
+                />
               </Route>
 
               {/* POS / Cashier (2026-09-11) — fast barcode-first sale screen,
@@ -211,7 +219,14 @@ function App() {
 
               {/* FEATURE-006 M9 — Invoice document (print). */}
               <Route element={<ProtectedRoute permission="orders.view" />}>
-                <Route path="/orders/:id" element={<OrderDocumentPage />} />
+                <Route
+                  path="/orders/:id"
+                  element={
+                    <ErrorBoundary>
+                      <OrderDocumentPage />
+                    </ErrorBoundary>
+                  }
+                />
               </Route>
 
               {/* FEATURE-006 M10 — Work Order document (print). */}

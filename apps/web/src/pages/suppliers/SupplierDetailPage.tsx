@@ -294,8 +294,8 @@ function AddPaymentForm({ partnerId, onSaved }: { partnerId: string; onSaved: ()
         note: note || undefined,
         date: new Date(date).toISOString(),
       };
-      await apiPost(`/api/suppliers/${partnerId}/payments`, input, paymentIdempotency.getKey());
-      paymentIdempotency.resetKey(); // definitive success — the next payment (if any) is a genuinely new operation
+      await apiPost(`/api/suppliers/${partnerId}/payments`, input, paymentIdempotency.getKey(`supplier-payment:${partnerId}`));
+      paymentIdempotency.resetKey(`supplier-payment:${partnerId}`); // definitive success — the next payment (if any) is a genuinely new operation
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'تعذر تسجيل الدفعة');
