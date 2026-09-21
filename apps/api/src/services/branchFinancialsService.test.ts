@@ -326,7 +326,12 @@ describe('resolveItemProfit', () => {
  * instead of silently reintroducing a profitability special-case. The
  * behavioral half (below) proves the same thing dynamically: an order
  * carrying `customerOpeningId` must compute the exact same salesTotal/
- * netProfit/realProfit as an otherwise-identical ordinary order.
+ * netProfit as an otherwise-identical ordinary order. `realProfit`
+ * deliberately not asserted here — it does not exist on the committed
+ * getCompanyFinancialSummary return type at all; it's a field the
+ * still-uncommitted Phase C/D work adds. Narrowed to avoid an undisclosed
+ * forward-dependency on that unrelated, unreviewed work (found via the
+ * isolated worktree build check) — re-add once Phase C/D lands.
  */
 describe('B1 exclusion guarantee — customerOpeningId must never feed profitability', () => {
   it('customerOpeningId and ordersContinuingThisOpening are referenced zero times in the profitability-computing source files', () => {
@@ -338,7 +343,7 @@ describe('B1 exclusion guarantee — customerOpeningId must never feed profitabi
     }
   });
 
-  it('an order with customerOpeningId set contributes to salesTotal/netProfit/realProfit exactly like an ordinary order with the same numbers', async () => {
+  it('an order with customerOpeningId set contributes to salesTotal/netProfit exactly like an ordinary order with the same numbers', async () => {
     branchFindMany.mockReset().mockResolvedValue([{ id: 'branch-1', name: 'الفرع الرئيسي' }]);
     treasuryGroupBy.mockReset().mockResolvedValue([]);
     inventoryItemFindMany.mockReset().mockResolvedValue([{ id: 'inv-1', costPrice: { toNumber: () => 5 }, sheetType: null }]);
@@ -385,7 +390,9 @@ describe('B1 exclusion guarantee — customerOpeningId must never feed profitabi
     const [ordinaryBranch, continuationBranch] = [ordinary.branches[0]!, continuation.branches[0]!];
     expect(continuationBranch.salesTotal).toBe(ordinaryBranch.salesTotal);
     expect(continuationBranch.netProfit).toBe(ordinaryBranch.netProfit);
-    expect(continuationBranch.realProfit).toBe(ordinaryBranch.realProfit);
+    // realProfit deliberately not asserted — see the describe block's own
+    // doc comment above; the field doesn't exist on the committed return
+    // type yet (still-uncommitted Phase C/D work). Re-add once that lands.
     // Sanity pin, same math as the time-basis tests above: (10-5)*10 = 50.
     expect(continuationBranch.netProfit).toBeCloseTo(50, 5);
   });
