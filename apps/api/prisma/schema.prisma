@@ -469,6 +469,10 @@ model Branch {
   callLogs               CallLog[]
   contentCalendarEntries ContentCalendarEntry[]
   campaigns              Campaign[]
+  /// Opening State / Cutover (Phase 3B) — one branch may hold multiple
+  /// CutoverRecord rows over its lifetime, but at most one non-superseded
+  /// one at a time (see CutoverRecord.isSuperseded).
+  cutoverRecords         CutoverRecord[]
 
   @@index([isDeleted])
 }
@@ -955,49 +959,70 @@ model StaffProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  roles                       UserRole[]
-  branchAccess                UserBranchAccess[]
-  departmentAccess            UserDepartmentAccess[]
-  businessPartnersAsSalesRep  BusinessPartner[]
-  orders                      Order[]
-  quotations                  Quotation[]
-  treasuryEntries             TreasuryEntry[]
-  attachments                 Attachment[]
-  auditLogs                   AuditLog[]
-  assignedStageInstances      StageInstance[]
-  workflowEvents              WorkflowEvent[]
-  advancesReceived            EmployeeAdvance[]          @relation("EmployeeAdvanceStaff")
-  advancesRecorded            EmployeeAdvance[]          @relation("EmployeeAdvanceRecordedBy")
-  advanceRepaymentsRecorded   EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
-  salaryPaymentsReceived      SalaryPayment[]            @relation("SalaryPaymentStaff")
-  salaryPaymentsRecorded      SalaryPayment[]            @relation("SalaryPaymentRecordedBy")
-  payrollPeriods              PayrollPeriod[]            @relation("PayrollPeriodStaff")
-  payrollPeriodsReopened      PayrollPeriod[]            @relation("PayrollPeriodReopenedBy")
-  leadsAssigned               Lead[]                     @relation("LeadAssignedTo")
-  leadsRecorded               Lead[]                     @relation("LeadRecordedBy")
-  contentCalendarAssigned     ContentCalendarEntry[]     @relation("ContentCalendarAssignedTo")
-  contentCalendarRecorded     ContentCalendarEntry[]     @relation("ContentCalendarRecordedBy")
-  campaignsRecorded           Campaign[]                 @relation("CampaignRecordedBy")
-  supplierPurchasesRecorded   SupplierPurchase[]         @relation("SupplierPurchaseRecordedBy")
-  supplierPaymentsRecorded    SupplierPayment[]          @relation("SupplierPaymentRecordedBy")
-  purchaseRequestsPurchased   PurchaseRequest[]          @relation("PurchaseRequestPurchasedBy")
-  attendanceEntries           AttendanceEntry[]          @relation("AttendanceStaff")
-  attendanceEntriesRecorded   AttendanceEntry[]          @relation("AttendanceRecordedBy")
-  fieldAssignments            FieldAssignment[]          @relation("FieldAssignmentStaff")
-  fieldAssignmentsCreated     FieldAssignment[]          @relation("FieldAssignmentCreatedBy")
-  treasuryDayClosuresClosed   TreasuryDayClosure[]       @relation("TreasuryDayClosureClosedBy")
-  treasuryDayClosuresReopened TreasuryDayClosure[]       @relation("TreasuryDayClosureReopenedBy")
-  orderTemplatesCreated       OrderTemplate[]
-  orderItemProductionUpdates  OrderItem[]                @relation("OrderItemProductionUpdatedBy")
-  orderItemReturnsRecorded    OrderItemReturn[]
+  roles                           UserRole[]
+  branchAccess                    UserBranchAccess[]
+  departmentAccess                UserDepartmentAccess[]
+  businessPartnersAsSalesRep      BusinessPartner[]
+  orders                          Order[]
+  quotations                      Quotation[]
+  treasuryEntries                 TreasuryEntry[]
+  attachments                     Attachment[]
+  auditLogs                       AuditLog[]
+  assignedStageInstances          StageInstance[]
+  workflowEvents                  WorkflowEvent[]
+  advancesReceived                EmployeeAdvance[]          @relation("EmployeeAdvanceStaff")
+  advancesRecorded                EmployeeAdvance[]          @relation("EmployeeAdvanceRecordedBy")
+  advanceRepaymentsRecorded       EmployeeAdvanceRepayment[] @relation("EmployeeAdvanceRepaymentRecordedBy")
+  salaryPaymentsReceived          SalaryPayment[]            @relation("SalaryPaymentStaff")
+  salaryPaymentsRecorded          SalaryPayment[]            @relation("SalaryPaymentRecordedBy")
+  payrollPeriods                  PayrollPeriod[]            @relation("PayrollPeriodStaff")
+  payrollPeriodsReopened          PayrollPeriod[]            @relation("PayrollPeriodReopenedBy")
+  leadsAssigned                   Lead[]                     @relation("LeadAssignedTo")
+  leadsRecorded                   Lead[]                     @relation("LeadRecordedBy")
+  contentCalendarAssigned         ContentCalendarEntry[]     @relation("ContentCalendarAssignedTo")
+  contentCalendarRecorded         ContentCalendarEntry[]     @relation("ContentCalendarRecordedBy")
+  campaignsRecorded               Campaign[]                 @relation("CampaignRecordedBy")
+  supplierPurchasesRecorded       SupplierPurchase[]         @relation("SupplierPurchaseRecordedBy")
+  supplierPaymentsRecorded        SupplierPayment[]          @relation("SupplierPaymentRecordedBy")
+  purchaseRequestsPurchased       PurchaseRequest[]          @relation("PurchaseRequestPurchasedBy")
+  attendanceEntries               AttendanceEntry[]          @relation("AttendanceStaff")
+  attendanceEntriesRecorded       AttendanceEntry[]          @relation("AttendanceRecordedBy")
+  fieldAssignments                FieldAssignment[]          @relation("FieldAssignmentStaff")
+  fieldAssignmentsCreated         FieldAssignment[]          @relation("FieldAssignmentCreatedBy")
+  treasuryDayClosuresClosed       TreasuryDayClosure[]       @relation("TreasuryDayClosureClosedBy")
+  treasuryDayClosuresReopened     TreasuryDayClosure[]       @relation("TreasuryDayClosureReopenedBy")
+  orderTemplatesCreated           OrderTemplate[]
+  orderItemProductionUpdates      OrderItem[]                @relation("OrderItemProductionUpdatedBy")
+  orderItemReturnsRecorded        OrderItemReturn[]
   /// Device Access Control (2026-08-24, owner: "عايز اقدر احدد الأجهزة
   /// المسموح لها بفتح النظام"). `trustedDevices` is Policy B only (a
   /// device bound to exactly this one staff member) — a Policy A device
   /// (`staffId: null`, usable by any staff) has no owner relation at all.
-  trustedDevices              TrustedDevice[]            @relation("TrustedDeviceOwner")
-  devicesApproved             TrustedDevice[]            @relation("TrustedDeviceApprovedBy")
-  devicesBlocked              TrustedDevice[]            @relation("TrustedDeviceBlockedBy")
-  callLogs                    CallLog[]
+  trustedDevices                  TrustedDevice[]            @relation("TrustedDeviceOwner")
+  devicesApproved                 TrustedDevice[]            @relation("TrustedDeviceApprovedBy")
+  devicesBlocked                  TrustedDevice[]            @relation("TrustedDeviceBlockedBy")
+  callLogs                        CallLog[]
+  /// Opening State / Cutover (Phase 3B) — one named relation per distinct
+  /// actor role, matching this model's own existing convention exactly
+  /// (see treasuryDayClosuresClosed/Reopened, payrollPeriodsReopened above).
+  cutoverRecordsCreated           CutoverRecord[]            @relation("CutoverRecordCreatedBy")
+  cutoverRecordsReviewed          CutoverRecord[]            @relation("CutoverRecordReviewedBy")
+  cutoverRecordsApproved          CutoverRecord[]            @relation("CutoverRecordApprovedBy")
+  cutoverRecordsActivated         CutoverRecord[]            @relation("CutoverRecordActivatedBy")
+  cutoverRecordsReopened          CutoverRecord[]            @relation("CutoverRecordReopenedBy")
+  /// StaffProfile who performed a Supersede — NOT the successor
+  /// CutoverRecord. Supersede is a separate, rare, SUPER_ADMIN-only action
+  /// distinct from Reopen (see CutoverRecord.isSuperseded doc comment).
+  cutoverRecordsSuperseded        CutoverRecord[]            @relation("CutoverRecordSupersededBy")
+  treasuryOpeningsEntered         TreasuryOpening[]          @relation("TreasuryOpeningEnteredBy")
+  customerOpeningsEntered         CustomerOpening[]          @relation("CustomerOpeningEnteredBy")
+  customerOpeningsApproved        CustomerOpening[]          @relation("CustomerOpeningApprovedBy")
+  customerOpeningsReopened        CustomerOpening[]          @relation("CustomerOpeningReopenedBy")
+  customerOpeningsCreditCorrected CustomerOpening[]          @relation("CustomerOpeningCreditCorrectedBy")
+  supplierOpeningsEntered         SupplierOpening[]          @relation("SupplierOpeningEnteredBy")
+  supplierOpeningsApproved        SupplierOpening[]          @relation("SupplierOpeningApprovedBy")
+  supplierOpeningsReopened        SupplierOpening[]          @relation("SupplierOpeningReopenedBy")
+  inventoryOpeningsEntered        InventoryOpening[]         @relation("InventoryOpeningEnteredBy")
 
   @@unique([email], where: { isDeleted: false })
   @@index([isDeleted])
@@ -1259,6 +1284,14 @@ model BusinessPartner {
   boardsCatalogItemsAsAssemblySupplier BoardsCatalogItem[]       @relation("BoardsCatalogItemAssemblySupplier")
   /// Reverse of `CallLog.partnerId` — every call logged against this customer.
   callLogs                             CallLog[]
+  /// Opening State / Cutover (Phase 3B) — company-wide, at most one ever
+  /// per partner (see CustomerOpening/SupplierOpening's own @@unique).
+  /// Independent of each other: a partner holding both CUSTOMER and
+  /// SUPPLIER roles gets independent rows, exactly like its real
+  /// Order/Payment history and SupplierPurchase/SupplierPayment history
+  /// already are two disjoint tables today.
+  customerOpening                      CustomerOpening?
+  supplierOpening                      SupplierOpening?
 
   @@index([isDeleted])
   @@index([status])
@@ -1990,6 +2023,20 @@ model Order {
   staffId   String           @db.Uuid
   staff     StaffProfile     @relation(fields: [staffId], references: [id])
 
+  /// Cutover-revision-round decision (post-3D) — set only when this Order
+  /// is the full-price, in-system continuation of a job that was already
+  /// in progress off-system before cutover (Decision B). Traceability
+  /// ONLY — deliberately no back-relation on CustomerOpening (no
+  /// `orders Order[]`), so nothing can casually `include` its way from a
+  /// CustomerOpening to "its" Orders and fold this Order's figures into
+  /// an opening-balance calculation. This Order's own revenue/profit/
+  /// materials are counted EXACTLY like any other Order in every existing
+  /// Income/Revenue/Profitability calculation — none of those may ever
+  /// read this field. It exists only so staff can trace which pre-cutover
+  /// commitment this Order continues.
+  customerOpeningId String?          @db.Uuid
+  customerOpening   CustomerOpening? @relation(fields: [customerOpeningId], references: [id])
+
   date            DateTime    @default(now())
   subtotal        Decimal     @db.Decimal(12, 2)
   discountPercent Decimal     @default(0) @db.Decimal(6, 3)
@@ -2033,13 +2080,15 @@ model Order {
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  stockMovements StockMovement[]
 
   @@index([isDeleted])
   @@index([partnerId])
   @@index([branchId])
   @@index([status])
+  @@index([customerOpeningId])
 }
 
 /// Full denormalized calculator output snapshot (`breakdown`), preserving the
@@ -2342,6 +2391,19 @@ model Payment {
   order   Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
   method  PaymentMethod
   amount  Decimal       @db.Decimal(12, 2)
+
+  /// Opening State / Cutover (Phase 3B) — tags why this Payment exists,
+  /// mirroring TreasuryEntry.sourceType's exact precedent. NORMAL for
+  /// every existing/future ordinary payment (the default, so no existing
+  /// row or call site is affected). OPENING_CREDIT_APPLICATION marks a
+  /// Payment that settles part of a customer's CustomerOpening.creditAmount
+  /// against a real Order — this Payment is a genuine reduction of that
+  /// Order's remainingBalance, but represents no new cash movement (the
+  /// cash was already counted inside TreasuryOpening at cutover), which is
+  /// exactly why `treasuryEntry` below is deliberately left null for this
+  /// sourceType — the first code path ever to do so, though the relation
+  /// itself has always permitted it.
+  sourceType PaymentSourceType @default(NORMAL)
 
   treasuryEntry TreasuryEntry?
 
@@ -3781,6 +3843,8 @@ model InventoryItem {
   orderItems         OrderItem[]
   orderItemMaterials OrderItemMaterial[]
   purchaseRequests   PurchaseRequest[]
+  /// Opening State / Cutover (Phase 3B).
+  inventoryOpenings  InventoryOpening[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -3851,6 +3915,29 @@ model StockMovement {
   /// Owner (2026-08-20, "بيخصم من المخزون ويتحط في الخزينه على طول") — set
   /// only for a quick-sale-originated movement (see `TreasuryEntry.stockMovementId`).
   treasuryEntry TreasuryEntry?
+
+  /// Opening State / Cutover (Phase 3B) — set only for the one movement
+  /// (IN or OUT, never ADJUSTMENT — see InventoryOpening's own doc comment
+  /// for why) produced by activating a specific InventoryOpening row.
+  /// @unique makes a second activation attempt for the SAME InventoryOpening
+  /// impossible at the database level — the identical precedent already
+  /// proven by SupplierPurchase.itemSupplierTaskId for the same class of
+  /// "convert this record into a ledger entry exactly once" problem.
+  inventoryOpeningId String?           @unique @db.Uuid
+  inventoryOpening   InventoryOpening? @relation(fields: [inventoryOpeningId], references: [id])
+
+  /// Cutover-revision-round decision (post-3D, Decision B3) — set only for
+  /// an ADJUSTMENT movement compensating for material already consumed
+  /// off-system before cutover, on an Order continuing a pre-cutover
+  /// commitment (Order.customerOpeningId). Deliberately NOT @unique —
+  /// unlike inventoryOpeningId's one-shot activation movement, a single
+  /// Order can need one compensating ADJUSTMENT per distinct material.
+  /// The Order's own consumption movement (type OUT, created by the
+  /// normal `deductStockForOrderItem` path) does NOT set this field —
+  /// only the compensating ADJUSTMENT does, so the two remain
+  /// distinguishable by `type`, not by this FK's mere presence.
+  orderId String? @db.Uuid
+  order   Order?  @relation(fields: [orderId], references: [id])
 
   /// Owner (2026-08-20, "لا عايز اقدر اعدل الحركة واحذفها") — this row was
   /// originally documented as an immutable ledger (matching TreasuryEntry),
@@ -3992,4 +4079,370 @@ model IdempotencyKey {
   createdAt          DateTime @default(now())
 
   @@index([createdAt])
+}
+
+// =============================================================================
+// Opening State / Cutover (Phase 3A/3A.1/3B/3B.1 design — schema only, no
+// service/controller/frontend wiring yet). Lets a branch start operating in
+// Cleopatra after a period of manual/off-system operation without
+// fabricating historical transactions: a physically-verified STARTING
+// POSITION (cash, receivables, payables, inventory quantity) is entered,
+// reviewed, and locked, and every relevant read path adds it in at the
+// point where a live balance is displayed — never inserted into
+// TreasuryEntry/Order/Payment/OrderItem/SupplierPurchase/SupplierPayment
+// themselves, so revenue, expense, and profitability calculations
+// (resolveItemProfit, getCompanyFinancialSummary.netProfit,
+// getProfitabilityReport) are structurally unaffected by construction.
+// =============================================================================
+
+enum CutoverStatus {
+  DRAFT
+  REVIEW
+  APPROVED
+  ACTIVE
+}
+
+/// Only additional dimension beyond CutoverStatus/CustomerOpening.status/
+/// SupplierOpening.status — answers a question those don't: "has this
+/// specific figure been checked against external physical/documentary
+/// reality (a bank statement, a physical count, a signed customer
+/// statement)?" Deliberately just two values — DRAFT/REVIEW/APPROVED/
+/// ACTIVE already exist as the lifecycle status and must never be
+/// duplicated here.
+enum VerificationStatus {
+  UNVERIFIED
+  VERIFIED
+}
+
+/// Per-branch Cutover header. lastManualDate/goLiveDate are deliberately
+/// two explicit fields, never one ambiguous "cutoverDate" — lastManualDate
+/// is informational only and must NEVER be used as a query boundary; every
+/// financial date filter uses businessDayRangeUtc(goLiveDate).start
+/// (packages/shared/src/businessTimezone.ts) exclusively, the same
+/// Cairo-timezone-aware utility already relied on elsewhere in this
+/// codebase, deliberately avoiding the naive-UTC-midnight bug class that
+/// utility was built to fix.
+model CutoverRecord {
+  id       String @id @default(uuid()) @db.Uuid
+  branchId String @db.Uuid
+  branch   Branch @relation(fields: [branchId], references: [id])
+
+  lastManualDate DateTime @db.Date
+  goLiveDate     DateTime @db.Date
+
+  status CutoverStatus @default(DRAFT)
+
+  /// False throughout this row's ENTIRE lifecycle (DRAFT through ACTIVE,
+  /// including any number of reopen/re-approve/re-activate cycles on the
+  /// SAME row) — Reopen never touches this field. Flips true ONLY via an
+  /// explicit, separate, rare Supersede action (SUPER_ADMIN-only,
+  /// mandatory reason, its own audit event — NOT a side effect of Reopen
+  /// and not reversible by a plain Reopen), the sole mechanism that ever
+  /// allows a second CutoverRecord to be created for the same branch (a
+  /// future catastrophic-recovery re-onboarding, a legal/year-boundary
+  /// re-cutover, etc.). This is what actually prevents two simultaneously
+  /// ACTIVE cutovers for one branch: while isSuperseded is false on the
+  /// current row, the partial unique index below makes creating a second
+  /// row for the same branch impossible at the database level, regardless
+  /// of which of the four statuses the first row currently holds.
+  isSuperseded     Boolean       @default(false)
+  supersededById   String?       @db.Uuid
+  /// StaffProfile who performed the Supersede action — NOT the successor
+  /// CutoverRecord (no supersedingCutoverId is modeled; deliberately
+  /// deferred until a real second-cutover scenario actually needs it,
+  /// rather than adding speculative complexity now).
+  supersededBy     StaffProfile? @relation("CutoverRecordSupersededBy", fields: [supersededById], references: [id])
+  supersededAt     DateTime?
+  supersededReason String?
+
+  createdById String       @db.Uuid
+  createdBy   StaffProfile @relation("CutoverRecordCreatedBy", fields: [createdById], references: [id])
+
+  reviewedById String?       @db.Uuid
+  reviewedBy   StaffProfile? @relation("CutoverRecordReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt   DateTime?
+
+  approvedById String?       @db.Uuid
+  approvedBy   StaffProfile? @relation("CutoverRecordApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+
+  /// Distinct from approvedAt — activation is the actual financial/
+  /// reporting boundary switch (reports start applying goLiveDate, real
+  /// StockMovement rows get created), not merely a paperwork sign-off,
+  /// and is gated more strictly (SUPER_ADMIN only, not ADMIN).
+  activatedById String?       @db.Uuid
+  activatedBy   StaffProfile? @relation("CutoverRecordActivatedBy", fields: [activatedById], references: [id])
+  activatedAt   DateTime?
+
+  /// Reopen (APPROVED→DRAFT or ACTIVE→DRAFT) corrects THIS SAME row in
+  /// place — never a new version, matching TreasuryDayClosure/
+  /// PayrollPeriod's exact existing precedent. Distinct from Supersede
+  /// above: Reopen is a correction to the current cutover; Supersede
+  /// retires it in favor of a genuinely new one.
+  reopenedById String?       @db.Uuid
+  reopenedBy   StaffProfile? @relation("CutoverRecordReopenedBy", fields: [reopenedById], references: [id])
+  reopenedAt   DateTime?
+  reopenReason String?
+
+  notes String?
+
+  treasuryOpenings  TreasuryOpening[]
+  inventoryOpenings InventoryOpening[]
+
+  /// Cutover-revision-round decision (post-3D) — same shared
+  /// `assertCanApprove` primitive as CustomerOpening/SupplierOpening; see
+  /// CustomerOpening.selfApprovedException's doc comment for the full
+  /// rationale.
+  selfApprovedException Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// At most one non-superseded CutoverRecord per branch, regardless of
+  /// status — DB-enforced via this project's own established partial
+  /// unique index pattern (see ContactPerson's "only one Primary Contact"
+  /// / DocumentTemplate's "only one default template" for the identical
+  /// mechanism already in production use).
+  @@unique([branchId], where: { isSuperseded: false })
+  @@index([branchId])
+  @@index([status])
+}
+
+/// Physically-verified opening cash/wallet position, one row per payment
+/// method per cutover. Must NEVER become a TreasuryEntry — every "all-time"
+/// treasury total (getTreasuryBalance, getCompanyFinancialSummary,
+/// getReportsOverview) would otherwise silently and permanently misclassify
+/// a one-time starting balance as ongoing income. Reused only additively,
+/// at the point a live cash balance is computed: TreasuryOpening.amount +
+/// SUM(TreasuryEntry since goLiveDate, by method/type) — never inside any
+/// period income/expense total, which gets the goLiveDate filter only.
+model TreasuryOpening {
+  id        String        @id @default(uuid()) @db.Uuid
+  cutoverId String        @db.Uuid
+  cutover   CutoverRecord @relation(fields: [cutoverId], references: [id], onDelete: Cascade)
+  method    PaymentMethod
+
+  amount             Decimal            @db.Decimal(12, 2) // >= 0 — APPLICATION ENFORCED
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  notes              String?
+
+  enteredById String       @db.Uuid
+  enteredBy   StaffProfile @relation("TreasuryOpeningEnteredBy", fields: [enteredById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cutoverId, method])
+}
+
+/// Company-wide, standalone — deliberately NOT a child of any single
+/// branch's CutoverRecord (customer receivable is demonstrated, everywhere
+/// in this codebase, to be a company-wide figure, never branch-split).
+/// This is the system's ONE historical opening state for a given partner;
+/// a future second/re-cutover event does not create a new row here — it
+/// can only correct this same row via its own Reopen path below. A
+/// partner holding both CUSTOMER and SUPPLIER roles gets an independent
+/// SupplierOpening row, exactly as their real transaction history already
+/// lives in two disjoint table families today.
+model CustomerOpening {
+  id        String          @id @default(uuid()) @db.Uuid
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id])
+
+  /// What the customer owes us. Kept strictly separate from creditAmount
+  /// below — never a single signed net figure, since this codebase's own
+  /// live customer-balance display already has demonstrated sign-
+  /// convention fragility (a negative remainingBalance rendered
+  /// identically to zero in three separate UI surfaces).
+  receivableAmount Decimal @default(0) @db.Decimal(12, 2) // >= 0 — APPLICATION ENFORCED
+
+  /// What we owe the customer / their unconsumed opening credit
+  /// (typically an off-system deposit against a job still unfinished at
+  /// cutover). This figure itself stays immutable once APPROVED — it is
+  /// never decremented directly. Consumption is tracked separately via
+  /// Payment rows carrying sourceType = OPENING_CREDIT_APPLICATION;
+  /// remainingOpeningCredit = creditAmount − SUM(those Payments' amounts
+  /// for this partner's orders) is computed at read time by a future
+  /// service, and must never be allowed to go negative (an invariant
+  /// enforced at the service layer under an advisory lock keyed by
+  /// partnerId, mirroring treasuryService.ts's existing withBranchDayLock
+  /// pattern — not something this schema alone can guarantee).
+  creditAmount Decimal @default(0) @db.Decimal(12, 2) // >= 0 — APPLICATION ENFORCED
+
+  /// Own independent mini-lifecycle — mirrors CutoverStatus's shape for
+  /// consistency, but is NOT tied to any single branch's CutoverRecord.
+  /// ACTIVE carries no distinct meaning here (unlike Treasury/Inventory,
+  /// there is no activation side-effect — no StockMovement-equivalent to
+  /// create): APPROVED alone is sufficient for this figure to be Locked
+  /// and immediately included in the live customer-balance formula. A
+  /// future service should not invent an APPROVED→ACTIVE→APPROVED cycle
+  /// without a genuine domain reason to do so.
+  status       CutoverStatus @default(DRAFT)
+  approvedById String?       @db.Uuid
+  approvedBy   StaffProfile? @relation("CustomerOpeningApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+  reopenedById String?       @db.Uuid
+  reopenedBy   StaffProfile? @relation("CustomerOpeningReopenedBy", fields: [reopenedById], references: [id])
+  reopenedAt   DateTime?
+  reopenReason String?
+
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  /// e.g. "includes 5,000 deposit against unfinished job, continued as
+  /// Order #Y after Go-Live" — the explanatory link stayed free-text
+  /// deliberately at first (Phase 3A.1 Review 2 DECISION REQUIRED judged
+  /// an enforced FK unnecessary complexity for a soft cross-reference).
+  /// Superseded by the Cutover-revision-round decision below:
+  /// Order.customerOpeningId now provides the real, structured link —
+  /// this field stays for free-text context that doesn't fit a single FK
+  /// (e.g. multiple prior commitments, informal notes).
+  notes              String?
+
+  enteredById String       @db.Uuid
+  enteredBy   StaffProfile @relation("CustomerOpeningEnteredBy", fields: [enteredById], references: [id])
+
+  /// Cutover-revision-round decision (post-3D) — a dedicated correction
+  /// path for a wrongly-recorded creditAmount, distinct from the normal
+  /// DRAFT-only edit above: SUPER_ADMIN-only, mandatory written reason,
+  /// and allowed to move creditAmount below already-consumed credit
+  /// (which the normal edit path hard-blocks with no override). AuditLog
+  /// still records every correction as an additional layer, not a
+  /// replacement for these fields — these exist so a screen can show
+  /// "last correction" without querying AuditLog.
+  creditCorrectedById    String?       @db.Uuid
+  creditCorrectedBy      StaffProfile? @relation("CustomerOpeningCreditCorrectedBy", fields: [creditCorrectedById], references: [id])
+  creditCorrectedAt      DateTime?
+  creditCorrectionReason String?
+
+  /// Cutover-revision-round decision (post-3D) — set only when a
+  /// SUPER_ADMIN approves their OWN record as an explicit emergency
+  /// exception to the maker-checker rule below (self-approval is
+  /// otherwise disallowed for every role, including ADMIN). Never set by
+  /// a normal approval; a permanent, visible flag on the record itself,
+  /// not just an AuditLog entry — the same shared `assertCanApprove`
+  /// primitive sets this identically on CutoverRecord/SupplierOpening.
+  selfApprovedException Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Correction (this back-relation was originally planned to NOT exist —
+  /// see Order.customerOpeningId's doc comment — but Prisma requires both
+  /// sides of every declared relation; there is no schema-level way to
+  /// make this FK traversable from Order only. The mitigation is
+  /// therefore NOT "this field doesn't exist" but: (1) this doc comment,
+  /// (2) zero existing Income/Revenue/Profitability code may ever
+  /// `include`/read this field, (3) a dedicated regression test asserts
+  /// no such code path exists. Renamed from Prisma's default `orders` to
+  /// make misuse harder to do by accident.
+  ordersContinuingThisOpening Order[]
+
+  @@unique([partnerId])
+}
+
+/// Mirrors CustomerOpening exactly (company-wide, standalone, one per
+/// partner ever) — extends supplierLedgerService.ts's own ALREADY-EXISTING
+/// computed openingBalance fold-in, the closest and lowest-risk precedent
+/// found anywhere in the codebase for this feature, rather than building a
+/// parallel mechanism.
+model SupplierOpening {
+  id        String          @id @default(uuid()) @db.Uuid
+  partnerId String          @db.Uuid
+  partner   BusinessPartner @relation(fields: [partnerId], references: [id])
+
+  /// What we owe the supplier.
+  payableAmount Decimal @default(0) @db.Decimal(12, 2) // >= 0 — APPLICATION ENFORCED
+  /// Supplier owes us / our prepayment to them.
+  creditAmount  Decimal @default(0) @db.Decimal(12, 2) // >= 0 — APPLICATION ENFORCED
+
+  status       CutoverStatus @default(DRAFT)
+  approvedById String?       @db.Uuid
+  approvedBy   StaffProfile? @relation("SupplierOpeningApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+  reopenedById String?       @db.Uuid
+  reopenedBy   StaffProfile? @relation("SupplierOpeningReopenedBy", fields: [reopenedById], references: [id])
+  reopenedAt   DateTime?
+  reopenReason String?
+
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  notes              String?
+
+  enteredById String       @db.Uuid
+  enteredBy   StaffProfile @relation("SupplierOpeningEnteredBy", fields: [enteredById], references: [id])
+
+  /// Cutover-revision-round decision (post-3D) — same shared
+  /// `assertCanApprove` primitive as CutoverRecord/CustomerOpening; see
+  /// CustomerOpening.selfApprovedException's doc comment for the full
+  /// rationale.
+  selfApprovedException Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([partnerId])
+}
+
+/// Child of CutoverRecord (inventory genuinely is branch-scoped in storage,
+/// unlike Customer/Supplier balances) — branchId is deliberately NOT
+/// repeated here; it is always inherited transitively via
+/// cutover.branchId, so there is no way for this row to ever disagree
+/// with its own cutover's branch.
+///
+/// Activation (Phase 3C.1 decision) produces a real StockMovement ONLY
+/// when the physically-counted `quantity` actually differs from current
+/// StockLevel — using the EXISTING signed IN/OUT types for whichever
+/// direction the difference requires, never ADJUSTMENT (this codebase's
+/// movementDelta() treats ADJUSTMENT as a positive-only addition
+/// identical to IN; changing that is out of scope here). When the count
+/// exactly matches current StockLevel, NO StockMovement is created at
+/// all — the stock ledger stays reserved for real quantity changes only,
+/// never a zero-quantity placeholder row (rejected explicitly: a
+/// zero-quantity movement would be unreachable through the public API,
+/// which requires quantity > 0 via Zod, and would misuse the ledger to
+/// record a non-event). `activatedAt` below is therefore the ONLY
+/// reliable "has this been activated" signal — StockMovement.
+/// inventoryOpeningId alone cannot distinguish "not yet activated" from
+/// "activated with zero difference."
+model InventoryOpening {
+  id              String        @id @default(uuid()) @db.Uuid
+  cutoverId       String        @db.Uuid
+  cutover         CutoverRecord @relation(fields: [cutoverId], references: [id], onDelete: Cascade)
+  inventoryItemId String        @db.Uuid
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  quantity Decimal @db.Decimal(14, 3) // physically counted quantity — >= 0, APPLICATION ENFORCED
+
+  /// Informational only — NEVER read by any calculation. InventoryItem.
+  /// costPrice is a current, mutable scalar with no historical meaning;
+  /// this codebase has no FIFO/average-cost/historical-valuation
+  /// mechanism at all, so nothing downstream can safely treat this figure
+  /// as an accounting value. Kept structurally inert (no relation to any
+  /// pricing/profitability path) so it cannot silently become one.
+  unitCostAtOpening Decimal? @db.Decimal(12, 2)
+
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  notes              String?
+
+  enteredById String       @db.Uuid
+  enteredBy   StaffProfile @relation("InventoryOpeningEnteredBy", fields: [enteredById], references: [id])
+
+  activationMovement StockMovement?
+
+  /// Phase 3C.1 — the authoritative "has activation already run for this
+  /// row" signal, set once (never reset) the moment Cutover activation
+  /// processes this row, regardless of whether that processing produced
+  /// a real StockMovement (a real quantity difference) or none (an exact
+  /// match against current StockLevel). Distinct from — and required
+  /// precisely because of the gap in — activationMovement above, which
+  /// stays null in the exact-match case.
+  activatedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cutoverId, inventoryItemId])
+}
+
+enum PaymentSourceType {
+  NORMAL
+  OPENING_CREDIT_APPLICATION
 }
