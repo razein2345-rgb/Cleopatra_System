@@ -40,6 +40,7 @@ import { loadPartnerOr404 } from '../services/partnerChildEntity.js';
 import { recordAudit } from '../services/auditService.js';
 import { DayClosedError } from '../services/treasuryService.js';
 import { canAccessBranch, forbidBranch } from '../services/authContext.js';
+import { idempotencyKeyFromHeader, runIdempotent, sendIdempotencyError } from '../services/idempotencyService.js';
 
 /**
  * Owner (2026-08-20, "الموظف اللي انا محدد إنه من فرع برينتنج هاوس مينفعش
@@ -138,10 +139,38 @@ export async function createOrderHandler(req: Request, res: Response) {
 
   const itemNames = await resolveItemCatalogNames(input.items);
 
-  let created;
+  // Accounting audit fix (2026-09-17, Phase 3 E) — a repeated submission
+  // of the same order (double-click, or a client retry after a dropped
+  // response) must not create a second Order/Payment/TreasuryEntry/stock
+  // deduction. `Idempotency-Key` is optional — omitted, this behaves
+  // exactly as before this fix. The fingerprint is the full validated
+  // input, so the same key reused for a genuinely different order is a
+  // conflict, never a silent replay of the wrong order.
+  const idempotencyKey = idempotencyKeyFromHeader(req.headers['idempotency-key']);
+
+  let outcome;
   try {
-    created = await createOrder({ ...input, staffId: auth.staffId }, itemNames);
+    outcome = await runIdempotent(idempotencyKey, auth.staffId, 'POST /api/orders', input, async () => {
+      const created = await createOrder({ ...input, staffId: auth.staffId }, itemNames);
+
+      await recordAudit({
+        entityType: 'Order',
+        entityId: created.id,
+        action: 'CREATE',
+        performedById: auth.staffId,
+        branchId: created.branchId,
+        partnerId: created.partnerId,
+        newValue: { invoiceNumber: created.invoiceNumber, itemCount: created.itemCount, quotationOriginId: null },
+      });
+
+      const order = await prisma.order.findUniqueOrThrow({
+        where: { id: created.id },
+        include: ORDER_INCLUDE,
+      });
+      return { statusCode: 201, body: { success: true, data: mapOrderToDto(order, true) } };
+    });
   } catch (err) {
+    if (sendIdempotencyError(err, res)) return;
     if (err instanceof PricingInputError) {
       res.status(400).json({ success: false, error: { message: err.message, code: 'INVALID_PRICING_INPUT' } });
       return;
@@ -165,21 +194,7 @@ export async function createOrderHandler(req: Request, res: Response) {
     throw err;
   }
 
-  await recordAudit({
-    entityType: 'Order',
-    entityId: created.id,
-    action: 'CREATE',
-    performedById: auth.staffId,
-    branchId: created.branchId,
-    partnerId: created.partnerId,
-    newValue: { invoiceNumber: created.invoiceNumber, itemCount: created.itemCount, quotationOriginId: null },
-  });
-
-  const order = await prisma.order.findUniqueOrThrow({
-    where: { id: created.id },
-    include: ORDER_INCLUDE,
-  });
-  res.status(201).json({ success: true, data: mapOrderToDto(order, true) });
+  res.status(outcome.statusCode).json(outcome.body);
 }
 
 /**
@@ -406,11 +421,37 @@ export async function recordPaymentHandler(req: Request<{ id: string }>, res: Re
   }
 
   const input = createPaymentSchema.parse(req.body);
+  // Accounting audit fix (2026-09-17, Phase 3 E) — a repeated payment
+  // submission (double-click, or a client retry) must not record the
+  // customer's payment twice. Optional header, backward compatible.
+  const idempotencyKey = idempotencyKeyFromHeader(req.headers['idempotency-key']);
 
-  let result;
+  let outcome;
   try {
-    result = await recordPayment(req.params.id, input, auth.staffId);
+    outcome = await runIdempotent(
+      idempotencyKey,
+      auth.staffId,
+      'POST /api/orders/:id/payments',
+      { orderId: req.params.id, ...input },
+      async () => {
+        const result = await recordPayment(req.params.id, input, auth.staffId);
+        const { order, paymentId } = result;
+
+        await recordAudit({
+          entityType: 'Payment',
+          entityId: paymentId,
+          action: 'CREATE',
+          performedById: auth.staffId,
+          branchId: order.branchId,
+          partnerId: order.partnerId,
+          newValue: { orderId: order.id, invoiceNumber: order.invoiceNumber, method: input.method, amount: input.amount },
+        });
+
+        return { statusCode: 201, body: { success: true, data: mapOrderToDto(order, true) } };
+      },
+    );
   } catch (err) {
+    if (sendIdempotencyError(err, res)) return;
     if (err instanceof OrderNotFoundError) {
       res.status(404).json({ success: false, error: { message: err.message } });
       return;
@@ -421,19 +462,8 @@ export async function recordPaymentHandler(req: Request<{ id: string }>, res: Re
     }
     throw err;
   }
-  const { order, paymentId } = result;
 
-  await recordAudit({
-    entityType: 'Payment',
-    entityId: paymentId,
-    action: 'CREATE',
-    performedById: auth.staffId,
-    branchId: order.branchId,
-    partnerId: order.partnerId,
-    newValue: { orderId: order.id, invoiceNumber: order.invoiceNumber, method: input.method, amount: input.amount },
-  });
-
-  res.status(201).json({ success: true, data: mapOrderToDto(order, true) });
+  res.status(outcome.statusCode).json(outcome.body);
 }
 
 /**
