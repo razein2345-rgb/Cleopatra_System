@@ -14,12 +14,13 @@ import type {
 } from '@cleopatra/shared';
 import { resolveRequiredQuantity } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
-import { deductStockForOrderItem, restockForOrderItem } from './inventoryService.js';
+import { applyAlreadyConsumedAdjustment, deductStockForOrderItem, restockForOrderItem } from './inventoryService.js';
 import { createBoardsCatalogPurchaseRequests, maybeCreatePurchaseRequest } from './purchaseRequestService.js';
-import { buildPricingContext, computeItemPricing, type ItemPricingResult } from './pricingEngineService.js';
+import { buildPricingContext, computeItemPricing } from './pricingEngineService.js';
 import { getPublicAttachmentUrl } from './attachmentService.js';
 import { createWorkOrderForTrack, softDeleteWorkOrderTx, tryAutoCreateWorkOrders } from './workOrderService.js';
 import { assertBranchDayNotClosed, reopenDayIfClosed } from './treasuryService.js';
+import { acquireAdvisoryLock } from './advisoryLock.js';
 
 export { PricingInputError } from './pricingEngineService.js';
 
@@ -314,7 +315,13 @@ export function mapOrderItemToDto(item: OrderItemRecord, canSeeInternal: boolean
  * `deductStockForOrderItem` it always made, just reached through one shared
  * function instead of an inline `if`.
  */
-function materialsToDeduct(result: ItemPricingResult): { inventoryItemId: string; sheetsNeeded: number }[] {
+type MaterialsSource = {
+  materials?: { inventoryItemId: string; sheetsNeeded: number }[];
+  inventoryItemId: string | null;
+  sheetsNeeded: number | null;
+};
+
+function materialsToDeduct(result: MaterialsSource): { inventoryItemId: string; sheetsNeeded: number }[] {
   if (result.materials?.length) {
     return result.materials.map((m) => ({ inventoryItemId: m.inventoryItemId, sheetsNeeded: m.sheetsNeeded }));
   }
@@ -322,6 +329,58 @@ function materialsToDeduct(result: ItemPricingResult): { inventoryItemId: string
     return [{ inventoryItemId: result.inventoryItemId, sheetsNeeded: result.sheetsNeeded }];
   }
   return [];
+}
+
+/**
+ * Cutover-revision-round decision (post-3D, Decision B3) — validated
+ * BEFORE `prisma.$transaction` opens, deliberately: every number this
+ * check needs (each material's real requirement) is already fully known
+ * from `priced` (the pricing engine's own output), so this is a pure,
+ * synchronous computation with zero DB read of its own — no reason to
+ * hold a transaction open for it, and a caller error here means the
+ * order is never created at all (zero partial writes), same as the
+ * existing `assertItemDiscountsValid` check right next to this one's
+ * call site. Deliberately only "quantity > requirement" is rejected; the
+ * compensating ADJUSTMENT this enables can only ever be a positive
+ * addition (see StockMovement's own ADJUSTMENT semantics doc comment on
+ * `movementDelta`), so a declared quantity that's already <= requirement
+ * has nothing further to validate.
+ */
+export class AlreadyConsumedExceedsRequirementError extends Error {
+  constructor(
+    public readonly inventoryItemId: string,
+    public readonly declared: number,
+    public readonly required: number,
+  ) {
+    super(`Declared already-consumed quantity (${declared}) exceeds this item's own total requirement (${required}) for material ${inventoryItemId}`);
+    this.name = 'AlreadyConsumedExceedsRequirementError';
+  }
+}
+/** `alreadyConsumedOffSystem` only makes sense tied to a continuation order (Decision B) — reject it outright on any order that isn't one, rather than silently allowing a compensating ADJUSTMENT with no real cutover context behind it. */
+export class AlreadyConsumedWithoutCustomerOpeningError extends Error {
+  constructor() {
+    super('alreadyConsumedOffSystem requires customerOpeningId to be set on the order');
+    this.name = 'AlreadyConsumedWithoutCustomerOpeningError';
+  }
+}
+
+export function assertAlreadyConsumedWithinRequirement(
+  items: { alreadyConsumedOffSystem?: { inventoryItemId: string; quantity: number }[] }[],
+  priced: MaterialsSource[],
+  hasCustomerOpeningId: boolean,
+): void {
+  for (let index = 0; index < items.length; index++) {
+    const declared = items[index]!.alreadyConsumedOffSystem;
+    if (!declared?.length) continue;
+    if (!hasCustomerOpeningId) throw new AlreadyConsumedWithoutCustomerOpeningError();
+    const requiredByItemId = new Map(materialsToDeduct(priced[index]!).map((m) => [m.inventoryItemId, m.sheetsNeeded]));
+    for (const entry of declared) {
+      const required = requiredByItemId.get(entry.inventoryItemId) ?? 0;
+      if (entry.quantity > required) {
+        throw new AlreadyConsumedExceedsRequirementError(entry.inventoryItemId, entry.quantity, required);
+      }
+    }
+  }
 }
 
 /** The restock-on-edit/delete counterpart to `materialsToDeduct` above, reading from an already-persisted `OrderItem` row (with its `materials` relation) instead of a fresh `ItemPricingResult`. */
@@ -407,6 +466,9 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
     branchId: order.branchId,
     partnerId: order.partnerId,
     staffId: order.staffId,
+    // Cutover-revision-round decision (post-3D, Decision B) — traceability
+    // only; see Order.customerOpeningId's own schema doc comment.
+    customerOpeningId: order.customerOpeningId,
     date: order.date.toISOString(),
     subtotal: order.subtotal.toNumber(),
     discountPercent: order.discountPercent.toNumber(),
@@ -642,6 +704,18 @@ export async function createOrder(
     requiresDesignByTrack?: Record<string, boolean>;
     items: CreateOrderItemInput[];
     payments?: CreatePaymentInput[];
+    /**
+     * Cutover-revision-round decision (post-3D, Decision B) — set only
+     * when this Order is the full-price, in-system continuation of a job
+     * already in progress off-system before cutover. Traceability ONLY —
+     * see Order.customerOpeningId's own schema doc comment for the full
+     * "must never feed Income/Revenue/Profitability" rule. Validated here
+     * to actually exist and belong to the same partner as this order —
+     * beyond that, createOrder does not gate on the opening's status;
+     * the financial ceiling itself is enforced separately, only at the
+     * point Opening Credit is actually applied (applyOpeningCreditPayment).
+     */
+    customerOpeningId?: string | null;
   },
   itemNames: Map<string, string>,
 ): Promise<{ id: string; branchId: string; partnerId: string | null; invoiceNumber: string; itemCount: number }> {
@@ -672,6 +746,8 @@ export async function createOrder(
       : [],
   );
 
+  assertAlreadyConsumedWithinRequirement(input.items, priced, Boolean(input.customerOpeningId));
+
   const itemDiscountAmounts = resolveItemDiscountAmounts(input.items, priced);
   assertItemDiscountsValid(itemDiscountAmounts, priced);
   const subtotal = priced.reduce((sum, p) => sum + p.total, 0);
@@ -688,6 +764,11 @@ export async function createOrder(
   const finalTotal = Math.ceil(afterDiscount + vatAmount);
 
   return prisma.$transaction(async (tx) => {
+    if (input.customerOpeningId) {
+      const opening = await tx.customerOpening.findUnique({ where: { id: input.customerOpeningId }, select: { partnerId: true } });
+      if (!opening || opening.partnerId !== input.partnerId) throw new CustomerOpeningReferenceInvalidError();
+    }
+
     const invoiceNumber = await nextInvoiceNumber(tx);
     const created = await tx.order.create({
       data: {
@@ -695,6 +776,7 @@ export async function createOrder(
         branchId: input.branchId,
         partnerId: input.partnerId ?? null,
         staffId: input.staffId,
+        customerOpeningId: input.customerOpeningId ?? null,
         subtotal,
         discountPercent,
         vatOn,
@@ -836,6 +918,28 @@ export async function createOrder(
       for (const m of materialsToDeduct(result)) {
         await deductStockForOrderItem(tx, m.inventoryItemId, input.branchId, m.sheetsNeeded);
         await maybeCreatePurchaseRequest(tx, m.inventoryItemId, created.id, orderItemId);
+      }
+
+      // Cutover-revision-round decision (post-3D, Decision B3) — a
+      // compensating ADJUSTMENT for whatever part of this item's material
+      // was already physically consumed off-system before cutover (the
+      // Order's own deduction two lines above still ran for the FULL
+      // requirement, preserving a complete, accurate consumption record
+      // for this item — this ADJUSTMENT corrects the resulting NET
+      // StockLevel back to reality, it does not replace the deduction).
+      // Already validated (assertAlreadyConsumedWithinRequirement, before
+      // the transaction opened) that no entry here exceeds its material's
+      // own requirement — ADJUSTMENT is a positive-only movement type
+      // (movementDelta), so that check is what keeps this always additive.
+      for (const entry of input.items[index]!.alreadyConsumedOffSystem ?? []) {
+        await applyAlreadyConsumedAdjustment(
+          tx,
+          entry.inventoryItemId,
+          input.branchId,
+          entry.quantity,
+          `تسوية استهلاك سابق قبل التفعيل — أوردر ${invoiceNumber}`,
+          created.id,
+        );
       }
     }
 
@@ -1478,13 +1582,44 @@ export async function updatePayment(
     const newAmount = input.amount ?? payment.amount.toNumber();
     const newMethod = input.method ?? payment.method;
 
+    // Phase 3D re-audit fix — re-derive and re-enforce the Opening Credit
+    // ceiling (SUM(applications) <= CustomerOpening.creditAmount) here too.
+    // `applyOpeningCreditPayment`'s advisory lock only protects the CREATE
+    // path; without this, `updatePayment` (a generic, pre-existing endpoint
+    // gated on `payments.edit`, not `orders.edit`) could raise an existing
+    // OPENING_CREDIT_APPLICATION payment's amount past the customer's
+    // approved credit with zero check. Same lock key as creation
+    // (order.partnerId) so a concurrent apply/update pair still serializes
+    // correctly; excludes this row's own OLD amount from "already consumed"
+    // so editing a payment's amount up to (not exceeding) the true
+    // remaining credit is still allowed.
+    if (payment.sourceType === 'OPENING_CREDIT_APPLICATION' && input.amount !== undefined && input.amount !== payment.amount.toNumber()) {
+      if (order.partnerId) {
+        await acquireAdvisoryLock(tx, order.partnerId);
+        const opening = await tx.customerOpening.findUnique({ where: { partnerId: order.partnerId } });
+        const consumedByOthers = await tx.payment.aggregate({
+          where: { sourceType: 'OPENING_CREDIT_APPLICATION', isDeleted: false, id: { not: paymentId }, order: { partnerId: order.partnerId } },
+          _sum: { amount: true },
+        });
+        const remaining = (opening?.creditAmount.toNumber() ?? 0) - (consumedByOthers._sum.amount?.toNumber() ?? 0);
+        if (input.amount > remaining) throw new OpeningCreditExceededError(remaining);
+      }
+    }
+
     await tx.payment.update({ where: { id: paymentId }, data: { amount: newAmount, method: newMethod } });
     await tx.treasuryEntry.updateMany({
       where: { paymentId },
       data: { amount: newAmount, method: newMethod },
     });
 
-    await reopenDayIfClosed(order.branchId, payment.createdAt, staffId, `تعديل دفعة على الفاتورة ${order.invoiceNumber}`, tx);
+    // Opening State / Cutover (Phase 3C.1 §6) — an OPENING_CREDIT_APPLICATION
+    // payment never moved treasury money on any day (no linked TreasuryEntry
+    // exists at all, confirmed above the updateMany is already a no-op for
+    // it); reopening a day's closure for a payment that never affected it
+    // would be a meaningless, potentially confusing side effect.
+    if (payment.sourceType === 'NORMAL') {
+      await reopenDayIfClosed(order.branchId, payment.createdAt, staffId, `تعديل دفعة على الفاتورة ${order.invoiceNumber}`, tx);
+    }
 
     const fullOrder = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: ORDER_INCLUDE });
     return { order: fullOrder, previous };
@@ -1520,10 +1655,103 @@ export async function deletePayment(
       data: { isDeleted: true, deletedAt: new Date(), deletedBy: staffId },
     });
 
-    await reopenDayIfClosed(order.branchId, payment.createdAt, staffId, `حذف دفعة على الفاتورة ${order.invoiceNumber}`, tx);
+    // Opening State / Cutover (Phase 3C.1 §6) — same reasoning as updatePayment
+    // above. Deleting an OPENING_CREDIT_APPLICATION payment naturally frees
+    // the consumed credit back up via the live SUM in getConsumedOpeningCredit
+    // — no manual bookkeeping needed, and no day to reopen.
+    if (payment.sourceType === 'NORMAL') {
+      await reopenDayIfClosed(order.branchId, payment.createdAt, staffId, `حذف دفعة على الفاتورة ${order.invoiceNumber}`, tx);
+    }
 
     const fullOrder = await tx.order.findUniqueOrThrow({ where: { id: orderId }, include: ORDER_INCLUDE });
     return { order: fullOrder, previous };
+  });
+}
+
+export class OrderHasNoPartnerError extends Error {
+  constructor() {
+    super('Opening credit can only be applied to an order that belongs to a customer');
+    this.name = 'OrderHasNoPartnerError';
+  }
+}
+
+/** Cutover-revision-round decision (post-3D, Decision B) — createOrder's guard on customerOpeningId: must exist and belong to the same partner as the order. */
+export class CustomerOpeningReferenceInvalidError extends Error {
+  constructor() {
+    super('customerOpeningId does not exist or does not belong to this order\'s customer');
+    this.name = 'CustomerOpeningReferenceInvalidError';
+  }
+}
+
+export class NoApprovedCustomerOpeningError extends Error {
+  constructor() {
+    super('This customer has no approved opening credit');
+    this.name = 'NoApprovedCustomerOpeningError';
+  }
+}
+
+export class OpeningCreditExceededError extends Error {
+  constructor(public readonly remaining: number) {
+    super(`Requested amount exceeds the remaining opening credit of ${remaining.toFixed(2)}`);
+    this.name = 'OpeningCreditExceededError';
+  }
+}
+
+/**
+ * Opening State / Cutover (Phase 3C.2) — applies already-held customer
+ * opening credit (an off-system deposit recognized once at cutover, see
+ * CustomerOpening.creditAmount) against a real, current Order. Creates a
+ * Payment with `sourceType: 'OPENING_CREDIT_APPLICATION'` and,
+ * deliberately, NO paired TreasuryEntry — the cash was already counted
+ * once, inside TreasuryOpening, at cutover; creating a second cash
+ * movement here would double-count it. This is the first code path in
+ * this codebase that leaves `Payment.treasuryEntry` unset — the relation
+ * has always permitted it (confirmed by direct schema inspection), just
+ * never previously exercised.
+ *
+ * A dedicated function rather than an overload of `recordPayment` above,
+ * deliberately — the two have materially different validation rules (an
+ * available-credit check under an advisory lock vs. none at all for a
+ * normal payment), and keeping them separate means the normal payment
+ * path's contract and blast radius are completely unaffected by this
+ * feature.
+ *
+ * The advisory lock (Phase 3C.1 §4/§19) is acquired as the FIRST statement
+ * inside the same transaction that reads remaining credit and creates the
+ * Payment — never against the bare `prisma` client — so two concurrent
+ * requests against the same customer's opening credit are fully
+ * serialized, and the invariant `SUM(applications) <= creditAmount` holds
+ * even under a race.
+ */
+export async function applyOpeningCreditPayment(
+  orderId: string,
+  amount: number,
+  method: Payment['method'],
+): Promise<{ order: OrderRecord; paymentId: string }> {
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order || order.isDeleted) throw new OrderNotFoundError();
+  if (!order.partnerId) throw new OrderHasNoPartnerError();
+
+  return prisma.$transaction(async (tx) => {
+    await acquireAdvisoryLock(tx, order.partnerId!);
+
+    const opening = await tx.customerOpening.findUnique({ where: { partnerId: order.partnerId! } });
+    if (!opening || opening.status !== 'APPROVED') throw new NoApprovedCustomerOpeningError();
+
+    const consumed = await tx.payment.aggregate({
+      where: { sourceType: 'OPENING_CREDIT_APPLICATION', isDeleted: false, order: { partnerId: order.partnerId! } },
+      _sum: { amount: true },
+    });
+    const remaining = opening.creditAmount.toNumber() - (consumed._sum.amount?.toNumber() ?? 0);
+    if (amount > remaining) throw new OpeningCreditExceededError(remaining);
+
+    const payment = await tx.payment.create({
+      data: { orderId: order.id, method, amount, sourceType: 'OPENING_CREDIT_APPLICATION' },
+      // No tx.treasuryEntry.create — deliberately. See doc comment above.
+    });
+
+    const fullOrder = await tx.order.findUniqueOrThrow({ where: { id: order.id }, include: ORDER_INCLUDE });
+    return { order: fullOrder, paymentId: payment.id };
   });
 }
 
