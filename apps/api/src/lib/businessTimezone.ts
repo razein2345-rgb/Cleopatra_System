@@ -35,3 +35,25 @@ export function todayInBusinessTimezone(now: Date = new Date()): Date {
   const local = new Date(now.getTime() + offsetMinutes * 60000);
   return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()));
 }
+
+/**
+ * Accounting audit fix (2026-09-17, Decision 4) — the reverse of
+ * `todayInBusinessTimezone`: given a date-only string from a plain
+ * `<input type="date">` (e.g. "2026-09-17", exactly what every financial
+ * report's `from`/`to` query param carries), returns the real UTC instant
+ * range that Cairo calendar day actually spans. Before this, report
+ * date-range filters parsed the string with `new Date('YYYY-MM-DD')`,
+ * which JS treats as UTC midnight — for a `from=X` filter this silently
+ * excludes the first 2-3 hours of Cairo's day X (still UTC day X-1), and
+ * for a `to=X` filter (typically used as an upper bound) it cuts off
+ * almost all of Cairo's day X. `end` is the same Cairo day's 23:59:59.999,
+ * expressed in UTC, so a single `{gte: start, lte: end}` correctly spans
+ * exactly one Cairo calendar day.
+ */
+export function businessDayRangeUtc(dateOnlyString: string): { start: Date; end: Date } {
+  const naiveUtcMidnight = new Date(`${dateOnlyString}T00:00:00.000Z`);
+  const offsetMinutes = getTimezoneOffsetMinutes(naiveUtcMidnight, BUSINESS_TIMEZONE);
+  const start = new Date(naiveUtcMidnight.getTime() - offsetMinutes * 60000);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+  return { start, end };
+}
