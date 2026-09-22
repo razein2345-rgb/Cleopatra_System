@@ -41,6 +41,7 @@ export * from './schemas/attachment.js';
 export * from './schemas/treasuryEntry.js';
 export * from './schemas/branchFinancials.js';
 export * from './schemas/fixedMonthlyExpense.js';
+export * from './schemas/expense.js';
 export * from './schemas/communicationHubLink.js';
 export * from './schemas/cutover.js';
 export * from './schemas/openingState.js';
