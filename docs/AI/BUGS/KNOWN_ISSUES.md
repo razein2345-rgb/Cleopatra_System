@@ -221,3 +221,44 @@ narrow commit:**
 - The stall inside Supavisor itself has no fix on our end at all — see
   `docs/AI/BUGS/EXTERNAL_DEPENDENCY_SUPAVISOR_49991.md` for what would
   actually resolve it (none of which is ours to build).
+
+---
+
+## Architectural pattern gap: a service throwing a custom error is not proof the controller catches it
+
+**Found:** 2026-09-22, while reviewing the Idempotency wiring's remaining
+scope. `orderService.ts` correctly defined and threw
+`CustomerOpeningReferenceInvalidError`, `AlreadyConsumedWithoutCustomerOpeningError`,
+and `AlreadyConsumedExceedsRequirementError` — fully committed, exercised
+by real unit tests (`orderService.alreadyConsumed.test.ts`). But
+`orders.ts`'s `createOrderHandler` never actually caught any of them; they
+fell through to `throw err`, surfacing as a raw/generic error instead of
+the required Arabic message. This shipped and was pushed to `main` before
+being caught (see the `fix(cutover): handle already-consumed/opening-credit
+errors in order creation` commit that fixed it) — the only reason it
+surfaced at all was a live browser click-through, not any automated check.
+
+**Why this is a pattern, not a one-off:** a service-level test proves the
+service does its part (throws the right error, with the right data). It
+proves nothing about whether any given controller actually catches that
+error and maps it to the right HTTP status/message — that wiring lives
+entirely in the controller, and nothing forces it to exist just because
+the error class does. This project's own convention (`handleServiceError`-
+style `instanceof` chains repeated per-controller) makes this an easy
+omission: adding a new error to a service is a green service test; forgetting
+to add the matching `if (err instanceof ...)` block in every controller
+that calls it is invisible to that same test.
+
+**Why it wasn't fixed everywhere here:** this entry exists to name the
+*pattern*, not to audit every controller/service pair in the codebase for
+the same gap — that's a larger, dedicated pass, out of scope for the
+Idempotency review that surfaced this one instance.
+
+**What a real fix would look like:** a controller-level test for every
+handler that calls a service function capable of throwing a custom error
+class — asserting the HTTP status, `code`, and (for Arabic-message errors)
+the exact message — not just a service-level test that the class gets
+thrown. Doesn't need to be exhaustive on day one; the immediate value is
+simply *some* controller-level coverage existing for `createOrderHandler`'s
+three Cutover-era errors, so this exact class of gap can't silently recur
+there again.
