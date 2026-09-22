@@ -712,6 +712,30 @@ Delivery أو Pickup (يحدد لكل مورد/طلب) → Received → Ready`. 
 > الفريق" (نفس الـProvider المشترك، صفر Fetch إضافي). متحقق منه حي بالكامل (تفعيل حد=1، حفظ
 > ناجح، صفر تنبيه لأن العدد الفعلي كان صفر وقتها — واقع بيانات مش باگ، ثم إرجاع الإعداد
 > لحالته المقفولة). 107 اختبار API فضلوا ناجحين.
+>
+> **🔴 وبعد كده (2026-09-21، تحديث تالت)، مسار مستقل تمامًا عن Cutover لكن أعلى أولوية (تعرض
+> بيانات حي):** فحص أمني (anon key + PostgREST مباشر) لقى **27 جدول تطبيقي RLS-off** (زيادة
+> عن migration الحماية الأصلية `20260805135821`, ADR 0029) — فجوة إجرائية ~6 أسابيع، الـmandatory
+> rule بتاعت "كل جدول جديد لازم RLS" (VISION.md/MASTER_PROMPT.md/ADR 0030) اتنسيت فعليًا لكل
+> جدول جديد. **✅ اتصلح بالكامل** — migration `20260921172617_rls_deny_policies_catchup` (نفس
+> نمط أغسطس بالحرف)، مُطبَّقة فعليًا ومتحقق منها حي بـ4 خطوات (RLS-status، طلبات anon مباشرة
+> على الـ27 كلهم، استعلامات Prisma حقيقية، sanity check لـservice_role) — تفاصيل كاملة في
+> `docs/AI/PROJECT_STATUS.md`. Issue 1 (اتصال قاعدة البيانات، "Connection terminated
+> unexpectedly") اتحل بالتوازي (Commit `815fc58`، keepAlive + timeouts على الـpg pool).
+> **✅ الفجوة الإجرائية نفسها اتقفلت كمان (Commit `6e0e3e8`):** `apps/api/src/rlsCoverage.test.ts`
+> — تست بنيوي صفر اتصال DB، بيمنع أي جدول جديد من الشحن من غير RLS تلقائيًا في CI، بدل
+> الاعتماد على تذكّر حد. **مسار الـRLS مقفول رسميًا بالكامل من هنا.**
+>
+> **Opening State / Cutover (منفصل تمامًا عن أعلاه):** اتقفلت بـ19 commit narrow ومُوثّق على
+> `main` (`fc0d324` ... `bb32cca`)، مفصولة يدويًا عن شغل تاني uncommitted غير مرتبط (Expense
+> system, Idempotency, إصلاحات محاسبية للموردين). `businessDayRangeUtc` (كان بيكسر بناء الـAPI
+> كله) **اتحل فعليًا** (Commit `f09ae8c`) — لكن التحقق الفعلي بـworktree معزول (مرتين، مش
+> تحليل نظري) كشف 3 فجوات تانية ماكنتش متوقعة (`loadOrderBranchOr404` غير مُصدَّرة، و2 فجوة
+> في تست B1) — **الثلاثة اتصلحوا** (Commits `859e309`, `0620f28`, `bb32cca`). **فضلت فجوة
+> وحيدة بس تمنع Layer 1 (compile-time) من الاكتمال:** `packages/shared/src/index.ts` ناقصها
+> `export` لـ`schemas/cutover.js`/`openingState.js` — commit منفصل لسه، غير مستعجل. **و**
+> Migration لسه معملهاش خالص على القاعدة الحية (طبقة تانية مستقلة تمامًا). التفاصيل الكاملة
+> في `docs/AI/PROJECT_STATUS.md`'s أحدث سطر — راجعه قبل أي قرار عن الخطوة الجاية.
 > _[حدّث هذا السطر و`docs/AI/PROJECT_STATUS.md` باستمرار عشان أي جلسة Claude Code جديدة تعرف
 > تبدأ منين]_
 
