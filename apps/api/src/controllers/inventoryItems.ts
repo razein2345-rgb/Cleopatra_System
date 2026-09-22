@@ -29,6 +29,7 @@ import {
 import { DayClosedError } from '../services/treasuryService.js';
 import { recordAudit } from '../services/auditService.js';
 import { rejectCostPriceWrite, stripCostPrice, stripCostPriceList } from '../lib/costPriceGuard.js';
+import { idempotencyKeyFromHeader, runIdempotent, sendIdempotencyError } from '../services/idempotencyService.js';
 
 function handleServiceError(err: unknown, res: Response): boolean {
   if (err instanceof InventoryItemNotFoundError || err instanceof StockMovementNotFoundError) {
@@ -155,31 +156,48 @@ export async function quickSaleHandler(req: Request<{ id: string }>, res: Respon
     return;
   }
   const input = quickInventorySaleSchema.parse(req.body);
+  // Accounting audit fix (2026-09-17, Phase 3 E) — repeated submission of
+  // the same quick sale (a double-click, or a client retry after a
+  // dropped response) must not deduct stock or post a Treasury entry a
+  // second time. `Idempotency-Key` is optional — a caller that never
+  // sends it behaves exactly as before this fix. The fingerprint covers
+  // every field that changes the financial/stock effect, so the SAME key
+  // reused for a genuinely different sale is a conflict, not a replay.
+  const idempotencyKey = idempotencyKeyFromHeader(req.headers['idempotency-key']);
 
-  let result;
+  let outcome;
   try {
-    result = await quickSaleFromInventory(req.params.id, auth.branchId, auth.staffId, input);
+    outcome = await runIdempotent(
+      idempotencyKey,
+      auth.staffId,
+      'POST /api/inventory-items/:id/quick-sale',
+      { itemId: req.params.id, branchId: auth.branchId, ...input },
+      async () => {
+        const result = await quickSaleFromInventory(req.params.id, auth.branchId, auth.staffId, input);
+        await recordAudit({
+          entityType: 'InventoryItem',
+          entityId: req.params.id,
+          action: 'UPDATE',
+          performedById: auth.staffId,
+          branchId: auth.branchId,
+          newValue: {
+            quickSale: true,
+            quantity: input.quantity,
+            discountPercent: input.discountPercent ?? 0,
+            amount: result.treasuryEntry.amount,
+            treasuryEntryId: result.treasuryEntry.id,
+          },
+        });
+        return { statusCode: 201, body: { success: true, data: result } };
+      },
+    );
   } catch (err) {
+    if (sendIdempotencyError(err, res)) return;
     if (handleServiceError(err, res)) return;
     throw err;
   }
 
-  await recordAudit({
-    entityType: 'InventoryItem',
-    entityId: req.params.id,
-    action: 'UPDATE',
-    performedById: auth.staffId,
-    branchId: auth.branchId,
-    newValue: {
-      quickSale: true,
-      quantity: input.quantity,
-      discountPercent: input.discountPercent ?? 0,
-      amount: result.treasuryEntry.amount,
-      treasuryEntryId: result.treasuryEntry.id,
-    },
-  });
-
-  res.status(201).json({ success: true, data: result });
+  res.status(outcome.statusCode).json(outcome.body);
 }
 
 export async function recordStockMovementHandler(req: Request<{ id: string }>, res: Response) {
