@@ -262,3 +262,38 @@ thrown. Doesn't need to be exhaustive on day one; the immediate value is
 simply *some* controller-level coverage existing for `createOrderHandler`'s
 three Cutover-era errors, so this exact class of gap can't silently recur
 there again.
+
+---
+
+## Supplier payment recording has zero branch-access check (temporary, deliberate)
+
+**Found/introduced:** 2026-09-22, committing the Idempotency review's
+`suppliers.ts` piece (commit `c5222b2`). Built from the committed `HEAD`
+baseline, deliberately excluding the still-uncommitted
+supplier-accounting-fixes feature that lives in the same file's working-tree
+diff — including that feature's `canAccessBranch(auth, input.branchId)`
+check on this exact handler.
+
+**Concrete consequence, right now:** `POST /api/suppliers/:id/payments`
+has **no branch-access check at all**. Any staff member holding the
+permission this route requires can record a supplier payment against
+*any* branch, not just the ones they're scoped to — there is currently no
+`branchId` concept on this endpoint's input in the committed schema for it
+to check against in the first place (that field is part of the
+not-yet-committed `supplier-accounting-fixes` schema change). This is not
+a regression introduced by the idempotency commit — the committed baseline
+never had this check either — but it's being named explicitly now, at the
+exact moment it was consciously chosen not to fix, rather than left to be
+rediscovered as a surprise later.
+
+**Why it wasn't fixed here:** fixing it means bringing in
+`supplier-accounting-fixes`'s own schema/migration change
+(`SupplierPayment.branchId`), which is exactly the feature due its own
+narrow, dedicated review — pulling one check out of it in isolation would
+mean reviewing (and trusting) part of that feature without the rest of the
+scrutiny it's going to get.
+
+**What closes this gap:** the `supplier-accounting-fixes` migration +
+its `suppliers.ts` branch-scoping changes getting their own reviewed,
+narrow commit(s) — at which point this entry should be deleted, not just
+marked done.
