@@ -18,6 +18,7 @@ import {
   updatePurchase,
 } from '../services/supplierLedgerService.js';
 import { recordAudit } from '../services/auditService.js';
+import { idempotencyKeyFromHeader, runIdempotent, sendIdempotencyError } from '../services/idempotencyService.js';
 
 export async function listSuppliersHandler(_req: Request, res: Response) {
   res.json({ success: true, data: await listSuppliers() });
@@ -120,18 +121,39 @@ export async function createPaymentHandler(req: Request<{ id: string }>, res: Re
     return;
   }
   const input = createSupplierPaymentSchema.parse(req.body);
-  const payment = await createPayment(req.params.id, input, auth.staffId);
+  // Accounting audit fix (2026-09-17, Phase 3 E) — a repeated submission
+  // of the same supplier payment must not create a second SupplierPayment
+  // + a second Treasury OUT for it. Optional header, backward compatible.
+  const idempotencyKey = idempotencyKeyFromHeader(req.headers['idempotency-key']);
 
-  await recordAudit({
-    entityType: 'SupplierPayment',
-    entityId: payment.id,
-    action: 'CREATE',
-    performedById: auth.staffId,
-    partnerId: req.params.id,
-    newValue: input,
-  });
+  let outcome;
+  try {
+    outcome = await runIdempotent(
+      idempotencyKey,
+      auth.staffId,
+      'POST /api/suppliers/:id/payments',
+      { partnerId: req.params.id, ...input },
+      async () => {
+        const payment = await createPayment(req.params.id, input, auth.staffId);
 
-  res.status(201).json({ success: true, data: payment });
+        await recordAudit({
+          entityType: 'SupplierPayment',
+          entityId: payment.id,
+          action: 'CREATE',
+          performedById: auth.staffId,
+          partnerId: req.params.id,
+          newValue: input,
+        });
+
+        return { statusCode: 201, body: { success: true, data: payment } };
+      },
+    );
+  } catch (err) {
+    if (sendIdempotencyError(err, res)) return;
+    throw err;
+  }
+
+  res.status(outcome.statusCode).json(outcome.body);
 }
 
 export async function updatePaymentHandler(req: Request<{ paymentId: string }>, res: Response) {
