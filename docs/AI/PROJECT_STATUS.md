@@ -1,6 +1,149 @@
 # حالة المشروع — Cleopatra System
 
-**آخر تحديث:** 2026-09-10 (تكملة 98 — Cleopatra AI Phase 2، Task 5: أداة
+**آخر تحديث:** 2026-09-22 — ✅ **مراجعة Idempotency (الويرنج المتبقي) خلصت ومقفولة، 7 commit
+اتعملهم push (`origin/main` عند `c6a1a7a`)، بنفس انضباط مراجعة Cutover بالحرف: فحص وتوثيق
+أولًا، قرارات معمارية صريحة (A/B/C/D/E)، تنفيذ تدريجي بـcommits ضيقة، base-vs-target لكل ملف
+مختلط، تست قبل وبعد كل خطوة.**
+
+**الأربعة مسارات المالية الحساسة اللي كانت بتبعت `Idempotency-Key` من الفرونت إند (مُلتزم بيها
+من `2c3648b`, 2026-09-17) من غير ما الباك إند يستقبلها خالص — بقوا الأربعة متوصّلين فعليًا:**
+إنشاء أوردر، دفعة عادية (`orders.ts`)، بيع سريع POS (`inventoryItems.ts`)، دفعة مورد
+(`suppliers.ts`) — الأربعة بيستخدموا `runIdempotent` (نفس الـinfra المُلتزم بيها من زمان،
+`3875b0e`)، بدون أي migration جديدة (`IdempotencyKey` وmigrations بتاعها اتلزم بيهم من ساعتها).
+
+**القرارات المعمارية (زي A/B/C بتاعة Cutover بالظبط):**
+- **A — `orders.ts`:** idempotency في commit مستقل (`a1b5731`)، **+ إصلاح عاجل منفصل** (`ade3348`)
+  لفجوة حقيقية اتكشفت بالصدفة أثناء المراجعة — رسائل الخطأ العربية بتاعة Cutover
+  (`AlreadyConsumedExceedsRequirementError` وأخواتها) كانت **متحقق منها بصريًا وشغالة وقت
+  اختبار Cutover، لكن مالهاش أي commit خالص** — لو حصلها push من غير الإصلاح ده، مستخدم حقيقي
+  كان هياخد رسالة خطأ خام بدل العربي. اتصلحت واتحققت كلمة بكلمة مطابقة لما اتشاف حي في المتصفح.
+- **B — `suppliers.ts`:** idempotency بس من نسخة HEAD المُلتزم بيها (`c5222b2`)، مع استبعاد صريح
+  لكل branch-scoping بتاعة supplier-accounting-fixes (متداخلة سطر-بسطر في نفس الدالة). **فجوة
+  مؤقتة موثّقة بوضوح في KNOWN_ISSUES.md** (`bd92a72`): دفعات الموردين حاليًا **بدون أي فحص
+  branch-access خالص** — هتتقفل مع مراجعة supplier-accounting-fixes نفسها.
+- **C — `inventoryItems.ts`:** idempotency بس (`c6a1a7a`)، استبعاد كامل لـendpoint غير مرتبط
+  (`getInventoryReconciliationReportHandler`, "Phase G") قاعد في نفس الملف — و**`routes/
+  inventoryItems.ts` اتفحص وعُزل بنفس الدقة** لأنه بيعمل import لنفس الـhandler المستبعد.
+- **D — `expenses.ts`:** **مؤجل بالكامل بقرار صريح** — الملف كله untracked من الأول (صفر تاريخ
+  git ينفصل عليه)، فأي commit "idempotency بس" مستحيل عمليًا من غيره يجر باقي الـExpense system
+  معاه. الخطر المالي منخفض أصلًا: `TreasuryEntry.expenseId`'s unique constraint (جزء من
+  migration الـExpense system نفسه) هو خط الدفاع الحقيقي ضد الازدواج، مش الـidempotency key.
+- **E — `idempotencyService.test.ts`:** commit مباشر (`3e18bf0`) — 187 سطر، 10 حالة اختبار
+  محكمة (fingerprint conflict, concurrent duplicate, stale reservation reclaim...) كانت
+  موجودة على القرص من زمان بدون أي commit خالص.
+
+**+ توثيق نمط معماري عام جديد (`cdaec34`):** "service بيرمي خطأ مخصص، controller ساكت عنه" —
+مش إصلاح، توثيق للنمط اللي سبب فجوة القرار A، عشان ميتكررش بصمت في service/controller تاني.
+
+**فحص السلامة قبل الـpush** (نفس فحص Cutover بالحرف): تأكدت إن الـ7 commits دول صفر لمسة لأي
+migration file خالص (idempotency مالهاش أي migration جديدة من الأساس)، والتلاتة فولدرات
+المتأجلة (order-item-return-history-fix, supplier-accounting-fixes, expense-system) فضلوا
+untracked ومتجروش مع الـpush. **518/518 تست ناجح** في كل خطوة، typecheck نضيف على كل تعديل.
+
+**الديون الموثّقة الأربعة المتبقية من هذه المراجعة** (مش من نطاقها عمدًا): (1) صفر controller-level
+test لرسائل خطأ Cutover، (2) صفر branch-access check لدفعات الموردين، (3) idempotency لمصروف
+mark-paid مؤجل، (4) `getInventoryReconciliationReportHandler`/Phase G لسه uncommitted بالكامل.
+
+---
+
+**ملاحظة:** الفترة من 2026-09-10 لـ2026-09-22 (RLS، Cutover الكامل، إصلاح idempotency/reload)
+مش موثّقة بالتفصيل في هذا الملف تحديدًا — راجع `KNOWN_ISSUES.md` وPENDING_VERIFICATION.md وسجل
+commits `main` للتفاصيل الكاملة. السطرين اللي بعد ده ("آخر تحديث سابق... تكملة 3" و"...تكملة 2")
+كانوا قاعدين على القرص من قبل من غير commit خالص — اتلزم بيهم دلوقتي مع بعض، لكن ده مايضمنش إن
+كل حاجة حصلت في الفترة دي موثّقة هنا بنفس التفصيل.
+
+---
+
+**آخر تحديث سابق (2026-09-21، تكملة 3)** — ✅ **RLS: 27 جدول كان مكشوف بالكامل عبر anon key، دلوقتي
+محمي، متحقق منه حي بـ4 خطوات، غير مرتبط تمامًا بمسار Cutover.**
+اكتشاف مستقل تمامًا عن سلسلة Cutover: فحص حي (anon key + PostgREST مباشر) لقى 28 جدول RLS-off
+(`_prisma_migrations` + 27 جدول تطبيقي)، كلهم تمت إضافتهم بعد migration الحماية الأصلية
+(`20260805135821_security_foundation_rls_deny_policies`, ADR 0029) من غير ما ياخدوا نفس
+المعاملة رغم القاعدة الإلزامية اللي اتحطت وقتها (VISION.md, MASTER_PROMPT.md Database
+Checklist, ADR 0030) — فجوة إجرائية استمرت ~6 أسابيع و15+ جدول جديد. **الإصلاح: نفس نمط أغسطس
+بالحرف، صفر آلية جديدة** — migration جديدة (`20260921172617_rls_deny_policies_catchup`) بنفس
+`CREATE POLICY "backend_only_deny_direct_access" ... USING (false)` للـ27 جدول، مُطبَّقة فعليًا
+(`prisma migrate deploy`) بعد تحقق مسبق من تناقض ظاهري في تواريخ 5 migrations غير مرتبطة
+(order-item-return-history-fix, supplier-accounting-fixes, idempotency×2, expense-system) —
+اتأكد إنها applied فعليًا من 16-17 سبتمبر (قبل أي شغل في الجلسة دي)، مش حدث حديث، بمطابقة
+مستقلة مع سجل owner الخاص. **4 خطوات تحقق حي بعد الـmigration، كلها ناجحة:**
+1. `pg_class.relrowsecurity` على الـ77 جدول — RLS-OFF نزلت من 28 لـ1 بس (`_prisma_migrations`
+   المُستثناة عمدًا).
+2. طلبات anon-key مباشرة عبر PostgREST على الـ27 جدول كلهم (مش عينة) — **27/27 محجوبين**،
+   `200` وصفوف=0 لكل واحد.
+3. استعلامات Prisma حقيقية (نفس اتصال الـAPI الحي، دور `postgres`) على `Lead`/`CallLog`/
+   `EmployeeAdvance`/`AttendanceEntry` — الأربعة نجحوا وأرجعوا بيانات حقيقية، الباك إند سليم.
+4. `supabaseAdmin.auth.admin.generateLink` (`service_role`) — نجح، نفس نمط تحقق أغسطس بالحرف.
+**التحليل الأمني قبل الإصلاح** أكّد إن `apps/web` بيستخدم `supabase.auth.*` بس (صفر `.from()`/
+`.storage.`/`.rpc()`/`.channel()` في الكود كله) — لكن ده متبقاش يتحسب تخفيف حقيقي، لأن الـanon
+key نفسه متاح لأي حد يستخرجه من الـbundle العام بغض النظر عن سلوك الكود الرسمي.
+
+**✅ الفجوة الإجرائية اتقفلت بالكامل (Commit `6e0e3e8`):** `apps/api/src/rlsCoverage.test.ts` —
+تست بنيوي صفر اتصال بقاعدة بيانات، بيقرأ `schema.prisma` وكل ملفات `migration.sql` من القرص
+مباشرة، بيتأكد إن كل موديل *أخد migration فعلي* (`CREATE TABLE`) معاه بالضرورة
+`ENABLE ROW LEVEL SECURITY` + `backend_only_deny_direct_access`. موديلات Cutover الخمسة
+(`CutoverRecord`/`TreasuryOpening`/`CustomerOpening`/`SupplierOpening`/`InventoryOpening`) —
+موجودة في schema بس من غير migration لسه — بيتم تجاوزها بذكاء (مش استثناء صريح) لحد ما تاخد
+migration حقيقي، وقتها التست هيطلبها تلقائيًا صفر تعديل كود. `_prisma_migrations` هو الاستثناء
+الوحيد الصريح المُوثّق (`EXPLICITLY_EXEMPT_TABLES`، مش استثناء ضمني). **اتحقق منه بالحالتين
+فعليًا على القرص** (مش مراجعة كود بس): إضافة موديل + migration وهميين من غير RLS، تأكيد إن
+التست فشل وسمّى الجدول الوهمي بالتحديد في الرسالتين، بعدين إزالتهم وتأكيد إن كل الـ518 تست
+(43 ملف) فضلوا ناجحين. **مسار الـRLS مقفول رسميًا بالكامل من هنا.**
+
+Issue 1 (اتصال قاعدة البيانات) اتحل بالتوازي (Commit `815fc58`) — `keepAlive`/`idleTimeoutMillis`/
+`connectionTimeoutMillis` على الـpg pool بتاع `PrismaPg` adapter، حل مشكلة "Connection
+terminated unexpectedly" الناتجة عن PgBouncer الخاص بـSupabase بيقفل idle connections من جهته.
+
+**آخر تحديث سابق (2026-09-21، تكملة 2)** — 🔴 **Opening State / Cutover: Layer 1 (compile-time) اتفحص
+شاملًا مرتين في worktree معزول، 3 فجوات اتصلحت، وفضل واحدة بس.**
+19 commit narrow ومُوثّق بالكامل على `main` (`fc0d324` ... `bb32cca`)، كل واحد منهم اتفصل يدويًا
+عن شغل تاني غير مرتبط (Expense system, Idempotency, إصلاحات محاسبية للموردين, order-item-
+return-history-fix) كان قاعد في نفس الملفات uncommitted. السلسلة دي **مش جاهزة لـGo-Live بأي
+حال** — 3 طبقات مستقلة توضّح ليه بالظبط:
+
+1. **Compile-time (الأخطر — بيكسر الـAPI كله مش بس Cutover):** `businessDayRangeUtc` (كان
+   بيسبب فشل بناء كامل) **اتحل فعليًا** — اتضاف كدالة رابعة *كما هي تمامًا* لـ
+   `apps/api/src/lib/businessTimezone.ts` المُلتزم بيه أصلًا (Commit `f09ae8c`)، بدل ما نستنى
+   مراجعة الفيتشر الكامل ("الانتقال لـ`packages/shared` + إعادة استخدام الفرونت إند") اللي
+   فضل زي ما هو uncommitted تمامًا بانتظار مراجعته المستقلة. **اتأكد بتشغيل فعلي حقيقي مرتين
+   (worktree معزول + npm install نضيف — مش reuse لـ`node_modules`، أول محاولة استخدمت junction
+   رجّع symlinks للريبو الأصلي غير المُلتزم بيه بالغلط، فاتكشفت واتصلحت قبل ما نثق في النتيجة)**:
+   - **تشغيل 1 (عند `af8726b`):** `packages/shared` بنى بصفر خطأ. `apps/api` طلع فيه 3 فجوات
+     تانية غير متوقعة: فجوة سادسة (`index.ts` مفيهوش `export * from './schemas/cutover.js'`
+     ولا `'./schemas/openingState.js'`)، `loadOrderBranchOr404` (`controllers/orders.ts`) لسه
+     مش `export` (اتكشفت قبل كده في الفحص الشامل قبل `orderService.ts` بس `git log --all` أكّد
+     إنها **لسه معملهاش commit خالص** — سقطت من التتبع)، وفجوتين جداد في `fe626c8` (Test B1):
+     `beforeEach` مستورد وموستخدمش، و`realProfit` مش موجودة في نوع الرجوع الحالي (فيلد
+     Phase C/D الغير-مُلتزم بيها بعد).
+   - **3 إصلاحات مستقلة (Commits `859e309`, `0620f28`, `bb32cca`):** حذف `beforeEach`، تصدير
+     `loadOrderBranchOr404`، وتضييق تست B1 لـ`salesTotal`/`netProfit` بس (مع تعليق داخلي يوضح
+     السبب ويوصي بإعادة `realProfit` لما Phase C/D يتراجع) — الاتنين الأولانيين اتحققوا بإعادة
+     تشغيل التست المتأثر فعليًا قبل الـcommit، مش بس بالقراءة.
+   - **تشغيل 2 (عند `bb32cca`، worktree تاني نضيف بالكامل):** `packages/shared` بصفر خطأ تاني.
+     `apps/api` **لسه مش بيبني** — لكن دلوقتي لسبب واحد بس: **فجوة سادسة**
+     (`index.ts`'s missing barrel exports)، 25 خطأ كلهم من نفس المصدر. التلاتة التانيين
+     (`loadOrderBranchOr404`، `beforeEach`، `realProfit`) اختفوا تمامًا من قائمة الأخطاء —
+     مؤكَّد مش مجرد افتراض. **commit منفصل مطلوب ضمن مسار Cutover لفجوة index.ts، غير مستعجل.**
+2. **Runtime/DB (معروف من البداية، مستقل تمامًا عن #1):** ولا Migration اتنفذ خالص. جداول
+   `CutoverRecord`/`TreasuryOpening`/`CustomerOpening`/`SupplierOpening`/`InventoryOpening` والحقول
+   الستة الجديدة على الموديلات القائمة (`Order.customerOpeningId`, `Payment.sourceType`, ...)
+   موجودة في `schema.prisma` بس مش موجودة في الـPostgres الحي — أي استدعاء حقيقي هيفشل بـ"relation
+   does not exist" حتى بعد حل #1 بالكامل.
+3. **Logical/source completeness:** كل رمز (symbol) بيستخدمه كود Cutover الملتزم بيه بيتحل
+   داخل تاريخ الـcommits نفسه — بما فيه فجوتين اتكشفوا واتصلحوا أثناء السلسلة (`isAdminOrAbove`
+   في `9b119ef`، و`applyOpeningCreditPayment`+3 أخطاء في `dc9ab8a`)، وفجوة تالتة اتسجلت بس مش
+   هتتصلح هنا لأنها بتعتمد على #1 (`f7fc276` بينادي `getCashPosition` من قبل ما يتعرّف أصلًا).
+   **التشغيل الفعلي في الـworktree المعزول أثبت إن "logical completeness" دي كانت متفائلة أكتر
+   من اللازم** — فجوتين تانيين (`loadOrderBranchOr404`، وB1's `realProfit`) عدّوا من غير ما
+   يتكشفوا لحد التشغيل الفعلي الأول للـbuild الكامل، مش من مجرد فحص الاعتماديات يدويًا.
+
+**الخلاصة لأي حد بيراجع الموقف ده (بما فيه أنا في جلسة تانية):** الكود موجود، مُختبر (8 تست جديد
+لـCash Position + كل تستات A/B1/B3/C من قبل)، ومُراجَع بدقة — لكن التشغيل الفعلي للـbuild كشف إن
+فحص الاعتماديات يدويًا (مهما كان دقيق) مش بديل كافي عن تشغيل `tsc` فعليًا على كل السلسلة مرة
+واحدة. **النظام لسه مش شغال فعليًا** — #1 لسه فيه 3 فجوات مفتوحة (سادسة + loadOrderBranchOr404 +
+فجوتي B1)، و#2 لسه ماتحلش خالص. لسه معملش قرار عن أولوية الخطوة الجاية.
+
+**قبل كده:** تكملة 98 — Cleopatra AI Phase 2، Task 5: أداة
 `get_purchase_requests_due` — Pass-through واحد لدالة `purchaseRequestService.ts::listPurchaseRequests(status?)`
 الموجودة فعلاً، صفر فلتر/Default مُخترع (الغياب يعدي `undefined` بالحرف زي الـController الحقيقي).
 الوصف بيوضّح للموديل الفرق بين نوعين حقيقيين من الصفوف (`STOCK_SHORTFALL` مرتبط بصنف مخزون حقيقي
