@@ -11,6 +11,7 @@ import {
   listPayrollPeriodsForStaffHandler,
   listSalaryPaymentsForStaffHandler,
   reopenPayrollPeriodHandler,
+  voidEmployeeAdvanceHandler,
 } from '../controllers/employeeAdvances.js';
 
 export const employeeAdvancesRouter = Router();
@@ -27,6 +28,11 @@ employeeAdvancesRouter.get('/staff/:staffId/payroll-periods', requirePermission(
 employeeAdvancesRouter.get('/staff/:staffId/salary-payments', requirePermission('employees.view'), listSalaryPaymentsForStaffHandler);
 employeeAdvancesRouter.post('/', requirePermission('employees.edit'), createAdvanceHandler);
 employeeAdvancesRouter.post('/:advanceId/repayments', requirePermission('employees.edit'), createAdvanceRepaymentHandler);
+// Accounting audit fix (2026-09-17, Decision 7) — controlled void/cancel
+// for a data-entry mistake; SUPER_ADMIN/ADMIN-only, enforced inside the
+// handler itself (stricter than this route-level gate), same pattern as
+// treasury day / payroll period reopening.
+employeeAdvancesRouter.post('/:advanceId/void', requirePermission('employees.edit'), voidEmployeeAdvanceHandler);
 // Owner (2026-08-20, "لو لا طب هنعمل ده ازاي") — the manual "صرف مرتب" action.
 employeeAdvancesRouter.post('/salary-payments', requirePermission('employees.edit'), createSalaryPaymentHandler);
 // Owner (2026-09-02, "يسمح بإعادة فتح الشهر وإعادة الحساب") — SUPER_ADMIN/ADMIN-only, enforced inside the handler itself (stricter than this route-level gate), same pattern as treasury day reopening.

@@ -49,6 +49,17 @@ export const createEmployeeAdvanceSchema = z.object({
   walletMethod: paymentMethodSchema,
 });
 
+/**
+ * Accounting audit fix (2026-09-17, Decision 7) — a controlled void/cancel
+ * for a genuine data-entry mistake, never an ordinary edit/delete (rule:
+ * "Do NOT introduce ordinary update/delete routes"). `reason` is required,
+ * same discipline as `reopenPayrollPeriodSchema`/`reopenTreasuryDaySchema`.
+ */
+export const voidEmployeeAdvanceSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+export type VoidEmployeeAdvanceInput = z.infer<typeof voidEmployeeAdvanceSchema>;
+
 export const createAdvanceRepaymentSchema = z.object({
   amount: z.number().positive(),
   date: z.string(),

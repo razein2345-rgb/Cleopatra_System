@@ -3,7 +3,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import type { CreateAdvanceRepaymentInput, CreateEmployeeAdvanceInput, EmployeeAdvance, EmployeeAdvanceSummary } from '@cleopatra/shared';
 import { computeEmployeePayroll } from './employeePayrollService.js';
 import { getPendingPayrollPeriodForStaff } from './payrollPeriodService.js';
-import { assertBranchDayNotClosed } from './treasuryService.js';
+import { assertBranchDayNotClosed, reopenDayIfClosed } from './treasuryService.js';
 
 /**
  * FEATURE-008 (2026-08-13, owner: "إدارة السلف هتبقى من الخزينة ولا من قسم
@@ -159,6 +159,58 @@ export async function createRepayment(
         },
       });
     }
+
+    const updated = await tx.employeeAdvance.findUniqueOrThrow({ where: { id: advanceId }, include: advanceInclude });
+    return mapAdvanceToDto(updated);
+  });
+}
+
+export class AdvanceHasRepaymentsError extends Error {
+  constructor() {
+    super('لا يمكن إلغاء سلفة لها سدادات مسجلة بالفعل');
+    this.name = 'AdvanceHasRepaymentsError';
+  }
+}
+
+export class AdvanceAlreadyVoidedError extends Error {
+  constructor() {
+    super('السلفة دي ملغاة بالفعل');
+    this.name = 'AdvanceAlreadyVoidedError';
+  }
+}
+
+/**
+ * Accounting audit fix (2026-09-17, Decision 7) — a controlled correction
+ * mechanism for a genuine data-entry mistake (wrong amount/employee typed),
+ * NOT an ordinary edit/delete. Same accounting safety principles as
+ * `orderService.deletePayment`: soft-deletes the `EmployeeAdvance` AND its
+ * linked `TreasuryEntry` together, atomically, and auto-reopens the
+ * branch's day if it was already closed so the reversal is visible rather
+ * than silently blocked. Deliberately scoped to advances with ZERO
+ * repayments yet — voiding an advance that has already been partially/fully
+ * repaid would leave those repayments referring to a debt that no longer
+ * exists, which is a bigger reconciliation problem this task did not ask
+ * for; staff must be told this can only correct a mistake caught before any
+ * repayment cycle touched it. The row itself is never hard-deleted and its
+ * amount/date/reason are never rewritten — the original mistake stays
+ * visible in history, just marked voided (rule 19: full auditability).
+ */
+export async function voidAdvance(advanceId: string, voidedBy: string, reason: string): Promise<EmployeeAdvance> {
+  return prisma.$transaction(async (tx) => {
+    const existing = await tx.employeeAdvance.findUnique({ where: { id: advanceId }, include: advanceInclude });
+    if (!existing) throw new EmployeeAdvanceNotFoundError();
+    if (existing.isDeleted) throw new AdvanceAlreadyVoidedError();
+    if (existing.repayments.length > 0) throw new AdvanceHasRepaymentsError();
+
+    await tx.employeeAdvance.update({
+      where: { id: advanceId },
+      data: { isDeleted: true, deletedAt: new Date(), deletedBy: voidedBy },
+    });
+    await tx.treasuryEntry.updateMany({
+      where: { employeeAdvanceId: advanceId },
+      data: { isDeleted: true, deletedAt: new Date(), deletedBy: voidedBy },
+    });
+    await reopenDayIfClosed(existing.branchId, existing.date, voidedBy, `إلغاء سلفة موظف — ${reason}`, tx);
 
     const updated = await tx.employeeAdvance.findUniqueOrThrow({ where: { id: advanceId }, include: advanceInclude });
     return mapAdvanceToDto(updated);

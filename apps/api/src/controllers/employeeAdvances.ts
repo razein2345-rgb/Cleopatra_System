@@ -1,8 +1,17 @@
 import type { Request, Response } from 'express';
-import { createAdvanceRepaymentSchema, createEmployeeAdvanceSchema, createSalaryPaymentSchema, reopenPayrollPeriodSchema } from '@cleopatra/shared';
+import {
+  createAdvanceRepaymentSchema,
+  createEmployeeAdvanceSchema,
+  createSalaryPaymentSchema,
+  reopenPayrollPeriodSchema,
+  voidEmployeeAdvanceSchema,
+} from '@cleopatra/shared';
 import { canAccessBranch } from '../services/authContext.js';
+import { prisma } from '../lib/prisma.js';
 import { recordAudit } from '../services/auditService.js';
 import {
+  AdvanceAlreadyVoidedError,
+  AdvanceHasRepaymentsError,
   AdvanceRepaymentExceedsBalanceError,
   createAdvance,
   createRepayment,
@@ -10,6 +19,7 @@ import {
   getEmployeeAdvanceSummaries,
   listAdvancesForStaff,
   MissingWalletMethodError,
+  voidAdvance,
 } from '../services/employeeAdvanceService.js';
 import { computeEmployeePayroll } from '../services/employeePayrollService.js';
 import {
@@ -63,6 +73,26 @@ export async function createAdvanceRepaymentHandler(req: Request<{ advanceId: st
   const auth = req.auth!;
   const input = createAdvanceRepaymentSchema.parse(req.body);
 
+  // Accounting audit fix (2026-09-17) — this handler previously had no
+  // branch-access check at all, unlike `createAdvanceHandler` right above
+  // it: a user with `employees.edit` could record a repayment against
+  // another branch's employee's advance. `createRepayment` doesn't know
+  // the advance's branch until after loading it internally, so it's
+  // peeked here first (same "load, then check" pattern as `orders.ts`'s
+  // payment edit/delete handlers) before any mutation happens.
+  const existingAdvance = await prisma.employeeAdvance.findUnique({
+    where: { id: req.params.advanceId },
+    select: { branchId: true, isDeleted: true },
+  });
+  if (!existingAdvance || existingAdvance.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Employee advance not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existingAdvance.branchId)) {
+    res.status(403).json({ success: false, error: { message: 'You do not have access to this branch' } });
+    return;
+  }
+
   try {
     const advance = await createRepayment(req.params.advanceId, input, auth.staffId);
 
@@ -87,6 +117,63 @@ export async function createAdvanceRepaymentHandler(req: Request<{ advanceId: st
     }
     if (err instanceof DayClosedError) {
       res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Accounting audit fix (2026-09-17, Decision 7) — the controlled void/
+ * cancel mechanism for a genuine data-entry mistake. Gated the same
+ * SUPER_ADMIN/ADMIN-only bar as `reopenPayrollPeriodHandler`/
+ * `reopenTreasuryDayHandler` right next to it — reversing a recorded
+ * financial fact is deliberately not something a regular `employees.edit`
+ * holder can do on their own.
+ */
+export async function voidEmployeeAdvanceHandler(req: Request<{ advanceId: string }>, res: Response) {
+  const auth = req.auth!;
+  if (!auth.roleNames.includes('SUPER_ADMIN') && !auth.roleNames.includes('ADMIN')) {
+    res.status(403).json({ success: false, error: { message: 'Voiding an employee advance is restricted to admins' } });
+    return;
+  }
+
+  const existingAdvance = await prisma.employeeAdvance.findUnique({
+    where: { id: req.params.advanceId },
+    select: { branchId: true, isDeleted: true, amount: true, staffId: true },
+  });
+  if (!existingAdvance || existingAdvance.isDeleted) {
+    res.status(404).json({ success: false, error: { message: 'Employee advance not found' } });
+    return;
+  }
+  if (!canAccessBranch(auth, existingAdvance.branchId)) {
+    res.status(403).json({ success: false, error: { message: 'You do not have access to this branch' } });
+    return;
+  }
+
+  const input = voidEmployeeAdvanceSchema.parse(req.body);
+
+  try {
+    const advance = await voidAdvance(req.params.advanceId, auth.staffId, input.reason);
+
+    await recordAudit({
+      entityType: 'EmployeeAdvance',
+      entityId: advance.id,
+      action: 'DELETE',
+      performedById: auth.staffId,
+      branchId: advance.branchId,
+      previousValue: { amount: existingAdvance.amount.toNumber(), staffId: existingAdvance.staffId },
+      newValue: { voidReason: input.reason },
+    });
+
+    res.json({ success: true, data: advance });
+  } catch (err) {
+    if (err instanceof EmployeeAdvanceNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof AdvanceAlreadyVoidedError || err instanceof AdvanceHasRepaymentsError) {
+      res.status(409).json({ success: false, error: { message: err.message } });
       return;
     }
     throw err;
