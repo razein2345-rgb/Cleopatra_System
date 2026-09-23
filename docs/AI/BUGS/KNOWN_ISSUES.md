@@ -297,3 +297,97 @@ scrutiny it's going to get.
 its `suppliers.ts` branch-scoping changes getting their own reviewed,
 narrow commit(s) — at which point this entry should be deleted, not just
 marked done.
+
+---
+
+## `updateOrder`/`deleteOrder` can double-restock inventory for a returned item (not yet fixed)
+
+**Found:** 2026-09-23, order-item-return-history-fix review (Decision B),
+while separating that feature's `orderId`/history-preservation fix from
+everything else mixed into the same `orderService.ts` diff.
+
+**What's wrong:** `materialsToRestock(item)` always returns an item's FULL
+original consumption. When an order with an already-(partially-)returned
+`INVENTORY_RETAIL` item gets edited or deleted, `updateOrder`/`deleteOrder`
+restock that full original quantity again — including the portion a prior
+`createReturn()` call already restocked once. A working, tested fix
+(`materialsToRestockAfterReturns`, which subtracts `item.returns`' summed
+quantity before restocking) already exists uncommitted in the working
+tree, with 7 passing unit tests in `orderService.restock.test.ts`.
+
+**Why it wasn't fixed here:** it's a real bug, but a different one from
+what this review was scoped to (`OrderItemReturn` history surviving an
+order edit) — the two happen to touch the same functions
+(`updateOrder`/`deleteOrder`'s item-replace loop) only by coincidence.
+Committing it here would mean reviewing/trusting an inventory-correctness
+fix without giving it its own dedicated scrutiny.
+
+**What closes this gap:** `materialsToRestockAfterReturns` and its call
+sites in `updateOrder`/`deleteOrder` (plus the `returns: { select: {
+quantity: true } }` include additions those functions need) getting their
+own reviewed, narrow commit — restoring `orderService.restock.test.ts`
+alongside it.
+
+---
+
+## `orderService.ts` has three unreviewed Decimal-precision fixes (not yet committed)
+
+**Found:** 2026-09-23, order-item-return-history-fix review (Decision C),
+same separation pass as the double-restock issue above.
+
+**What's wrong (as currently written, still live/committed):**
+`updatePayment`'s `newAmount` and `createReturn`'s `refundAmount` are both
+computed by converting a `Prisma.Decimal` to a plain JS number
+(`.toNumber()`), doing float arithmetic, then persisting a freshly-parsed
+`Decimal` — a round trip that can silently lose or shift precision on the
+last decimal place. `updateOrder`'s `discountPercent` has the same
+round-trip issue when the caller doesn't actually change the discount (the
+original `Decimal` instance gets needlessly re-parsed on every save,
+instead of only when the input changes it). Working fixes for all three
+already exist uncommitted in the working tree, computed entirely in
+`Prisma.Decimal` space (no float round-trip).
+
+**Why it wasn't fixed here:** unrelated to `OrderItemReturn` history
+preservation — it happens to live in two of the same functions
+(`updatePayment`, `createReturn`) plus one more (`updateOrder`'s discount
+handling) purely by coincidence of when both fixes were written. This is
+an accounting-precision concern that deserves its own review, not a
+drive-by change riding on this feature's commit.
+
+**What closes this gap:** a dedicated review of these three Decimal fixes
+(plus the `import type { Prisma }` → `import { Prisma }` change they
+require, since `new Prisma.Decimal(...)` needs it as a value) getting its
+own narrow commit.
+
+---
+
+## `getSalesSummary`'s "today"/"this week" boundaries use server-local time, not Cairo time (not yet committed)
+
+**Found:** 2026-09-23, order-item-return-history-fix review (Decision D),
+same separation pass as the two issues above.
+
+**What's wrong (as currently written, still live/committed):**
+`getSalesSummary` computes `startOfToday` via
+`new Date(now.getFullYear(), now.getMonth(), now.getDate())` — a plain JS
+`Date` constructed from the SERVER's own local timezone (typically UTC on
+cloud hosting), not Cairo's. Depending on the time of day and DST, "مبيعات
+اليوم"/"مبيعات هذا الأسبوع" on the dashboard can straddle the wrong
+calendar day by 2-3 hours — the same class of bug `businessDayRangeUtc`
+already fixed for Treasury/attendance elsewhere in this codebase. A
+working fix (`todayInBusinessTimezone(now)` + `setUTCDate` instead of
+`setDate`, reusing the same Cairo-aware helper) already exists uncommitted
+in the working tree.
+
+**Why it wasn't fixed here:** unrelated to `OrderItemReturn` history —
+it happens to share `getSalesSummary` with an in-scope change (this
+review needed to switch the function's returns calculation from
+`items[].returns` to the new `order.itemReturns` relation) purely by
+coincidence. Also worth noting: `todayInBusinessTimezone` itself is
+currently only reachable through an uncommitted `export * from
+'./businessTimezone.js';` line in `packages/shared/src/index.ts` — the
+fix can't be committed on its own without also resolving that export gap.
+
+**What closes this gap:** a dedicated review of this timezone fix (and
+the `businessTimezone.js` barrel-export gap it depends on) getting its
+own narrow commit — likely alongside or shortly after `businessDayRangeUtc`'s
+own precedent, since both are the same class of fix.
