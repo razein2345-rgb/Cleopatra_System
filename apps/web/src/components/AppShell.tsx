@@ -27,6 +27,7 @@ import {
   Megaphone,
   Sparkles,
   ShoppingCart,
+  Receipt,
 } from 'lucide-react';
 import type { WorkflowDashboardSummary } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
@@ -109,6 +110,11 @@ const NAV_ITEMS: NavEntry[] = [
         // view of this same page; treasury.view sees the full ledger/balance.
         permission: ['treasury.view', 'treasury.create'],
       },
+      // Accounting audit fix (2026-09-17, Decision 6 / Phase I) — a
+      // dedicated business expense with a DUE -> PAID lifecycle, distinct
+      // from "المصاريف الشهرية الثابتة" (embedded inside the Treasury page
+      // itself, Super-Admin-only — see `FixedMonthlyExpensesEditor.tsx`).
+      { kind: 'link', to: '/expenses', label: 'المصروفات', icon: Receipt, permission: 'expenses.view' },
       { kind: 'link', to: '/reports', label: 'التقارير', icon: FileBarChart, permission: 'reports.view' },
       // Opening State / Cutover (Phase 3C.2) — gated on the existing
       // treasury.view permission as the closest available proxy for

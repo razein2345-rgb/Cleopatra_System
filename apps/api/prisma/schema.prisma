@@ -203,6 +203,17 @@ enum TreasurySourceType {
   /// StockMovement via `restockForOrderItem`). See
   /// `TreasuryEntry.orderItemReturnId`.
   RETURN
+  /// Accounting audit fix (2026-09-17, Decision 6 / Phase I) — a
+  /// dedicated, ad-hoc business `Expense` (rent bill, a one-off purchase,
+  /// a vendor invoice, ...) being marked PAID. Distinct from
+  /// `FixedMonthlyExpense` (2026-08-27) — that model is a pure reporting
+  /// input, amortized daily into the profitability report and never posted
+  /// to Treasury at all; THIS is a real, individually-tracked expense that,
+  /// once actually paid, becomes real cash leaving the business. Paired
+  /// atomically with an `Expense` row transitioning DUE → PAID; a DUE
+  /// expense posts nothing to Treasury at all (it isn't cash leaving yet).
+  /// See `TreasuryEntry.expenseId`.
+  EXPENSE_PAYMENT
 }
 
 /// FEATURE-008 (2026-08-13) — how often an employee is paid; drives which
@@ -469,6 +480,10 @@ model Branch {
   callLogs               CallLog[]
   contentCalendarEntries ContentCalendarEntry[]
   campaigns              Campaign[]
+  /// Accounting audit fix (2026-09-17, Decision 6 / Phase I) — a
+  /// dedicated business `Expense` may optionally be branch-scoped (null =
+  /// company-wide) — see that model's own doc comment.
+  expenses               Expense[]
   /// Opening State / Cutover (Phase 3B) — one branch may hold multiple
   /// CutoverRecord rows over its lifetime, but at most one non-superseded
   /// one at a time (see CutoverRecord.isSuperseded).
@@ -984,6 +999,7 @@ model StaffProfile {
   campaignsRecorded               Campaign[]                 @relation("CampaignRecordedBy")
   supplierPurchasesRecorded       SupplierPurchase[]         @relation("SupplierPurchaseRecordedBy")
   supplierPaymentsRecorded        SupplierPayment[]          @relation("SupplierPaymentRecordedBy")
+  expensesRecorded                Expense[]                  @relation("ExpenseRecordedBy")
   purchaseRequestsPurchased       PurchaseRequest[]          @relation("PurchaseRequestPurchasedBy")
   attendanceEntries               AttendanceEntry[]          @relation("AttendanceStaff")
   attendanceEntriesRecorded       AttendanceEntry[]          @relation("AttendanceRecordedBy")
@@ -3173,6 +3189,11 @@ model TreasuryEntry {
   orderItemReturnId String?          @unique @db.Uuid
   orderItemReturn   OrderItemReturn? @relation(fields: [orderItemReturnId], references: [id], onDelete: SetNull)
 
+  /// `sourceType: 'EXPENSE_PAYMENT'` only (Decision 6 / Phase I, 2026-09-17)
+  /// — see `Expense`'s own doc comment.
+  expenseId String?  @unique @db.Uuid
+  expense   Expense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+
   staffId  String       @db.Uuid // employee who recorded it (or who saved the source invoice)
   staff    StaffProfile @relation(fields: [staffId], references: [id])
   branchId String       @db.Uuid
@@ -3698,6 +3719,68 @@ model SupplierPayment {
 
   @@index([partnerId])
   @@index([isDeleted])
+}
+
+enum ExpenseStatus {
+  /// Incurred but not yet actually paid — posts nothing to Treasury.
+  DUE
+  /// Actually paid — exactly one `TreasuryEntry` (EXPENSE_PAYMENT) exists for it.
+  PAID
+}
+
+/// Accounting audit fix (2026-09-17, Decision 6 / Phase I) — a dedicated,
+/// individually-tracked business expense (a vendor invoice, a one-off
+/// purchase, a bill), distinct from `FixedMonthlyExpense` (a pure
+/// reporting/amortization input with no payment lifecycle at all — see its
+/// own doc comment). Deliberately minimal for v1 per the owner's own scope:
+/// no approval workflow, no scheduling/recurrence engine — just record it,
+/// then mark it paid once it actually is. `category` is a free-text field
+/// reusing the same `TreasuryCategory` catalog `TreasuryEntry.category`
+/// already draws its suggestions from (rule 5 — no duplicate lookup table),
+/// not a hard foreign key, so an expense can still be recorded even if its
+/// category was never added to that catalog.
+model Expense {
+  id          String  @id @default(uuid()) @db.Uuid
+  description String
+  amount      Decimal @db.Decimal(12, 2)
+  category    String?
+  /// The vendor/payee this money is owed to or was paid to — free text,
+  /// not a `BusinessPartner` FK (most one-off expenses aren't a tracked
+  /// supplier at all — a landlord, a courier, a one-time purchase).
+  payee       String?
+  /// Receipt/invoice number or any other paper-trail reference — free text.
+  reference   String?
+
+  /// When the expense was actually incurred (the bill's own date) — always
+  /// set, independent of whether it's been paid yet.
+  incurredDate DateTime
+  /// Only set once `status` moves to PAID; the same moment the paired
+  /// `TreasuryEntry.date` uses.
+  paidDate     DateTime?
+  /// Only meaningful once PAID — the wallet the money actually left through.
+  method       PaymentMethod?
+  status       ExpenseStatus  @default(DUE)
+
+  branchId String? @db.Uuid
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
+  recordedById String       @db.Uuid
+  recordedBy   StaffProfile @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
+
+  /// The real cash-outflow consequence of marking this PAID. See
+  /// `TreasuryEntry.expenseId`. Null while `status: DUE`.
+  treasuryEntry TreasuryEntry?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?   @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isDeleted])
+  @@index([branchId])
+  @@index([status])
 }
 
 enum PurchaseRequestStatus {

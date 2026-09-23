@@ -255,6 +255,23 @@ const MODULES: ModuleDef[] = [
     ],
   },
   {
+    // Accounting audit fix (2026-09-17, Decision 6 / Phase I) — a
+    // dedicated business expense with a real DUE -> PAID Treasury
+    // consequence, deliberately its own module rather than folded into
+    // `treasury.*` (whose CASHIER-held grant is intentionally narrower —
+    // see that role's own seed comment) or `settings.*` (which
+    // `FixedMonthlyExpense`, a different and Super-Admin-only concept, is
+    // gated behind).
+    module: 'expenses',
+    moduleLabel: 'Expenses',
+    actions: [
+      { action: 'view', label: 'View expenses' },
+      { action: 'create', label: 'Add expenses' },
+      { action: 'edit', label: 'Edit expenses' },
+      { action: 'delete', label: 'Delete expenses' },
+    ],
+  },
+  {
     // Owner (2026-08-23, "مرتجعات") — deliberately its own top-level
     // module, NOT nested under `orders.*` — same reasoning as `payments`
     // above: a return moves both stock and cash, so it needs a separate,

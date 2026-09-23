@@ -42,6 +42,7 @@ const ContentCalendarPage = lazy(() =>
   import('@/pages/content-calendar/ContentCalendarPage').then((m) => ({ default: m.ContentCalendarPage })),
 );
 const CampaignsPage = lazy(() => import('@/pages/campaigns/CampaignsPage').then((m) => ({ default: m.CampaignsPage })));
+const ExpensesPage = lazy(() => import('@/pages/expenses/ExpensesPage').then((m) => ({ default: m.ExpensesPage })));
 const CutoverPage = lazy(() => import('@/pages/cutover/CutoverPage').then((m) => ({ default: m.CutoverPage })));
 const CustomerOpeningPage = lazy(() =>
   import('@/pages/cutover/CustomerOpeningPage').then((m) => ({ default: m.CustomerOpeningPage })),
@@ -177,6 +178,10 @@ function App() {
 
               <Route element={<ProtectedRoute permission="campaigns.view" />}>
                 <Route path="/campaigns" element={<CampaignsPage />} />
+              </Route>
+
+              <Route element={<ProtectedRoute permission="expenses.view" />}>
+                <Route path="/expenses" element={<ExpensesPage />} />
               </Route>
 
               <Route element={<ProtectedRoute permission="suppliers.view" />}>
