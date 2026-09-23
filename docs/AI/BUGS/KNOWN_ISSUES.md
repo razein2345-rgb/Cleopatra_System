@@ -391,3 +391,46 @@ fix can't be committed on its own without also resolving that export gap.
 the `businessTimezone.js` barrel-export gap it depends on) getting its
 own narrow commit — likely alongside or shortly after `businessDayRangeUtc`'s
 own precedent, since both are the same class of fix.
+
+---
+
+## `netProfit` on the branch financial summary is currently wrong — live, on a dashboard the owner reads today
+
+**Found:** 2026-09-23, mapping the full "Accounting audit fix (2026-09-17)"
+initiative into 7 distinct units before starting any of them. Documented
+immediately upon discovery (not deferred) per explicit owner instruction —
+this is a live accuracy gap on a number already in front of the owner,
+not a newly-introduced risk, and it needs to be on record before anyone
+asks "can I trust this number" in the meantime.
+
+**What's wrong, right now, on the currently-committed/live code:**
+`resolveItemProfit`'s `netProfit` (surfaced on the branch financial
+summary — dashboard + Treasury page, shipped 2026-08-26) sums an item's
+revenue across **all time**, but subtracts the branch's `dailyFixedCost`
+(rent + amortized salaries) computed for **a single day only**. The two
+figures use different time bases and get combined into one number anyway
+— confirmed as a genuine calculation bug by the 2026-09-17 accounting
+audit, not a documented approximation. In practice this means `netProfit`
+skews further from reality the longer a branch has been operating (more
+all-time revenue stacked against one day's fixed cost), and the direction
+of the error only gets worse over time, never self-corrects.
+
+**Why it wasn't fixed here:** a working fix already exists uncommitted in
+the working tree (Phase B: scopes the revenue side to the same
+Cairo-business-day window `dailyFixedCost` already uses, plus splits the
+result into disclosed `realProfit`/`estimatedProfit`/`realCost`/
+`estimatedCost` per Decision 5) — but it lives in the same 366-line
+`branchFinancialsService.ts` diff as an unrelated net-new report (Phase
+3 C/D: a separate Gross→Operating Profit / Revenue / Cash Received / AR
+breakdown), and this is the single highest-stakes unit of the whole
+audit initiative (an owner-facing number already being read for real
+decisions) — it gets a full, unhurried, Cutover-style review on its own,
+scheduled last (after 6 simpler/lower-risk units), not a rushed drive-by
+fix riding on an unrelated commit.
+
+**What closes this gap:** the dedicated review of unit 7
+(reports/branchFinancials — Phase B + Decision 5 + Phase 3 C/D) already
+planned as the final step of the 7-unit sequence. If the wrong number
+itself needs closing sooner than the full unit, Phase B (the fix) is
+separable from Phase 3 C/D (the new report) and could be pulled forward
+on its own — flagged to the owner as an option, not yet exercised.
