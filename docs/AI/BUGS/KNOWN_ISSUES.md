@@ -428,6 +428,32 @@ decisions) — it gets a full, unhurried, Cutover-style review on its own,
 scheduled last (after 6 simpler/lower-risk units), not a rushed drive-by
 fix riding on an unrelated commit.
 
+**Addendum (2026-09-24) — the uncommitted Phase B fix itself has its own
+timezone bug, found by accident while verifying an unrelated commit
+(Unit 2/expense-system) with the real-world clock sitting inside Cairo's
+own "already tomorrow, still today in UTC" window (~21:00–02:00 UTC).**
+`branchFinancialsService.ts`'s today-scoping check
+(`if (order.date < todayStart) continue;`, `todayStart =
+todayInBusinessTimezone()`) uses the wrong helper for a real instant-range
+comparison: `todayInBusinessTimezone` deliberately returns a *label*-shaped
+UTC date (same calendar-day number as Cairo's current date, expressed as
+literal UTC midnight — correct for day-bucketing columns like
+`AttendanceEntry.date`, see that function's own doc comment) rather than
+the real UTC instant Cairo midnight actually falls at.
+`businessDayRangeUtc(dateString).start` is the helper that computes the
+real instant, and already exists for exactly this purpose (its own doc
+comment calls itself "the reverse of `todayInBusinessTimezone`"). Verified
+live during this session's own real clock (2026-09-23T22:47 UTC / already
+2026-09-24 in Cairo): the branch-financials test suite's 3 "Phase B"
+tests — which construct a "today" order via bare `new Date()` — failed
+non-deterministically with `netProfit` computing to 0 instead of the
+expected value, purely because of this boundary bug; a direct comparison
+confirmed `businessDayRangeUtc(...).start` gives the correct answer where
+`todayInBusinessTimezone()` used as a boundary does not. Zero live impact
+today (this file is entirely uncommitted), but the eventual Unit 7 review
+needs to swap this one comparison to the correct helper, not just extract
+Phase B from Phase 3 C/D as originally scoped.
+
 **What closes this gap:** the dedicated review of unit 7
 (reports/branchFinancials — Phase B + Decision 5 + Phase 3 C/D) already
 planned as the final step of the 7-unit sequence. If the wrong number
