@@ -219,6 +219,13 @@ export const ORDER_INCLUDE = {
   // order's items.
   workOrders: { where: { isDeleted: false }, select: { id: true, workOrderNumber: true, productionTrack: true } },
   payments: { where: { isDeleted: false } },
+  // Accounting fix (2026-09-17) — order-level, so `mapOrderToDto` sums
+  // EVERY return this order ever had, including one whose `OrderItem` was
+  // later replaced by an edit (`orderItemId` goes null then, but the row
+  // survives — see the schema's own doc comment). `items[].returns` above
+  // only shows returns still attached to a surviving item; this is the
+  // complete list used for `returnedTotal`/`netTotal`.
+  itemReturns: { orderBy: { createdAt: 'asc' } },
 } satisfies Prisma.OrderInclude;
 
 type OrderRecord = Prisma.OrderGetPayload<{ include: typeof ORDER_INCLUDE }>;
@@ -229,6 +236,7 @@ type OrderItemReturnRecord = Prisma.OrderItemReturnGetPayload<object>;
 export function mapOrderItemReturnToDto(ret: OrderItemReturnRecord): OrderItemReturn {
   return {
     id: ret.id,
+    orderId: ret.orderId,
     orderItemId: ret.orderItemId,
     quantity: ret.quantity.toNumber(),
     refundAmount: ret.refundAmount.toNumber(),
@@ -447,13 +455,15 @@ export function mapOrderToDto(order: OrderRecord, canSeeInternal: boolean): Orde
   const payments = order.payments.map(mapPaymentToDto);
   const paidTotal = payments.reduce((sum, p) => sum + p.amount, 0);
   const finalTotal = order.finalTotal.toNumber();
-  // Owner (2026-08-23, "مرتجعات") — summed across every item's returns.
+  // Owner (2026-08-23, "مرتجعات") — summed from `order.itemReturns` (the
+  // order-level list), NOT `item.returns`, per the 2026-09-17 accounting
+  // fix: a return whose OrderItem was later replaced by an edit still has
+  // `orderId` set even though `orderItemId` went null, so it must keep
+  // counting here — summing only `item.returns` would silently drop it and
+  // make `netTotal` revert upward as if the refund never happened.
   // `finalTotal` itself is never mutated (rule 9); `netTotal` is what's
   // actually owed once returns are accounted for.
-  const returnedTotal = order.items.reduce(
-    (sum, item) => sum + item.returns.reduce((s, r) => s + r.refundAmount.toNumber(), 0),
-    0,
-  );
+  const returnedTotal = order.itemReturns.reduce((sum, r) => sum + r.refundAmount.toNumber(), 0);
   const netTotal = finalTotal - returnedTotal;
   // Owner (2026-08-23, "تخفيض على صنف محدد") — summed across every item's
   // own frozen discountAmount, same "computed at read time" discipline as
@@ -1814,6 +1824,7 @@ export async function createReturn(
 
     const created = await tx.orderItemReturn.create({
       data: {
+        orderId: order.id,
         orderItemId: item.id,
         quantity: input.quantity,
         refundAmount,
@@ -1890,7 +1901,12 @@ export async function getSalesSummary(): Promise<SalesSummary> {
         payments: { where: { isDeleted: false }, select: { amount: true } },
         // Owner (2026-08-23, "مرتجعات") — subtract returned amounts so a
         // fully-returned invoice doesn't still count toward receivables.
-        items: { select: { returns: { select: { refundAmount: true } } } },
+        // Accounting fix (2026-09-17): read from the order-level
+        // `itemReturns` relation, not `items[].returns` — a return whose
+        // OrderItem was later replaced by an order edit still belongs to
+        // this order (`orderId` stays set) even though it's detached from
+        // any current item, and must still reduce receivables.
+        itemReturns: { select: { refundAmount: true } },
       },
     }),
   ]);
@@ -1899,10 +1915,7 @@ export async function getSalesSummary(): Promise<SalesSummary> {
   let receivablesCount = 0;
   for (const order of unpaidCandidates) {
     const paid = order.payments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
-    const returned = order.items.reduce(
-      (sum, item) => sum + item.returns.reduce((s, r) => s + r.refundAmount.toNumber(), 0),
-      0,
-    );
+    const returned = order.itemReturns.reduce((sum, r) => sum + r.refundAmount.toNumber(), 0);
     const remaining = order.finalTotal.toNumber() - returned - paid;
     if (remaining > 0) {
       receivablesTotal += remaining;
