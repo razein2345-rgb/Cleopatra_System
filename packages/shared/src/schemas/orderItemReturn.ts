@@ -9,7 +9,12 @@ import { z } from 'zod';
  */
 export const orderItemReturnSchema = z.object({
   id: z.string().uuid(),
-  orderItemId: z.string().uuid(),
+  orderId: z.string().uuid(),
+  // Accounting fix (2026-09-17) — nullable now: an order edit detaches a
+  // return from its (deleted-and-recreated) OrderItem, but the return row
+  // itself survives (see the Prisma schema's own doc comment on this FK).
+  // `orderId` above always identifies which order it belongs to.
+  orderItemId: z.string().uuid().nullable(),
   quantity: z.number(),
   refundAmount: z.number(),
   reason: z.string().nullable(),

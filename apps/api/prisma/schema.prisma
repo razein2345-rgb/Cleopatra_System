@@ -2075,6 +2075,14 @@ model Order {
   attachments      Attachment[]
   quotationOrigin  Quotation?        @relation("QuotationConversion")
   purchaseRequests PurchaseRequest[]
+  /// Accounting fix (2026-09-17, order-return-history audit finding) —
+  /// a direct, denormalized order-level link so a return's history and its
+  /// contribution to `returnedTotal`/`netTotal` survive even after the
+  /// specific `OrderItem` it was recorded against is replaced by an order
+  /// edit (see `OrderItemReturn.orderItemId`'s own doc comment for why that
+  /// FK is now `SetNull` instead of `Cascade`). `mapOrderToDto` sums THIS
+  /// list (not just `items[].returns`) so an orphaned return still counts.
+  itemReturns      OrderItemReturn[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -2310,9 +2318,27 @@ model ItemSupplierTask {
 /// stays frozen); `returnedTotal`/`netTotal` are computed at read time from
 /// these rows, same discipline as `paidTotal`/`remainingBalance`.
 model OrderItemReturn {
-  id          String    @id @default(uuid()) @db.Uuid
-  orderItemId String    @db.Uuid
-  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Accounting fix (2026-09-17) — added so this row's own order (and thus
+  /// its contribution to `Order.returnedTotal`/`netTotal`) is always
+  /// traceable even after `orderItemId` below is nulled out. Required and
+  /// backfilled for every existing row from `orderItem.orderId` (100% of
+  /// historical rows have a live `orderItemId` today — the cascade-delete
+  /// bug this migration fixes has not yet had a chance to destroy any row).
+  orderId String @db.Uuid
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  /// Was `String` + `onDelete: Cascade`. `updateOrder`'s full item-replace
+  /// (deleteMany + recreate) used to cascade-hard-delete every return tied
+  /// to a replaced item, permanently destroying refund history and making
+  /// `netTotal` silently revert upward as if the refund never happened —
+  /// see this project's accounting audit (2026-09-17). Now nullable +
+  /// `SetNull`: an edit still detaches the return from its (deleted) item,
+  /// but the row itself, its quantity/refundAmount/reason, and its link to
+  /// `orderId` above all survive intact.
+  orderItemId String?    @db.Uuid
+  orderItem   OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
 
   quantity     Decimal @db.Decimal(14, 3)
   refundAmount Decimal @db.Decimal(12, 2)
@@ -2330,6 +2356,7 @@ model OrderItemReturn {
 
   createdAt DateTime @default(now())
 
+  @@index([orderId])
   @@index([orderItemId])
   @@index([branchId])
 }
