@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { ReportsOverview } from '@cleopatra/shared';
+import type { InventoryReconciliationRow, ReportsOverview } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,7 @@ import { downloadDocumentAsPdf } from '@/lib/documents/exportPdf';
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 const dateOnly = (iso: string) => new Date(iso).toLocaleDateString('ar-EG');
 
-type TabId = 'debts' | 'invoices' | 'expenses' | 'transfers' | 'purchases' | 'inventory' | 'employees';
+type TabId = 'debts' | 'invoices' | 'expenses' | 'transfers' | 'purchases' | 'inventory' | 'reconciliation' | 'employees';
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'debts', label: 'ديون العملاء' },
@@ -20,6 +20,7 @@ const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'transfers', label: 'التحويلات' },
   { id: 'purchases', label: 'المشتريات' },
   { id: 'inventory', label: 'المخزن' },
+  { id: 'reconciliation', label: 'مطابقة المخزون' },
   { id: 'employees', label: 'مدفوعات الموظفين' },
 ];
 
@@ -44,6 +45,12 @@ const EMPLOYEE_PAYMENT_KIND_LABELS: Record<'SALARY_PAYMENT' | 'EMPLOYEE_ADVANCE'
  */
 export function ReportsOverviewPage() {
   const [overview, setOverview] = useState<ReportsOverview | null>(null);
+  // Accounting audit fix (2026-09-17, Phase G — Inventory reconciliation) —
+  // unlike the other tabs above, this is a live snapshot of the current
+  // `StockLevel` vs. `StockMovement` state, not a `from`/`to`-scoped
+  // historical report, so it loads once on mount rather than refetching
+  // whenever the date filter changes.
+  const [reconciliation, setReconciliation] = useState<InventoryReconciliationRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -60,6 +67,11 @@ export function ReportsOverviewPage() {
   };
 
   useEffect(load, [from, to]);
+  useEffect(() => {
+    apiGet<InventoryReconciliationRow[]>('/api/inventory-items/reconciliation')
+      .then(setReconciliation)
+      .catch(() => setReconciliation([]));
+  }, []);
 
   if (error) return <div className="text-destructive">{error}</div>;
   if (!overview) return <div className="text-muted-foreground">جارٍ التحميل…</div>;
@@ -346,6 +358,69 @@ export function ReportsOverviewPage() {
                   )}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {tab === 'reconciliation' && (
+            <div className="space-y-3">
+              <p className="text-muted-foreground text-xs">
+                مقارنة حالية بين الرصيد الفعلي المخزّن لكل صنف/فرع وبين الرصيد المحسوب من سجل حركات المخزون بالكامل —
+                للمراجعة فقط، النظام لا يعدّل أي رصيد تلقائيًا من هنا.
+              </p>
+              <div className="border-border overflow-hidden rounded-2xl border">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="p-2 text-start">الصنف</th>
+                      <th className="p-2 text-start">الفرع</th>
+                      <th className="p-2 text-start">الرصيد الحالي</th>
+                      <th className="p-2 text-start">الرصيد المحسوب من الحركات</th>
+                      <th className="p-2 text-start">الفرق</th>
+                      <th className="p-2 text-start">الحالة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!reconciliation ? (
+                      <tr>
+                        <td colSpan={6} className="text-muted-foreground p-4 text-center">
+                          جارٍ التحميل…
+                        </td>
+                      </tr>
+                    ) : (
+                      <>
+                        {reconciliation.map((row) => (
+                          <tr
+                            key={`${row.inventoryItemId}-${row.branchId}`}
+                            className={`border-border border-t ${row.status === 'MISMATCH' ? 'bg-destructive/5' : ''}`}
+                          >
+                            <td className="p-2">{row.itemName}</td>
+                            <td className="p-2">{row.branchName}</td>
+                            <td className="p-2">{row.currentQuantityOnHand}</td>
+                            <td className="p-2">{row.calculatedQuantityFromMovements}</td>
+                            <td className={`p-2 ${row.status === 'MISMATCH' ? 'text-destructive font-semibold' : ''}`}>
+                              {row.difference > 0 ? `+${row.difference}` : row.difference}
+                            </td>
+                            <td className="p-2">
+                              {row.status === 'MISMATCH' ? (
+                                <span className="text-destructive font-semibold">⚠ فرق</span>
+                              ) : (
+                                <span className="text-success">مطابق</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {reconciliation.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="text-muted-foreground p-4 text-center">
+                              لا توجد أصناف في المخزون بعد.
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 

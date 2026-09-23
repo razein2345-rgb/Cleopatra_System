@@ -163,3 +163,34 @@ export type StockMovement = z.infer<typeof stockMovementSchema>;
 export type CreateStockMovementInput = z.infer<typeof createStockMovementSchema>;
 export type UpdateStockMovementInput = z.infer<typeof updateStockMovementSchema>;
 export type QuickInventorySaleInput = z.infer<typeof quickInventorySaleSchema>;
+
+/**
+ * Accounting audit fix (2026-09-17, Phase G — Inventory reconciliation).
+ * `StockLevel.quantityOnHand` is a materialized running total, updated
+ * incrementally by every stock-affecting write path; `StockMovement` is the
+ * append-only ledger those writes came from. In a correctly-working system
+ * the two always agree (`quantityOnHand` === the signed sum of every
+ * non-deleted movement for that item+branch); a mismatch here means either
+ * a bug in one of the increment call sites, or a movement that got
+ * soft-deleted after already being counted (or vice versa) — something a
+ * warehouse worker has no way to see today ("مقدرش يجاوب 'الرصيد ده نزل
+ * امتى وليه'" already describes the adjacent pain this report answers a
+ * different angle of). Deliberately READ-ONLY — this report exists to
+ * surface a discrepancy for a human to investigate, never to silently
+ * "correct" `StockLevel` itself (rule: no automatic inventory correction).
+ */
+export const inventoryReconciliationRowSchema = z.object({
+  inventoryItemId: z.string().uuid(),
+  itemName: z.string(),
+  branchId: z.string().uuid(),
+  branchName: z.string(),
+  /** The live, materialized `StockLevel.quantityOnHand` for this item+branch. */
+  currentQuantityOnHand: z.number(),
+  /** The signed sum of every non-deleted `StockMovement` for this item+branch (IN/ADJUSTMENT add, OUT subtracts) — what `currentQuantityOnHand` SHOULD equal if every increment was applied correctly. */
+  calculatedQuantityFromMovements: z.number(),
+  /** `currentQuantityOnHand - calculatedQuantityFromMovements`. Zero means the ledger and the materialized total agree. */
+  difference: z.number(),
+  status: z.enum(['MATCH', 'MISMATCH']),
+});
+
+export type InventoryReconciliationRow = z.infer<typeof inventoryReconciliationRowSchema>;

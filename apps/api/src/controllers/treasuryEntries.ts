@@ -109,7 +109,7 @@ export async function getTreasuryBalanceHandler(req: Request, res: Response) {
  * widening to branches outside that set, never a hard 403 for the
  * omitted/combined case since that's the normal default view).
  */
-function resolveBranchScope(auth: AuthenticatedUser, canSeeTotals: boolean, requestedBranchId: string | undefined): string | string[] | undefined {
+export function resolveBranchScope(auth: AuthenticatedUser, canSeeTotals: boolean, requestedBranchId: string | undefined): string | string[] | undefined {
   if (!canSeeTotals) return auth.branchId;
   if (auth.roleNames.includes('SUPER_ADMIN')) return requestedBranchId;
   if (requestedBranchId && auth.accessibleBranchIds.includes(requestedBranchId)) return requestedBranchId;

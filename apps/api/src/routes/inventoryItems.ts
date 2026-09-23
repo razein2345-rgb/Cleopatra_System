@@ -7,6 +7,7 @@ import {
   deleteStockMovementHandler,
   getInventoryItemByBarcodeHandler,
   getInventoryItemHandler,
+  getInventoryReconciliationReportHandler,
   listInventoryItemsHandler,
   listItemsNeedingSupplierHandler,
   listStockMovementsHandler,
@@ -25,6 +26,7 @@ inventoryItemsRouter.use(requireAuth);
 // this codebase.
 inventoryItemsRouter.get('/', requirePermission('inventory.view'), listInventoryItemsHandler);
 inventoryItemsRouter.get('/needs-supplier', requirePermission('inventory.view'), listItemsNeedingSupplierHandler);
+inventoryItemsRouter.get('/reconciliation', requirePermission('inventory.view'), getInventoryReconciliationReportHandler);
 inventoryItemsRouter.get('/by-barcode/:barcode', requirePermission('inventory.view'), getInventoryItemByBarcodeHandler);
 inventoryItemsRouter.get('/:id', requirePermission('inventory.view'), getInventoryItemHandler);
 inventoryItemsRouter.post('/', requirePermission('inventory.create'), createInventoryItemHandler);

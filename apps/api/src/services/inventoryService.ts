@@ -3,6 +3,7 @@ import type {
   CreateInventoryItemInput,
   CreateStockMovementInput,
   InventoryItem,
+  InventoryReconciliationRow,
   QuickInventorySaleInput,
   StockMovement,
   TreasuryEntry,
@@ -136,6 +137,72 @@ export async function listInventoryItems(): Promise<InventoryItem[]> {
 export async function listItemsNeedingSupplier(): Promise<InventoryItem[]> {
   const items = await listInventoryItems();
   return items.filter((item) => item.isLowStock || item.quantityOnHand < 0);
+}
+
+/**
+ * Accounting audit fix (2026-09-17, Phase G — Inventory reconciliation).
+ * `StockLevel.quantityOnHand` (the materialized total every read path uses)
+ * is supposed to always equal the signed sum of every non-deleted
+ * `StockMovement` for that item+branch — every write path that touches one
+ * touches the other in the same transaction (see `createStockMovementTx`,
+ * `updateStockMovement`, `deleteStockMovement`). This report recomputes
+ * that sum independently and compares it against the live materialized
+ * value, per item+branch, to surface any drift for a human to investigate.
+ *
+ * Deliberately READ-ONLY: it never writes to `StockLevel` or
+ * `StockMovement`, even when it finds a mismatch. Silently "fixing"
+ * `quantityOnHand` here would risk masking a real bug (or, worse,
+ * "correcting" a genuinely accurate figure because the recomputation itself
+ * has a bug) — a warehouse discrepancy is a business decision for a human
+ * to resolve, not something safe to auto-resolve from a report endpoint.
+ */
+export async function getInventoryReconciliationReport(
+  branchId?: string | string[],
+): Promise<InventoryReconciliationRow[]> {
+  const branchWhere = branchId ? { branchId: Array.isArray(branchId) ? { in: branchId } : branchId } : {};
+  const stockLevels = await prisma.stockLevel.findMany({
+    where: { inventoryItem: { isDeleted: false }, ...branchWhere },
+    include: { inventoryItem: { select: { name: true } }, branch: { select: { name: true } } },
+  });
+  if (stockLevels.length === 0) return [];
+
+  const itemIds = [...new Set(stockLevels.map((sl) => sl.inventoryItemId))];
+  const grouped = await prisma.stockMovement.groupBy({
+    by: ['inventoryItemId', 'branchId', 'type'],
+    where: { inventoryItemId: { in: itemIds }, isDeleted: false, ...branchWhere },
+    _sum: { quantity: true },
+  });
+
+  const calculatedByKey = new Map<string, number>();
+  for (const g of grouped) {
+    const key = `${g.inventoryItemId}|${g.branchId}`;
+    const qty = g._sum.quantity?.toNumber() ?? 0;
+    const delta = g.type === 'OUT' ? -qty : qty;
+    calculatedByKey.set(key, (calculatedByKey.get(key) ?? 0) + delta);
+  }
+
+  const rows: InventoryReconciliationRow[] = stockLevels.map((sl) => {
+    const calculatedQuantityFromMovements = calculatedByKey.get(`${sl.inventoryItemId}|${sl.branchId}`) ?? 0;
+    const currentQuantityOnHand = sl.quantityOnHand.toNumber();
+    // Rounding-safe: Decimal(14,3) columns can carry sub-thousandth drift
+    // from repeated increment/decrement float coercion that isn't a real
+    // discrepancy — anything under half the smallest stored unit is a match.
+    const difference = Math.round((currentQuantityOnHand - calculatedQuantityFromMovements) * 1000) / 1000;
+    return {
+      inventoryItemId: sl.inventoryItemId,
+      itemName: sl.inventoryItem.name,
+      branchId: sl.branchId,
+      branchName: sl.branch.name,
+      currentQuantityOnHand,
+      calculatedQuantityFromMovements,
+      difference,
+      status: difference === 0 ? 'MATCH' : 'MISMATCH',
+    };
+  });
+
+  // Mismatches first (largest drift first) so a reviewer sees what needs attention without scrolling past hundreds of clean rows.
+  rows.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
+  return rows;
 }
 
 /** POS scan-to-add (system_specifications_v2.md §12.5, second pass 2026-08-16) — exact lookup by the scanner's raw input, `barcode` being `@unique` makes this O(1). */

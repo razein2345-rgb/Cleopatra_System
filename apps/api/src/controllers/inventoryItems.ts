@@ -14,6 +14,7 @@ import {
   DuplicateBarcodeError,
   getInventoryItem,
   getInventoryItemByBarcode,
+  getInventoryReconciliationReport,
   InventoryItemInUseError,
   InventoryItemNotFoundError,
   listInventoryItems,
@@ -26,6 +27,7 @@ import {
   updateInventoryItem,
   updateStockMovement,
 } from '../services/inventoryService.js';
+import { resolveBranchScope } from './treasuryEntries.js';
 import { DayClosedError } from '../services/treasuryService.js';
 import { recordAudit } from '../services/auditService.js';
 import { rejectCostPriceWrite, stripCostPrice, stripCostPriceList } from '../lib/costPriceGuard.js';
@@ -64,6 +66,22 @@ export async function listInventoryItemsHandler(req: Request, res: Response) {
 export async function listItemsNeedingSupplierHandler(req: Request, res: Response) {
   const items = await listItemsNeedingSupplier();
   res.json({ success: true, data: stripCostPriceList(items, req.auth!) });
+}
+
+/**
+ * Accounting audit fix (2026-09-17, Phase G — Inventory reconciliation).
+ * Read-only diagnostic: compares the live `StockLevel.quantityOnHand`
+ * against what the `StockMovement` ledger says it should be, per
+ * item+branch, so a mismatch is visible to investigate instead of silent.
+ * Same branch-scoping convention as the other cross-branch reports
+ * (`listSuppliersHandler`) — a non-Super-Admin never sees a branch outside
+ * their own accessible set, and never a blank company-wide query either.
+ */
+export async function getInventoryReconciliationReportHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const requestedBranchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+  const rows = await getInventoryReconciliationReport(resolveBranchScope(auth, true, requestedBranchId));
+  res.json({ success: true, data: rows });
 }
 
 /** POS scan-to-add — exact match by barcode, not a fuzzy search (the scanner's raw input is the lookup key). */
