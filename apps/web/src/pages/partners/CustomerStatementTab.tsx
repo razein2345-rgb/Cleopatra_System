@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { Order } from '@cleopatra/shared';
+import { businessDayRangeUtc } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -57,10 +58,21 @@ export function CustomerStatementTab({ partnerId, partnerName }: { partnerId: st
   if (error) return <div className="text-destructive text-sm">{error}</div>;
   if (!orders) return <div className="text-muted-foreground text-sm">جارٍ التحميل…</div>;
 
+  // Accounting audit fix (2026-09-17, §21) — was comparing `o.date`
+  // (a real UTC timestamp) against the raw "YYYY-MM-DD" strings from these
+  // date inputs, which JS/string-comparison treats as UTC midnight, not
+  // Cairo midnight — the same class of bug already fixed on the backend
+  // (`businessDayRangeUtc`, now shared via `@cleopatra/shared` so this is
+  // the exact same implementation, not a second one). An order made in
+  // the first ~2-3 Cairo-hours of a selected day could be silently
+  // excluded from `from`, or a `to` filter could cut off almost the whole
+  // Cairo day, before this fix.
+  const fromRange = from ? businessDayRangeUtc(from) : null;
+  const toRange = to ? businessDayRangeUtc(to) : null;
   const filtered = orders
     .filter((o) => o.status !== 'CANCELLED')
-    .filter((o) => !from || o.date >= from)
-    .filter((o) => !to || o.date <= `${to}T23:59:59.999Z`)
+    .filter((o) => !fromRange || new Date(o.date).getTime() >= fromRange.start.getTime())
+    .filter((o) => !toRange || new Date(o.date).getTime() <= toRange.end.getTime())
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   const totalBilled = filtered.reduce((sum, o) => sum + o.finalTotal, 0);

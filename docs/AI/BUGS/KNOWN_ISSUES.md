@@ -382,15 +382,23 @@ in the working tree.
 it happens to share `getSalesSummary` with an in-scope change (this
 review needed to switch the function's returns calculation from
 `items[].returns` to the new `order.itemReturns` relation) purely by
-coincidence. Also worth noting: `todayInBusinessTimezone` itself is
-currently only reachable through an uncommitted `export * from
-'./businessTimezone.js';` line in `packages/shared/src/index.ts` — the
-fix can't be committed on its own without also resolving that export gap.
+coincidence.
 
-**What closes this gap:** a dedicated review of this timezone fix (and
-the `businessTimezone.js` barrel-export gap it depends on) getting its
-own narrow commit — likely alongside or shortly after `businessDayRangeUtc`'s
-own precedent, since both are the same class of fix.
+**Correction (2026-09-24):** this entry originally claimed the fix
+"can't be committed on its own" because `todayInBusinessTimezone` was
+only reachable through an uncommitted `packages/shared` barrel-export
+line — that was wrong. `orderService.ts` imports `todayInBusinessTimezone`
+directly from `../lib/businessTimezone.js` (the API's own lib), which
+already had the full, real implementation committed at HEAD long before
+this review — the `packages/shared` move (Unit 5 of the 2026-09-17 audit
+mapping, since committed) was only ever needed to let the *frontend*
+(`CustomerStatementTab.tsx`) reuse the same logic, and never blocked this
+backend fix. No real dependency existed.
+
+**What closes this gap:** a dedicated review of this timezone fix on its
+own narrow commit — likely alongside or shortly after
+`businessDayRangeUtc`'s own precedent, since both are the same class of
+fix.
 
 ---
 
