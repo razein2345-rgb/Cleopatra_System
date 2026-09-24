@@ -500,3 +500,39 @@ map built for this review series.
 deferred Decimal-precision fixes into one dedicated review (same
 underlying pattern, same fix shape, different files) rather than treating
 it as an eighth standalone unit.
+
+---
+
+## `GET /api/branches` has no permission gate — reviewed, deliberate exposure, NOT a bug
+
+**Reviewed:** 2026-09-25, after the owner flagged it while the Cutover
+"Branch ID" selector was being wired to it. **Owner decision: leave as is.**
+
+**What it is:** `routes/branches.ts` puts `GET /` behind `requireAuth` only
+(any logged-in staff member, no specific permission). Its own doc comment in
+`controllers/branches.ts` states this is intentional: branch name/code is
+low-sensitivity reference data needed by several screens regardless of what
+else a user can do. It returns `BRANCH_SELECT` only — id, name, code,
+address, logo/stamp URLs, phone/landline/email/Facebook, tagline — the same
+identity/contact details already printed on every invoice and quotation.
+No financial data. Writes (POST/PUT/DELETE) are gated by `settings.edit`.
+
+**Why it is not gated (so nobody re-discovers it as a bug):**
+- ~26 web call sites depend on it for every role: `Topbar` (every page),
+  the dashboard widgets, POS, `NewOrderPage`, the letterhead/stamp on
+  `OrderDocumentPage`/`QuotationDocumentPage`/both work-order document
+  pages, Partners, Suppliers, Leads, Call Center, Campaigns, etc. Many
+  callers swallow errors (`.catch(() => [])`), so a gate would degrade
+  silently (empty selectors, missing letterheads) rather than fail loudly.
+- No single existing permission is held by exactly the users who need it.
+- Clamping the result to `accessibleBranchIds` would also break the
+  users/branch-access-grant screens (admins need the full list to grant
+  access) and the letterhead of documents belonging to other branches.
+
+**Contrast with the earlier gaps** (supplier payments, advances, category
+totals): those exposed or allowed writing another branch's *financial*
+data. This exposes only what every employee already sees on paper.
+
+**Reopen this only if** the endpoint ever starts returning anything beyond
+public-facing branch identity/contact fields (e.g., a treasury balance, a
+cost, an internal note) — then it must be gated or field-trimmed.
