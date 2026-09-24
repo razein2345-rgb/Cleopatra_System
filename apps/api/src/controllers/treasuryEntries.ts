@@ -320,7 +320,7 @@ export async function updateTreasuryEntryHandler(req: Request<{ id: string }>, r
 
   let updated;
   try {
-    updated = await updateManualTreasuryEntry(req.params.id, input);
+    updated = await updateManualTreasuryEntry(req.params.id, input, auth.staffId);
   } catch (err) {
     if (handleServiceError(err, res)) return;
     throw err;

@@ -337,46 +337,65 @@ export async function createManualTreasuryEntry(
   input: CreateTreasuryEntryInput,
   staffId: string,
 ): Promise<TreasuryEntry> {
-  await assertBranchDayNotClosed(input.branchId, input.date);
+  return withBranchDayLock(input.branchId, dateOnly(input.date), async (tx) => {
+    await assertBranchDayNotClosed(input.branchId, input.date, tx);
 
-  const created = await prisma.treasuryEntry.create({
-    data: {
-      type: input.type,
-      amount: input.amount,
-      method: input.method,
-      category: input.category ?? null,
-      note: input.note ?? null,
-      date: new Date(input.date),
-      sourceType: 'MANUAL',
-      branchId: input.branchId,
-      partnerId: input.partnerId ?? null,
-      staffId,
-    },
+    const created = await tx.treasuryEntry.create({
+      data: {
+        type: input.type,
+        amount: input.amount,
+        method: input.method,
+        category: input.category ?? null,
+        note: input.note ?? null,
+        date: new Date(input.date),
+        sourceType: 'MANUAL',
+        branchId: input.branchId,
+        partnerId: input.partnerId ?? null,
+        staffId,
+      },
+    });
+    return mapTreasuryEntryToDto(created);
   });
-  return mapTreasuryEntryToDto(created);
 }
 
+/**
+ * Final accounting audit (2026-09-17) — this was the one manual-entry write
+ * path with NO closed-day protection at all: a MANUAL entry could be edited
+ * after its branch+day was closed, silently drifting the already-committed
+ * `TreasuryDayClosure` snapshot (totals computed at close time) away from
+ * the live ledger, with no error and no visible trace. Every sibling
+ * "correction to money that already happened" path in this codebase
+ * (`supplierLedgerService.updatePayment`, `expenseService.updateExpense`)
+ * already uses `reopenDayIfClosed` for exactly this situation — reused here
+ * rather than inventing a second rule. Wrapped in the same
+ * `withBranchDayLock` used for the other day-closure-state mutations in
+ * this file, since this now reads-then-writes `TreasuryDayClosure` too.
+ */
 export async function updateManualTreasuryEntry(
   id: string,
   input: UpdateTreasuryEntryInput,
+  performedBy: string,
 ): Promise<TreasuryEntry> {
   const existing = await prisma.treasuryEntry.findUnique({ where: { id } });
   if (!existing || existing.isDeleted) throw new TreasuryEntryNotFoundError();
   if (existing.sourceType !== 'MANUAL') throw new ManualEntryOnlyError();
 
-  const updated = await prisma.treasuryEntry.update({
-    where: { id },
-    data: {
-      amount: input.amount,
-      method: input.method,
-      category: input.category,
-      note: input.note,
-      date: input.date ? new Date(input.date) : undefined,
-      partnerId: input.partnerId,
-      branchId: input.branchId,
-    },
+  return withBranchDayLock(existing.branchId, dateOnly(existing.date), async (tx) => {
+    const updated = await tx.treasuryEntry.update({
+      where: { id },
+      data: {
+        amount: input.amount,
+        method: input.method,
+        category: input.category,
+        note: input.note,
+        date: input.date ? new Date(input.date) : undefined,
+        partnerId: input.partnerId,
+        branchId: input.branchId,
+      },
+    });
+    await reopenDayIfClosed(existing.branchId, existing.date, performedBy, 'تعديل حركة خزينة يدوية', tx);
+    return mapTreasuryEntryToDto(updated);
   });
-  return mapTreasuryEntryToDto(updated);
 }
 
 export async function deleteManualTreasuryEntry(id: string, deletedBy: string): Promise<void> {
@@ -384,9 +403,12 @@ export async function deleteManualTreasuryEntry(id: string, deletedBy: string): 
   if (!existing || existing.isDeleted) throw new TreasuryEntryNotFoundError();
   if (existing.sourceType !== 'MANUAL') throw new ManualEntryOnlyError();
 
-  await prisma.treasuryEntry.update({
-    where: { id },
-    data: { isDeleted: true, deletedAt: new Date(), deletedBy },
+  await withBranchDayLock(existing.branchId, dateOnly(existing.date), async (tx) => {
+    await tx.treasuryEntry.update({
+      where: { id },
+      data: { isDeleted: true, deletedAt: new Date(), deletedBy },
+    });
+    await reopenDayIfClosed(existing.branchId, existing.date, deletedBy, 'حذف حركة خزينة يدوية', tx);
   });
 }
 
@@ -417,6 +439,42 @@ function mapDayClosureToDto(record: Prisma.TreasuryDayClosureGetPayload<object>)
 function dateOnly(input?: Date | string): Date {
   const source = input ? new Date(input) : new Date();
   return new Date(Date.UTC(source.getUTCFullYear(), source.getUTCMonth(), source.getUTCDate()));
+}
+
+/**
+ * Accounting audit fix (2026-09-17, Phase F — Treasury concurrency). Every
+ * write path in this file that touches day-closure state follows a
+ * check-then-act shape: read whether the branch+date is closed, then write
+ * based on that read (`createManualTreasuryEntry`'s
+ * `assertBranchDayNotClosed`, `closeTreasuryDay`'s "already closed?" check,
+ * `reopenTreasuryDay`'s "is it actually closed?" check). Two concurrent
+ * requests for the SAME branch+date can both pass the read before either
+ * commits its write — e.g. two "close day" clicks both see no existing
+ * `TreasuryDayClosure` row and both attempt to create one (the second would
+ * only fail on the DB's own unique constraint, an ugly unhandled 500
+ * instead of the intended `DayAlreadyClosedError`), or a manual entry
+ * slipping in between a reopen's read and its write.
+ *
+ * Smallest DB-safe fix, no Treasury redesign: the exact
+ * `pg_advisory_xact_lock` pattern already used in `posService.ts`'s
+ * `getOrCreateWalkInPartner` for the same class of race, scoped here to
+ * `branchId + date` instead of just `branchId` (different branches, or
+ * different days for the same branch, never contend with each other). The
+ * lock is transaction-scoped — Postgres releases it automatically at
+ * commit/rollback, so every check-then-act sequence protected by it must
+ * run inside the `tx` this passes to `fn`, not against the bare `prisma`
+ * client.
+ */
+async function withBranchDayLock<T>(
+  branchId: string,
+  date: Date,
+  fn: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    const lockKey = `${branchId}:${date.toISOString().slice(0, 10)}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+    return fn(tx);
+  });
 }
 
 export class DayAlreadyClosedError extends Error {
@@ -492,10 +550,11 @@ export async function reopenDayIfClosed(
 async function computeCashFlows(
   branchId: string,
   date: Date,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
 ): Promise<{ inflows: number; outflows: number; entryCount: number }> {
   const startOfDay = date;
   const endOfDay = new Date(date.getTime() + 24 * 60 * 60 * 1000 - 1);
-  const grouped = await prisma.treasuryEntry.groupBy({
+  const grouped = await client.treasuryEntry.groupBy({
     by: ['type'],
     where: { isDeleted: false, branchId, method: 'CASH', date: { gte: startOfDay, lte: endOfDay } },
     _sum: { amount: true },
@@ -527,26 +586,33 @@ async function computeCashFlows(
  * unaffected. A branch with no `CutoverRecord` at all behaves exactly as
  * today (returns 0) — full backward compatibility, by construction.
  */
-async function getCutoverCashSeed(branchId: string): Promise<number> {
-  const cutover = await prisma.cutoverRecord.findFirst({
+async function getCutoverCashSeed(
+  branchId: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<number> {
+  const cutover = await client.cutoverRecord.findFirst({
     where: { branchId, isSuperseded: false, status: 'ACTIVE' },
   });
   if (!cutover) return 0;
 
-  const cashOpening = await prisma.treasuryOpening.findUnique({
+  const cashOpening = await client.treasuryOpening.findUnique({
     where: { cutoverId_method: { cutoverId: cutover.id, method: 'CASH' } },
   });
   return cashOpening?.amount.toNumber() ?? 0;
 }
 
 /** The counted cash left in the drawer at the last *actually closed* (not currently reopened) prior day for this branch — 0 if the branch has never closed a day before. */
-async function getCarryForwardOpeningBalance(branchId: string, beforeDate: Date): Promise<number> {
-  const previous = await prisma.treasuryDayClosure.findFirst({
+async function getCarryForwardOpeningBalance(
+  branchId: string,
+  beforeDate: Date,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<number> {
+  const previous = await client.treasuryDayClosure.findFirst({
     where: { branchId, date: { lt: beforeDate }, isOpen: false },
     orderBy: { date: 'desc' },
   });
   if (previous) return previous.actualCountedCash.toNumber();
-  return getCutoverCashSeed(branchId);
+  return getCutoverCashSeed(branchId, client);
 }
 
 /** The live numbers for today (or any not-yet-closed day) before the employee commits a close — same math `closeTreasuryDay` persists, computed fresh on every call. */
@@ -586,38 +652,40 @@ export async function closeTreasuryDay(
   isAutoClosed = false,
 ): Promise<TreasuryDayClosure> {
   const date = dateOnly();
-  const existing = await prisma.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
-  if (existing && !existing.isOpen) throw new DayAlreadyClosedError();
+  return withBranchDayLock(branchId, date, async (tx) => {
+    const existing = await tx.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
+    if (existing && !existing.isOpen) throw new DayAlreadyClosedError();
 
-  const openingBalance = await getCarryForwardOpeningBalance(branchId, date);
-  const { inflows, outflows, entryCount } = await computeCashFlows(branchId, date);
-  const expectedClosingBalance = openingBalance + inflows - outflows;
-  const difference = actualCountedCash - expectedClosingBalance;
+    const openingBalance = await getCarryForwardOpeningBalance(branchId, date, tx);
+    const { inflows, outflows, entryCount } = await computeCashFlows(branchId, date, tx);
+    const expectedClosingBalance = openingBalance + inflows - outflows;
+    const difference = actualCountedCash - expectedClosingBalance;
 
-  const data = {
-    branchId,
-    date,
-    openingBalance,
-    totalInflows: inflows,
-    totalOutflows: outflows,
-    expectedClosingBalance,
-    actualCountedCash,
-    difference,
-    entryCountAtClose: entryCount,
-    notes: notes ?? null,
-    closedById: staffId,
-    closedAt: new Date(),
-    isOpen: false,
-    reopenedById: null,
-    reopenedAt: null,
-    reopenReason: null,
-    isAutoClosed,
-  };
+    const data = {
+      branchId,
+      date,
+      openingBalance,
+      totalInflows: inflows,
+      totalOutflows: outflows,
+      expectedClosingBalance,
+      actualCountedCash,
+      difference,
+      entryCountAtClose: entryCount,
+      notes: notes ?? null,
+      closedById: staffId,
+      closedAt: new Date(),
+      isOpen: false,
+      reopenedById: null,
+      reopenedAt: null,
+      reopenReason: null,
+      isAutoClosed,
+    };
 
-  const result = existing
-    ? await prisma.treasuryDayClosure.update({ where: { id: existing.id }, data })
-    : await prisma.treasuryDayClosure.create({ data });
-  return mapDayClosureToDto(result);
+    const result = existing
+      ? await tx.treasuryDayClosure.update({ where: { id: existing.id }, data })
+      : await tx.treasuryDayClosure.create({ data });
+    return mapDayClosureToDto(result);
+  });
 }
 
 /** Unlocks new entries for an already-closed branch+date. Gated at the controller layer to SUPER_ADMIN/ADMIN only, per the owner's "Reopening should require the appropriate authorized permission" — a stricter bar than closing itself (which any `treasury.create` holder can do). */
@@ -628,14 +696,16 @@ export async function reopenTreasuryDay(
   reason: string,
 ): Promise<TreasuryDayClosure> {
   const date = dateOnly(forDate);
-  const existing = await prisma.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
-  if (!existing || existing.isOpen) throw new DayNotClosedError();
+  return withBranchDayLock(branchId, date, async (tx) => {
+    const existing = await tx.treasuryDayClosure.findUnique({ where: { branchId_date: { branchId, date } } });
+    if (!existing || existing.isOpen) throw new DayNotClosedError();
 
-  const updated = await prisma.treasuryDayClosure.update({
-    where: { id: existing.id },
-    data: { isOpen: true, reopenedById: staffId, reopenedAt: new Date(), reopenReason: reason },
+    const updated = await tx.treasuryDayClosure.update({
+      where: { id: existing.id },
+      data: { isOpen: true, reopenedById: staffId, reopenedAt: new Date(), reopenReason: reason },
+    });
+    return mapDayClosureToDto(updated);
   });
-  return mapDayClosureToDto(updated);
 }
 
 /** Null when today hasn't been closed yet for this branch — the normal, default state. */
@@ -656,20 +726,30 @@ export async function getTodayClosure(branchId: string): Promise<TreasuryDayClos
  * list. `entries with category: null` are simply excluded — there's no
  * catalog row to attribute them to.
  */
-export async function getTreasuryCategoryTotals(): Promise<TreasuryCategoryTotal[]> {
+/**
+ * Accounting audit fix (2026-09-17) — this was the one aggregate in this
+ * file the 2026-09-07 branch-isolation pass missed: it always summed
+ * across every branch, so a branch-scoped `treasury.view` holder (e.g.
+ * CASHIER) could see company-wide category totals. `branchId` follows the
+ * exact same optional single-or-array convention as `getTreasuryBalance`
+ * above — the controller resolves it via `resolveBranchScope` before
+ * calling this, same as every other branch-scoped read in this file.
+ */
+export async function getTreasuryCategoryTotals(branchId?: string | string[]): Promise<TreasuryCategoryTotal[]> {
+  const branchWhere = Array.isArray(branchId) ? { branchId: { in: branchId } } : branchId ? { branchId } : {};
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
   const [allTime, thisMonth] = await Promise.all([
     prisma.treasuryEntry.groupBy({
       by: ['category'],
-      where: { isDeleted: false, category: { not: null } },
+      where: { isDeleted: false, category: { not: null }, ...branchWhere },
       _sum: { amount: true },
       _count: true,
     }),
     prisma.treasuryEntry.groupBy({
       by: ['category'],
-      where: { isDeleted: false, category: { not: null }, date: { gte: startOfMonth } },
+      where: { isDeleted: false, category: { not: null }, date: { gte: startOfMonth }, ...branchWhere },
       _sum: { amount: true },
     }),
   ]);

@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { mapTreasuryCategoryToDto } from '../services/treasuryCategoryService.js';
 import { getTreasuryCategoryTotals } from '../services/treasuryService.js';
 import { recordAudit } from '../services/auditService.js';
+import { resolveBranchScope } from './treasuryEntries.js';
 
 async function loadCategoryOr404(id: string, res: Response) {
   const category = await prisma.treasuryCategory.findUnique({ where: { id } });
@@ -22,9 +23,23 @@ export async function listTreasuryCategories(_req: Request, res: Response) {
   res.json({ success: true, data: categories.map(mapTreasuryCategoryToDto) });
 }
 
-/** Owner (2026-08-20) — إجمالي/شهري لكل تصنيف، لعرضه جنب كل تصنيف في شاشة الإدارة. Financial aggregate, gated stricter than the plain list (treasury.view, not orders/settings-level access). */
-export async function getTreasuryCategoryTotalsHandler(_req: Request, res: Response) {
-  const totals = await getTreasuryCategoryTotals();
+/**
+ * Owner (2026-08-20) — إجمالي/شهري لكل تصنيف، لعرضه جنب كل تصنيف في شاشة
+ * الإدارة. Financial aggregate, gated stricter than the plain list
+ * (treasury.view, not orders/settings-level access).
+ *
+ * Accounting audit fix (2026-09-17) — this was previously unscoped by
+ * branch (the one aggregate in the Treasury area the 2026-09-07
+ * branch-isolation pass missed), letting a branch-scoped `treasury.view`
+ * holder see company-wide category totals. Same `resolveBranchScope`
+ * pattern as `getTreasuryBalanceHandler` — Super Admin sees whatever
+ * `?branchId=` requests (or everything if omitted); everyone else is
+ * clamped to their own `accessibleBranchIds`.
+ */
+export async function getTreasuryCategoryTotalsHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const requestedBranchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+  const totals = await getTreasuryCategoryTotals(resolveBranchScope(auth, true, requestedBranchId));
   res.json({ success: true, data: totals });
 }
 
