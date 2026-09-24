@@ -13,9 +13,10 @@ export async function listOpenItemSupplierTasksHandler(_req: Request, res: Respo
 }
 
 export async function updateItemSupplierTaskHandler(req: Request<{ id: string }>, res: Response) {
+  const auth = req.auth!;
   const input = updateItemSupplierTaskSchema.parse(req.body);
   try {
-    const updated = await updateItemSupplierTask(req.params.id, input);
+    const updated = await updateItemSupplierTask(req.params.id, input, auth.staffId);
     res.json({ success: true, data: updated });
   } catch (err) {
     if (err instanceof ItemSupplierTaskNotFoundError) {
