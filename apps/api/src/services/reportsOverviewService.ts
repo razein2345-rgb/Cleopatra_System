@@ -50,7 +50,11 @@ export async function getReportsOverview(from?: Date, to?: Date): Promise<Report
         partner: { select: { nameAr: true } },
         finalTotal: true,
         payments: { where: { isDeleted: false }, select: { amount: true } },
-        items: { select: { returns: { select: { refundAmount: true } } } },
+        // Accounting fix (2026-09-17) — order-level relation, not
+        // `items[].returns`: a return whose OrderItem was later replaced by
+        // an order edit still belongs to this order and must still reduce
+        // the reported outstanding balance.
+        itemReturns: { select: { refundAmount: true } },
       },
     }),
     prisma.order.findMany({
@@ -62,7 +66,7 @@ export async function getReportsOverview(from?: Date, to?: Date): Promise<Report
         finalTotal: true,
         partner: { select: { nameAr: true } },
         payments: { where: { isDeleted: false }, select: { amount: true } },
-        items: { select: { returns: { select: { refundAmount: true } } } },
+        itemReturns: { select: { refundAmount: true } },
       },
       orderBy: { date: 'desc' },
     }),
@@ -134,10 +138,7 @@ export async function getReportsOverview(from?: Date, to?: Date): Promise<Report
   for (const order of ordersForDebt) {
     if (!order.partnerId || !order.partner) continue;
     const paid = order.payments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
-    const returned = order.items.reduce(
-      (sum, item) => sum + item.returns.reduce((s, r) => s + r.refundAmount.toNumber(), 0),
-      0,
-    );
+    const returned = order.itemReturns.reduce((sum, r) => sum + r.refundAmount.toNumber(), 0);
     const remaining = order.finalTotal.toNumber() - returned - paid;
     if (remaining <= 0) continue;
     const entry = debtByPartner.get(order.partnerId) ?? { nameAr: order.partner.nameAr, outstanding: 0 };
@@ -169,10 +170,7 @@ export async function getReportsOverview(from?: Date, to?: Date): Promise<Report
 
   const salesInvoiceRows = salesInvoices.map((order) => {
     const paid = order.payments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
-    const returned = order.items.reduce(
-      (sum, item) => sum + item.returns.reduce((s, r) => s + r.refundAmount.toNumber(), 0),
-      0,
-    );
+    const returned = order.itemReturns.reduce((sum, r) => sum + r.refundAmount.toNumber(), 0);
     return {
       orderId: order.id,
       invoiceNumber: order.invoiceNumber,
