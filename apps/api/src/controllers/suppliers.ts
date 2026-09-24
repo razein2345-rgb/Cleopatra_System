@@ -6,6 +6,7 @@ import {
   updateSupplierPurchaseSchema,
 } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 import {
   createPayment,
   createPurchase,
@@ -18,22 +19,31 @@ import {
   updatePurchase,
 } from '../services/supplierLedgerService.js';
 import { recordAudit } from '../services/auditService.js';
+import { resolveBranchScope } from './treasuryEntries.js';
+import { DayClosedError } from '../services/treasuryService.js';
 import { idempotencyKeyFromHeader, runIdempotent, sendIdempotencyError } from '../services/idempotencyService.js';
 
-export async function listSuppliersHandler(_req: Request, res: Response) {
-  res.json({ success: true, data: await listSuppliers() });
+export async function listSuppliersHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const requestedBranchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+  res.json({ success: true, data: await listSuppliers(resolveBranchScope(auth, true, requestedBranchId)) });
 }
 
-export async function getSupplierDebtOverviewHandler(_req: Request, res: Response) {
-  res.json({ success: true, data: await getSupplierDebtOverview() });
+export async function getSupplierDebtOverviewHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const requestedBranchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+  res.json({ success: true, data: await getSupplierDebtOverview(resolveBranchScope(auth, true, requestedBranchId)) });
 }
 
 export async function getSupplierStatementHandler(req: Request<{ id: string }>, res: Response) {
-  const { from, to } = req.query as { from?: string; to?: string };
+  const auth = req.auth!;
+  const { from, to } = req.query as { from?: string; to?: string; branchId?: string };
+  const requestedBranchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
   const statement = await getSupplierStatement(
     req.params.id,
     from ? new Date(from) : undefined,
     to ? new Date(to) : undefined,
+    resolveBranchScope(auth, true, requestedBranchId),
   );
   if (!statement) {
     res.status(404).json({ success: false, error: { message: 'Supplier not found' } });
@@ -50,6 +60,20 @@ async function assertSupplier(partnerId: string): Promise<boolean> {
   return Boolean(partner && !partner.isDeleted && partner.roles.includes('SUPPLIER'));
 }
 
+/**
+ * Accounting audit fix (2026-09-17, Decision 2/Fix D) — `SupplierPurchase`/
+ * `SupplierPayment` rows now carry a `branchId`, but a small number of
+ * pre-existing legacy rows have `null` there (an unmappable historical
+ * leftover — see the Prisma schema's own doc comment; never guessed). This
+ * mirrors `canAccessBranch` for the normal case, and — since nobody's
+ * branch-scoped access should implicitly extend to a record with no known
+ * branch — falls back to SUPER_ADMIN-only for that legacy edge case.
+ */
+function canAccessBranchOrLegacyNull(auth: Parameters<typeof canAccessBranch>[0], branchId: string | null): boolean {
+  if (branchId === null) return auth.roleNames.includes('SUPER_ADMIN');
+  return canAccessBranch(auth, branchId);
+}
+
 export async function createPurchaseHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
   if (!(await assertSupplier(req.params.id))) {
@@ -57,6 +81,10 @@ export async function createPurchaseHandler(req: Request<{ id: string }>, res: R
     return;
   }
   const input = createSupplierPurchaseSchema.parse(req.body);
+  if (!canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const purchase = await createPurchase(req.params.id, input, auth.staffId);
 
   await recordAudit({
@@ -65,6 +93,7 @@ export async function createPurchaseHandler(req: Request<{ id: string }>, res: R
     action: 'CREATE',
     performedById: auth.staffId,
     partnerId: req.params.id,
+    branchId: input.branchId,
     newValue: input,
   });
 
@@ -78,6 +107,10 @@ export async function updatePurchaseHandler(req: Request<{ purchaseId: string }>
     res.status(404).json({ success: false, error: { message: 'Purchase not found' } });
     return;
   }
+  if (!canAccessBranchOrLegacyNull(auth, existing.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const input = updateSupplierPurchaseSchema.parse(req.body);
   const updated = await updatePurchase(req.params.purchaseId, input);
 
@@ -87,6 +120,7 @@ export async function updatePurchaseHandler(req: Request<{ purchaseId: string }>
     action: 'UPDATE',
     performedById: auth.staffId,
     partnerId: existing.partnerId,
+    branchId: existing.branchId,
     previousValue: { amount: existing.amount.toNumber(), description: existing.description, date: existing.date },
     newValue: input,
   });
@@ -101,6 +135,10 @@ export async function deletePurchaseHandler(req: Request<{ purchaseId: string }>
     res.status(404).json({ success: false, error: { message: 'Purchase not found' } });
     return;
   }
+  if (!canAccessBranchOrLegacyNull(auth, existing.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   await softDeletePurchase(req.params.purchaseId, auth.staffId);
 
   await recordAudit({
@@ -109,6 +147,7 @@ export async function deletePurchaseHandler(req: Request<{ purchaseId: string }>
     action: 'DELETE',
     performedById: auth.staffId,
     partnerId: existing.partnerId,
+    branchId: existing.branchId,
   });
 
   res.json({ success: true, data: { id: req.params.purchaseId } });
@@ -121,6 +160,11 @@ export async function createPaymentHandler(req: Request<{ id: string }>, res: Re
     return;
   }
   const input = createSupplierPaymentSchema.parse(req.body);
+  if (!canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
+
   // Accounting audit fix (2026-09-17, Phase 3 E) — a repeated submission
   // of the same supplier payment must not create a second SupplierPayment
   // + a second Treasury OUT for it. Optional header, backward compatible.
@@ -142,6 +186,7 @@ export async function createPaymentHandler(req: Request<{ id: string }>, res: Re
           action: 'CREATE',
           performedById: auth.staffId,
           partnerId: req.params.id,
+          branchId: input.branchId,
           newValue: input,
         });
 
@@ -150,6 +195,10 @@ export async function createPaymentHandler(req: Request<{ id: string }>, res: Re
     );
   } catch (err) {
     if (sendIdempotencyError(err, res)) return;
+    if (err instanceof DayClosedError) {
+      res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
+      return;
+    }
     throw err;
   }
 
@@ -163,6 +212,10 @@ export async function updatePaymentHandler(req: Request<{ paymentId: string }>, 
     res.status(404).json({ success: false, error: { message: 'Payment not found' } });
     return;
   }
+  if (!canAccessBranchOrLegacyNull(auth, existing.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const input = updateSupplierPaymentSchema.parse(req.body);
   const updated = await updatePayment(req.params.paymentId, input);
 
@@ -172,7 +225,8 @@ export async function updatePaymentHandler(req: Request<{ paymentId: string }>, 
     action: 'UPDATE',
     performedById: auth.staffId,
     partnerId: existing.partnerId,
-    previousValue: { amount: existing.amount.toNumber(), note: existing.note, date: existing.date },
+    branchId: existing.branchId,
+    previousValue: { amount: existing.amount.toNumber(), note: existing.note, date: existing.date, method: existing.method },
     newValue: input,
   });
 
@@ -186,6 +240,10 @@ export async function deletePaymentHandler(req: Request<{ paymentId: string }>, 
     res.status(404).json({ success: false, error: { message: 'Payment not found' } });
     return;
   }
+  if (!canAccessBranchOrLegacyNull(auth, existing.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   await softDeletePayment(req.params.paymentId, auth.staffId);
 
   await recordAudit({
@@ -194,6 +252,7 @@ export async function deletePaymentHandler(req: Request<{ paymentId: string }>, 
     action: 'DELETE',
     performedById: auth.staffId,
     partnerId: existing.partnerId,
+    branchId: existing.branchId,
   });
 
   res.json({ success: true, data: { id: req.params.paymentId } });

@@ -203,6 +203,14 @@ enum TreasurySourceType {
   /// StockMovement via `restockForOrderItem`). See
   /// `TreasuryEntry.orderItemReturnId`.
   RETURN
+  /// Accounting audit fix (2026-09-17, Decision 1) — paying a supplier is
+  /// real cash leaving the business; before this, `SupplierPayment` never
+  /// posted anything to Treasury at all (a confirmed accounting gap, not a
+  /// deliberate design — the audit found zero existing `SupplierPayment`
+  /// rows in production, so there is no historical double-entry risk from
+  /// turning this on). Paired atomically with a `SupplierPayment`. See
+  /// `TreasuryEntry.supplierPaymentId`.
+  SUPPLIER_PAYMENT
   /// Accounting audit fix (2026-09-17, Decision 6 / Phase I) — a
   /// dedicated, ad-hoc business `Expense` (rent bill, a one-off purchase,
   /// a vendor invoice, ...) being marked PAID. Distinct from
@@ -480,9 +488,12 @@ model Branch {
   callLogs               CallLog[]
   contentCalendarEntries ContentCalendarEntry[]
   campaigns              Campaign[]
-  /// Accounting audit fix (2026-09-17, Decision 6 / Phase I) — a
-  /// dedicated business `Expense` may optionally be branch-scoped (null =
-  /// company-wide) — see that model's own doc comment.
+  /// Accounting audit fix (2026-09-17, Decision 2) — supplier
+  /// purchases/payments are now branch-scoped activity records (the
+  /// supplier master data itself, `BusinessPartner`, stays shared across
+  /// branches — see those models' own doc comments).
+  supplierPurchases      SupplierPurchase[]
+  supplierPayments       SupplierPayment[]
   expenses               Expense[]
   /// Opening State / Cutover (Phase 3B) — one branch may hold multiple
   /// CutoverRecord rows over its lifetime, but at most one non-superseded
@@ -2312,6 +2323,11 @@ model ItemSupplierTask {
   /// "free manual position" concept as `StageInstance.manualSortOrder`.
   sortOrder Int @default(0)
 
+  /// Accounting audit fix (2026-09-17, Decision 3) — the real payable this
+  /// task becomes once it reaches RECEIVED with a confirmed cost. See
+  /// `SupplierPurchase.itemSupplierTaskId`'s own doc comment.
+  supplierPurchase SupplierPurchase?
+
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   deletedBy String?   @db.Uuid
@@ -3189,6 +3205,11 @@ model TreasuryEntry {
   orderItemReturnId String?          @unique @db.Uuid
   orderItemReturn   OrderItemReturn? @relation(fields: [orderItemReturnId], references: [id], onDelete: SetNull)
 
+  /// `sourceType: 'SUPPLIER_PAYMENT'` only (Decision 1, 2026-09-17) — see
+  /// `SupplierPayment`'s own doc comment.
+  supplierPaymentId String?          @unique @db.Uuid
+  supplierPayment   SupplierPayment? @relation(fields: [supplierPaymentId], references: [id], onDelete: SetNull)
+
   /// `sourceType: 'EXPENSE_PAYMENT'` only (Decision 6 / Phase I, 2026-09-17)
   /// — see `Expense`'s own doc comment.
   expenseId String?  @unique @db.Uuid
@@ -3284,14 +3305,14 @@ model CommunicationHubLink {
 /// on the category catalog being complete, and existing free-text values
 /// keep working unchanged.
 model TreasuryCategory {
-  id       String  @id @default(uuid()) @db.Uuid
-  name     String  @unique
+  id                  String  @id @default(uuid()) @db.Uuid
+  name                String  @unique
   /// Owner (2026-09-13, POS "كتالوج التصنيفات") — a single emoji entered by
   /// the admin, purely visual (no icon library/lookup) — matches the plain
   /// text-field convention already used elsewhere in this project for
   /// user-facing emoji icons. Optional: a category with no icon just falls
   /// back to a generic one wherever it's rendered.
-  icon     String?
+  icon                String?
   /// Owner (2026-09-13) — explicit admin choice per category, NOT a name
   /// match on "طباعة"/"تصوير" (rejected as too fragile — breaks silently if
   /// the category is renamed). When true, POS's category catalog asks for
@@ -3300,7 +3321,7 @@ model TreasuryCategory {
   /// pair — same `MANUAL` pricing shape either way, just how the cashier is
   /// prompted for the numbers.
   calculateByQuantity Boolean @default(false)
-  isActive Boolean @default(true)
+  isActive            Boolean @default(true)
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -3679,15 +3700,45 @@ model SupplierPurchase {
   recordedById String       @db.Uuid
   recordedBy   StaffProfile @relation("SupplierPurchaseRecordedBy", fields: [recordedById], references: [id])
 
+  /// Accounting audit fix (2026-09-17, Decision 2) — the supplier ledger
+  /// initiative (tekmila 33-39) shipped without branch scoping on this
+  /// activity record at all (unlike almost every other financial model),
+  /// a real gap relative to the branch-isolation fixes already applied to
+  /// Treasury (tekmila 62/69). Nullable: the audit found exactly one
+  /// existing row, a self-labeled leftover live-test purchase
+  /// ("اختبار حي — هيتم حذفه فورًا", soft-deleted but never actually
+  /// purged) with no reliable way to attribute a branch — left `null`
+  /// rather than guessed, per this task's own "never assign a random
+  /// branch to an unmappable historical row" rule. The application layer
+  /// requires it on every NEW purchase going forward. The supplier
+  /// (`BusinessPartner`) itself stays shared/unscoped — only the activity
+  /// is branch-scoped.
+  branchId String? @db.Uuid
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
   /// Owner (2026-08-26, "هيتصمم ويتبعت للمورد... تتحسب تلقائي") — set only
   /// for a BOARDS_SIGNAGE Work Order's auto-created purchase (see
   /// `workflowInstanceService.ts`'s `maybeCreateBoardsSupplierPurchase`),
   /// never for a purchase entered by hand from the Suppliers page (those
   /// stay null). Doubles as the idempotency check that stops the same
   /// Work Order from being booked twice if its workflow re-enters the
-  /// EXTERNAL stage (a retry/failure loop).
+  /// EXTERNAL stage (a retry/failure loop) — accounting audit fix
+  /// (2026-09-17) narrowed this check to `isDeleted: false` only, so a
+  /// soft-deleted/voided auto-booking no longer permanently blocks a
+  /// legitimate re-booking.
   workOrderId String?    @db.Uuid
   workOrder   WorkOrder? @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+
+  /// Accounting audit fix (2026-09-17, Decision 3) — set only for a
+  /// purchase auto-booked from an `ItemSupplierTask` reaching `RECEIVED`
+  /// with a confirmed cost (see `itemSupplierTaskService.ts`). `@unique`
+  /// is the idempotency key for THIS mechanism specifically — one task can
+  /// never create more than one purchase — deliberately independent of
+  /// `workOrderId` above (a Work Order may hold several supplier tasks;
+  /// the two auto-booking mechanisms never share a key, so they can never
+  /// collide with each other).
+  itemSupplierTaskId String?           @unique @db.Uuid
+  itemSupplierTask   ItemSupplierTask? @relation(fields: [itemSupplierTaskId], references: [id], onDelete: SetNull)
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -3698,6 +3749,7 @@ model SupplierPurchase {
   @@index([partnerId])
   @@index([isDeleted])
   @@index([workOrderId])
+  @@index([branchId])
 }
 
 model SupplierPayment {
@@ -3708,8 +3760,28 @@ model SupplierPayment {
   note      String?
   date      DateTime
 
+  /// Accounting audit fix (2026-09-17, Decision 1) — needed so this
+  /// payment can be paired with a real `TreasuryEntry` (which always needs
+  /// a wallet). Nullable: the audit found exactly one existing row — a
+  /// soft-deleted leftover live-test payment from the same verification
+  /// session as `SupplierPurchase`'s own leftover row — with no method on
+  /// record and no safe way to infer one; left `null` rather than guessed,
+  /// same "nullable for historical rows predating this column" precedent
+  /// `TreasuryEntry.method` already established. The application layer
+  /// requires it on every NEW payment going forward.
+  method PaymentMethod?
+
+  /// Accounting audit fix (2026-09-17, Decision 2) — same branch-scoping
+  /// fix as `SupplierPurchase.branchId` above; see its doc comment.
+  branchId String? @db.Uuid
+  branch   Branch? @relation(fields: [branchId], references: [id])
+
   recordedById String       @db.Uuid
   recordedBy   StaffProfile @relation("SupplierPaymentRecordedBy", fields: [recordedById], references: [id])
+
+  /// Accounting audit fix (2026-09-17, Decision 1) — the real cash-outflow
+  /// consequence of this payment. See `TreasuryEntry.supplierPaymentId`.
+  treasuryEntry TreasuryEntry?
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -3719,6 +3791,7 @@ model SupplierPayment {
 
   @@index([partnerId])
   @@index([isDeleted])
+  @@index([branchId])
 }
 
 enum ExpenseStatus {

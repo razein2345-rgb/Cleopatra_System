@@ -79,16 +79,33 @@ async function maybeCreateBoardsSupplierPurchase(
     select: {
       workOrderNumber: true,
       productionTrack: true,
+      branchId: true,
       items: { select: { breakdown: true } },
     },
   });
   if (!workOrder || workOrder.productionTrack !== 'BOARDS_SIGNAGE') return;
 
-  const alreadyBooked = await tx.supplierPurchase.findFirst({ where: { workOrderId }, select: { id: true } });
+  // Accounting audit fix (2026-09-17, Fix E) — narrowed to `isDeleted:
+  // false` only. Before this, a soft-deleted/voided auto-booking (e.g. a
+  // staff member mistakenly deletes it from the Suppliers page) would
+  // permanently block any future legitimate re-booking for this work
+  // order, since the guard treated ANY row — deleted or not — as "already
+  // booked." Does not change the "one active booking per work order"
+  // guarantee: a non-deleted row still blocks a second one.
+  const alreadyBooked = await tx.supplierPurchase.findFirst({ where: { workOrderId, isDeleted: false }, select: { id: true } });
   if (alreadyBooked) return;
 
   const totalSupplierCost = workOrder.items.reduce((sum, item) => {
-    const breakdown = item.breakdown as { supplierCost?: number } | null;
+    const breakdown = item.breakdown as { supplierCost?: number; boardsCatalogItemId?: string } | null;
+    // Accounting audit fix (2026-09-17) — a catalog item (`boardsCatalogItemId`
+    // set) is exclusively owned by the PurchaseRequest mechanism
+    // (`createBoardsCatalogPurchaseRequests`/`markPurchaseRequestPurchased`,
+    // kind BOARDS_PURCHASE/BOARDS_ASSEMBLY), which already books its own
+    // SupplierPurchase for these items independently of this function. This
+    // function books the size-priced (non-catalog) boards items only —
+    // excluding catalog items here prevents the same real-world purchase
+    // from being counted (and paid) twice across the two mechanisms.
+    if (breakdown?.boardsCatalogItemId) return sum;
     return sum + (typeof breakdown?.supplierCost === 'number' ? breakdown.supplierCost : 0);
   }, 0);
   if (totalSupplierCost <= 0) return;
@@ -101,6 +118,7 @@ async function maybeCreateBoardsSupplierPurchase(
       date: new Date(),
       recordedById: performedById,
       workOrderId,
+      branchId: workOrder.branchId,
     },
   });
 }

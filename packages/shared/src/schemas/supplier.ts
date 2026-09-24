@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { paymentMethodSchema } from './partnerCommercialProfile.js';
 
 /**
  * الموردين — جزء 3 من مبادرة "فصل الخزينة/الربح بالفرع + الموردين +
@@ -20,6 +21,12 @@ export const supplierPurchaseSchema = z.object({
   description: z.string().nullable(),
   date: z.string(),
   recordedById: z.string().uuid(),
+  // Accounting audit fix (2026-09-17, Decision 2) — nullable at the schema
+  // level because exactly one pre-existing leftover test row has no branch
+  // on record (see the Prisma schema's own doc comment); every NEW
+  // purchase is required to set one — see `createSupplierPurchaseSchema`.
+  branchId: z.string().uuid().nullable(),
+  itemSupplierTaskId: z.string().uuid().nullable(),
   createdAt: z.string(),
 });
 export type SupplierPurchase = z.infer<typeof supplierPurchaseSchema>;
@@ -28,6 +35,7 @@ export const createSupplierPurchaseSchema = z.object({
   amount: z.number().positive(),
   description: z.string().trim().min(1).nullable().optional(),
   date: z.string(),
+  branchId: z.string().uuid(),
 });
 export type CreateSupplierPurchaseInput = z.infer<typeof createSupplierPurchaseSchema>;
 
@@ -45,6 +53,12 @@ export const supplierPaymentSchema = z.object({
   note: z.string().nullable(),
   date: z.string(),
   recordedById: z.string().uuid(),
+  // Accounting audit fix (2026-09-17, Decisions 1/2) — both nullable at the
+  // schema level for the same one-leftover-test-row reason as
+  // `supplierPurchaseSchema` above; every NEW payment requires both — see
+  // `createSupplierPaymentSchema`.
+  method: paymentMethodSchema.nullable(),
+  branchId: z.string().uuid().nullable(),
   createdAt: z.string(),
 });
 export type SupplierPayment = z.infer<typeof supplierPaymentSchema>;
@@ -53,6 +67,8 @@ export const createSupplierPaymentSchema = z.object({
   amount: z.number().positive(),
   note: z.string().trim().min(1).nullable().optional(),
   date: z.string(),
+  method: paymentMethodSchema,
+  branchId: z.string().uuid(),
 });
 export type CreateSupplierPaymentInput = z.infer<typeof createSupplierPaymentSchema>;
 
@@ -60,6 +76,7 @@ export const updateSupplierPaymentSchema = z.object({
   amount: z.number().positive().optional(),
   note: z.string().trim().min(1).nullable().optional(),
   date: z.string().optional(),
+  method: paymentMethodSchema.optional(),
 });
 export type UpdateSupplierPaymentInput = z.infer<typeof updateSupplierPaymentSchema>;
 

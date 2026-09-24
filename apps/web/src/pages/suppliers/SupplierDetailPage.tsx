@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type {
+  BranchSummary,
   CreateSupplierPaymentInput,
   CreateSupplierPurchaseInput,
+  PaymentMethod,
   SupplierStatement,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost } from '@/lib/api';
@@ -11,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { useAuth } from '@/state/AuthContext';
 import { CommercialTab } from '@/pages/partners/CommercialTab';
 import { downloadDocumentAsPdf } from '@/lib/documents/exportPdf';
+import { PAYMENT_METHOD_OPTIONS } from '@/pages/partners/partnerLabels';
 
 const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 const dateOnly = (iso: string) => new Date(iso).toLocaleDateString('ar-EG');
@@ -23,13 +26,24 @@ const dateOnly = (iso: string) => new Date(iso).toLocaleDateString('ar-EG');
  */
 export function SupplierDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { can } = useAuth();
+  const { can, authContext } = useAuth();
   const [statement, setStatement] = useState<SupplierStatement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [showAddPurchase, setShowAddPurchase] = useState(false);
   const [showAddPayment, setShowAddPayment] = useState(false);
+  const [branches, setBranches] = useState<BranchSummary[]>([]);
+
+  useEffect(() => {
+    apiGet<BranchSummary[]>('/api/branches').then(setBranches).catch(() => undefined);
+  }, []);
+  // Accounting audit fix (2026-09-17, Decision 2) — same "don't offer a
+  // branch the backend will just clamp away" narrowing as TreasuryPage's
+  // own `accessibleBranches`, now that supplier purchases/payments are
+  // branch-scoped too.
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
+  const accessibleBranches = isSuperAdmin ? branches : branches.filter((b) => authContext?.user.accessibleBranchIds.includes(b.id));
 
   const load = () => {
     if (!id) return;
@@ -122,6 +136,7 @@ export function SupplierDetailPage() {
       {showAddPurchase && (
         <AddPurchaseForm
           partnerId={id}
+          branches={accessibleBranches}
           onSaved={() => {
             setShowAddPurchase(false);
             load();
@@ -131,6 +146,7 @@ export function SupplierDetailPage() {
       {showAddPayment && (
         <AddPaymentForm
           partnerId={id}
+          branches={accessibleBranches}
           onSaved={() => {
             setShowAddPayment(false);
             load();
@@ -212,12 +228,19 @@ export function SupplierDetailPage() {
   );
 }
 
-function AddPurchaseForm({ partnerId, onSaved }: { partnerId: string; onSaved: () => void }) {
+function AddPurchaseForm({ partnerId, branches, onSaved }: { partnerId: string; branches: BranchSummary[]; onSaved: () => void }) {
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Same "adjust local selection once branches finish loading" pattern
+  // TreasuryPage's NewEntryForm already uses.
+  if (!branchId && branches.length > 0) {
+    setBranchId(branches[0].id);
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -229,6 +252,7 @@ function AddPurchaseForm({ partnerId, onSaved }: { partnerId: string; onSaved: (
         amount: Number(amount),
         description: description || undefined,
         date: new Date(date).toISOString(),
+        branchId,
       };
       await apiPost(`/api/suppliers/${partnerId}/purchases`, input);
       onSaved();
@@ -243,7 +267,7 @@ function AddPurchaseForm({ partnerId, onSaved }: { partnerId: string; onSaved: (
     <form onSubmit={submit} className="border-border bg-card space-y-3 rounded-2xl border p-4">
       <p className="font-semibold">مشترى جديد — المورّد بياخد منك الفلوس دي (بيزيد المتبقي عليك)</p>
       {error && <div className="text-destructive text-sm">{error}</div>}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <input
           required
           type="number"
@@ -266,6 +290,18 @@ function AddPurchaseForm({ partnerId, onSaved }: { partnerId: string; onSaved: (
           onChange={(e) => setDescription(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         />
+        <select
+          required
+          value={branchId}
+          onChange={(e) => setBranchId(e.target.value)}
+          className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+        >
+          {branches.map((b) => (
+            <option key={b.id} value={b.id}>
+              {b.name}
+            </option>
+          ))}
+        </select>
       </div>
       <Button type="submit" disabled={submitting}>
         {submitting ? 'جارٍ الحفظ…' : 'تسجيل المشترى'}
@@ -274,14 +310,20 @@ function AddPurchaseForm({ partnerId, onSaved }: { partnerId: string; onSaved: (
   );
 }
 
-function AddPaymentForm({ partnerId, onSaved }: { partnerId: string; onSaved: () => void }) {
+function AddPaymentForm({ partnerId, branches, onSaved }: { partnerId: string; branches: BranchSummary[]; onSaved: () => void }) {
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [method, setMethod] = useState<PaymentMethod>('CASH');
+  const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   // Accounting audit fix (2026-09-17) — supplier-payment idempotency key.
   const paymentIdempotency = useIdempotencyKey();
+
+  if (!branchId && branches.length > 0) {
+    setBranchId(branches[0].id);
+  }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -293,6 +335,8 @@ function AddPaymentForm({ partnerId, onSaved }: { partnerId: string; onSaved: ()
         amount: Number(amount),
         note: note || undefined,
         date: new Date(date).toISOString(),
+        method,
+        branchId,
       };
       await apiPost(`/api/suppliers/${partnerId}/payments`, input, paymentIdempotency.getKey(`supplier-payment:${partnerId}`));
       paymentIdempotency.resetKey(`supplier-payment:${partnerId}`); // definitive success — the next payment (if any) is a genuinely new operation
@@ -306,7 +350,7 @@ function AddPaymentForm({ partnerId, onSaved }: { partnerId: string; onSaved: ()
 
   return (
     <form onSubmit={submit} className="border-border bg-card space-y-3 rounded-2xl border p-4">
-      <p className="font-semibold">دفعة جديدة — أنت بتدفع للمورّد (بتقلل المتبقي عليك)</p>
+      <p className="font-semibold">دفعة جديدة — أنت بتدفع للمورّد (بتقلل المتبقي عليك). هتتسجل تلقائيًا كخارج من الخزينة.</p>
       {error && <div className="text-destructive text-sm">{error}</div>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <input
@@ -331,6 +375,35 @@ function AddPaymentForm({ partnerId, onSaved }: { partnerId: string; onSaved: ()
           onChange={(e) => setNote(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         />
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground block">طريقة الدفع</span>
+          <select
+            value={method}
+            onChange={(e) => setMethod(e.target.value as PaymentMethod)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          >
+            {PAYMENT_METHOD_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground block">الفرع</span>
+          <select
+            required
+            value={branchId}
+            onChange={(e) => setBranchId(e.target.value)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          >
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       <Button type="submit" disabled={submitting}>
         {submitting ? 'جارٍ الحفظ…' : 'تسجيل الدفعة'}
