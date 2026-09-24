@@ -37,6 +37,10 @@ export const treasurySourceTypeSchema = z.enum([
   // `OrderItemReturn`. See `orderItemReturnId` below and
   // `orderService.createReturn`.
   'RETURN',
+  // Accounting audit fix (2026-09-17, Decision 1) — a real cash outflow
+  // paired atomically with a `SupplierPayment`. See `supplierPaymentId`
+  // below and `supplierLedgerService.createPayment`.
+  'SUPPLIER_PAYMENT',
   // Accounting audit fix (2026-09-17, Decision 6 / Phase I) — a dedicated
   // `Expense` being marked PAID, paired atomically with this entry. See
   // `expenseId` below and `expenseService.markExpensePaid`.
@@ -62,6 +66,8 @@ export const treasuryEntrySchema = z.object({
   salaryPaymentId: z.string().uuid().nullable(),
   /** `sourceType: 'RETURN'` only — the OrderItemReturn this entry was paired with at creation. */
   orderItemReturnId: z.string().uuid().nullable(),
+  /** `sourceType: 'SUPPLIER_PAYMENT'` only — the SupplierPayment this entry was paired with at creation. */
+  supplierPaymentId: z.string().uuid().nullable(),
   /** `sourceType: 'EXPENSE_PAYMENT'` only — the Expense this entry was paired with at creation. */
   expenseId: z.string().uuid().nullable(),
   partnerId: z.string().uuid().nullable(),
