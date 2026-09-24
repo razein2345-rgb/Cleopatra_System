@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CutoverRecord, InventoryOpening, TreasuryOpening } from '@cleopatra/shared';
+import type { BranchSummary, CutoverRecord, InventoryOpening, TreasuryOpening } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 // Cutover-revision-round decision (post-3D) — Badge introduced here purely
@@ -237,12 +237,25 @@ export function CutoverPage() {
 }
 
 function CreateCutoverForm({ onCreated }: { onCreated: () => void }) {
+  const { authContext } = useAuth();
+  const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [branchId, setBranchId] = useState('');
   const [lastManualDate, setLastManualDate] = useState('');
   const [goLiveDate, setGoLiveDate] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    apiGet<BranchSummary[]>('/api/branches')
+      .then(setBranches)
+      .catch(() => setError('تعذر تحميل قائمة الفروع'));
+  }, []);
+  // Same "don't offer a branch the backend will just reject" narrowing as
+  // TreasuryPage/SupplierDetailPage — the server still re-checks branch
+  // access on create; this only keeps the list honest.
+  const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
+  const accessibleBranches = isSuperAdmin ? branches : branches.filter((b) => authContext?.user.accessibleBranchIds.includes(b.id));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -264,7 +277,17 @@ function CreateCutoverForm({ onCreated }: { onCreated: () => void }) {
       <p className="font-semibold">Cutover جديد</p>
       {error && <div className="text-destructive text-sm">{error}</div>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-        <input required placeholder="Branch ID" value={branchId} onChange={(e) => setBranchId(e.target.value)} className="border-input bg-background rounded-md border px-3 py-2 text-sm" />
+        <label className="space-y-1 text-sm">
+          <span className="text-muted-foreground block">الفرع</span>
+          <select required value={branchId} onChange={(e) => setBranchId(e.target.value)} className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm">
+            <option value="">اختر الفرع…</option>
+            {accessibleBranches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="space-y-1 text-sm">
           <span className="text-muted-foreground block">آخر يوم يدوي</span>
           <input required type="date" value={lastManualDate} onChange={(e) => setLastManualDate(e.target.value)} className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm" />
