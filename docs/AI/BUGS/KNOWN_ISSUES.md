@@ -468,3 +468,35 @@ planned as the final step of the 7-unit sequence. If the wrong number
 itself needs closing sooner than the full unit, Phase B (the fix) is
 separable from Phase 3 C/D (the new report) and could be pulled forward
 on its own — flagged to the owner as an option, not yet exercised.
+
+---
+
+## `inventoryService.ts` has an unreviewed Decimal-precision fix (not yet committed, not part of any of the 7 audit units)
+
+**Found:** 2026-09-24, reviewing the working tree remaining after
+supplier-accounting-fixes (Unit 1) was committed — this file kept showing
+as modified after every other unit's own files were accounted for.
+
+**What's wrong (as currently written, still live/committed):**
+`updateStockMovement`'s linked-`TreasuryEntry` rescale computes `const
+unitPrice = linkedEntry.amount.toNumber() / previous.quantity;` then
+persists `unitPrice * newQuantity` — a `Decimal` → plain-JS-float → fresh
+`Decimal` round trip that can silently lose or shift precision on the
+last decimal place, the exact same class of issue already deferred for
+`orderService.ts`'s `updatePayment`/`createReturn`/`updateOrder` (see
+that entry above). A working fix already exists uncommitted in the
+working tree, computed entirely in `Prisma.Decimal` space
+(`linkedEntry.amount.dividedBy(previous.quantity)`, `.times(newQuantity).
+toDecimalPlaces(2)`, no float round-trip).
+
+**Why it isn't grouped with any of the 7 mapped audit units:** it doesn't
+carry a `Decision N`/`Phase X` tag the way every other pending change in
+this initiative does (just a bare "Accounting audit fix (2026-09-17)"
+comment) — it appears to be a same-day, same-initiative fix that never
+got assigned to a named unit, sitting alongside but outside the 7-unit
+map built for this review series.
+
+**What closes this gap:** grouping this with `orderService.ts`'s own
+deferred Decimal-precision fixes into one dedicated review (same
+underlying pattern, same fix shape, different files) rather than treating
+it as an eighth standalone unit.
