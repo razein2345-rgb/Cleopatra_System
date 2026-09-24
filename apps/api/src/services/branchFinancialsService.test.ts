@@ -675,3 +675,153 @@ describe('B1 exclusion guarantee — customerOpeningId must never feed profitabi
     expect(continuationBranch.netProfit).toBeCloseTo(50, 5);
   });
 });
+
+/**
+ * Accounting audit fix (2026-09-17, Phase 3 C/D) — regression coverage for
+ * `getProfitabilityReport`: Revenue ≠ Cash Received ≠ AR, no double
+ * counting of supplier/salary/return costs already represented elsewhere,
+ * and the fixed-cost proration matches the requested period's day count.
+ */
+describe('getProfitabilityReport — Revenue/Cash/AR + Gross→Operating Profit (Phase C/D)', () => {
+  const FROM = new Date('2026-09-01T00:00:00.000Z');
+  const TO = new Date('2026-09-02T23:59:59.999Z'); // 2 days inclusive
+
+  beforeEach(() => {
+    orderFindMany.mockReset();
+    orderItemReturnFindMany.mockReset().mockResolvedValue([]);
+    paymentFindMany.mockReset().mockResolvedValue([]);
+    inventoryItemFindMany.mockReset().mockResolvedValue([{ id: 'inv-1', costPrice: { toNumber: () => 5 }, sheetType: null }]);
+    readyProductFindMany.mockReset().mockResolvedValue([]);
+    settingFindFirst.mockReset().mockResolvedValue({ zincSupplierCost: { toNumber: () => 0 } });
+    getDailyFixedCostByBranchMock.mockReset().mockResolvedValue({ perBranch: new Map(), companyWideDaily: 0 });
+    treasuryAggregate.mockReset().mockResolvedValue({ _sum: { amount: null } });
+  });
+
+  function retailItem(revenue: number, qty: number) {
+    return {
+      itemTotal: { toNumber: () => revenue },
+      discountAmount: { toNumber: () => 0 },
+      breakdown: { quantity: qty, unitPrice: revenue / qty },
+      inventoryItemId: 'inv-1',
+      readyProductId: null,
+      modelName: null,
+      supplierTasks: [],
+    };
+  }
+
+  it('Revenue, Cash Received, and AR are independent — a customer with an unpaid balance makes them all different', async () => {
+    const { getProfitabilityReport } = await import('./branchFinancialsService.js');
+    // periodOrders (revenue calc)
+    orderFindMany.mockResolvedValueOnce([
+      { finalTotal: { toNumber: () => 1000 }, discountPercent: { toNumber: () => 0 }, items: [retailItem(1000, 100)] },
+    ]);
+    // arOrders (current AR snapshot) — same order, only 400 paid so far
+    orderFindMany.mockResolvedValueOnce([
+      { finalTotal: { toNumber: () => 1000 }, payments: [{ amount: { toNumber: () => 400 } }], itemReturns: [] },
+    ]);
+    paymentFindMany.mockResolvedValue([{ amount: { toNumber: () => 400 } }]);
+
+    const report = await getProfitabilityReport(FROM, TO);
+
+    expect(report.revenue).toBe(1000);
+    expect(report.cashReceived).toBe(400);
+    expect(report.accountsReceivable).toBe(600);
+    expect(report.revenue).not.toBe(report.cashReceived);
+    expect(report.cashReceived).not.toBe(report.accountsReceivable);
+  });
+
+  it('a return recorded in the period reduces revenue (contra-revenue), never touches cashReceived', async () => {
+    const { getProfitabilityReport } = await import('./branchFinancialsService.js');
+    orderFindMany.mockResolvedValueOnce([
+      { finalTotal: { toNumber: () => 1000 }, discountPercent: { toNumber: () => 0 }, items: [retailItem(1000, 100)] },
+    ]);
+    orderFindMany.mockResolvedValueOnce([]);
+    orderItemReturnFindMany.mockResolvedValue([{ refundAmount: { toNumber: () => 150 } }]);
+    paymentFindMany.mockResolvedValue([{ amount: { toNumber: () => 1000 } }]);
+
+    const report = await getProfitabilityReport(FROM, TO);
+
+    expect(report.revenue).toBe(850); // 1000 - 150
+    expect(report.cashReceived).toBe(1000); // unaffected by the return
+  });
+
+  it('Gross Profit = realProfit + estimatedProfit, excluding unknown-cost revenue', async () => {
+    const { getProfitabilityReport } = await import('./branchFinancialsService.js');
+    inventoryItemFindMany.mockResolvedValue([{ id: 'inv-1', costPrice: { toNumber: () => 5 }, sheetType: null }]);
+    orderFindMany.mockResolvedValueOnce([
+      {
+        finalTotal: { toNumber: () => 1300 },
+        discountPercent: { toNumber: () => 0 },
+        items: [
+          retailItem(1000, 100), // REAL: revenue 1000, cost 500, profit 500
+          { ...retailItem(300, 1), inventoryItemId: null, breakdown: { kind: 'SERVICE', quantity: 1, unitPrice: 300 } }, // UNKNOWN
+        ],
+      },
+    ]);
+    orderFindMany.mockResolvedValueOnce([]);
+
+    const report = await getProfitabilityReport(FROM, TO);
+
+    expect(report.realProfit).toBeCloseTo(500, 5);
+    expect(report.unknownCostRevenue).toBeCloseTo(300, 5);
+    expect(report.grossProfit).toBeCloseTo(500, 5); // excludes the unknown item entirely
+    expect(report.hasUnknownProfitItems).toBe(true);
+  });
+
+  it('manualTreasuryExpenses only counts sourceType MANUAL — never double-counts a value already represented elsewhere', async () => {
+    const { getProfitabilityReport } = await import('./branchFinancialsService.js');
+    orderFindMany.mockResolvedValueOnce([]);
+    orderFindMany.mockResolvedValueOnce([]);
+    treasuryAggregate.mockResolvedValue({ _sum: { amount: { toNumber: () => 750 } } });
+
+    const report = await getProfitabilityReport(FROM, TO);
+
+    expect(report.manualTreasuryExpenses).toBe(750);
+    // Confirms the query itself only asks for sourceType MANUAL — the
+    // actual double-count protection (excluding SUPPLIER_PAYMENT/
+    // SALARY_PAYMENT/EMPLOYEE_ADVANCE/RETURN) is enforced by this filter.
+    const call = treasuryAggregate.mock.calls[0]![0];
+    expect(call.where.sourceType).toBe('MANUAL');
+    expect(call.where.type).toBe('EXPENSE');
+  });
+
+  it('fixedExpenseCost is prorated to the exact number of days in the requested range, not a flat one-day amount', async () => {
+    const { getProfitabilityReport } = await import('./branchFinancialsService.js');
+    orderFindMany.mockResolvedValueOnce([]);
+    orderFindMany.mockResolvedValueOnce([]);
+    getDailyFixedCostByBranchMock.mockResolvedValue({ perBranch: new Map([['branch-1', 100]]), companyWideDaily: 0 });
+
+    // FROM..TO spans exactly 2 days (2026-09-01 through 2026-09-02 inclusive).
+    const report = await getProfitabilityReport(FROM, TO, ['branch-1']);
+
+    expect(report.fixedExpenseCost).toBe(200); // 100/day * 2 days, not 100
+  });
+
+  it('operatingProfit = grossProfit - operatingExpenses, and operatingExpenses = fixedExpenseCost + manualTreasuryExpenses', async () => {
+    const { getProfitabilityReport } = await import('./branchFinancialsService.js');
+    orderFindMany.mockResolvedValueOnce([
+      { finalTotal: { toNumber: () => 1000 }, discountPercent: { toNumber: () => 0 }, items: [retailItem(1000, 100)] },
+    ]);
+    orderFindMany.mockResolvedValueOnce([]);
+    getDailyFixedCostByBranchMock.mockResolvedValue({ perBranch: new Map([['branch-1', 50]]), companyWideDaily: 0 });
+    treasuryAggregate.mockResolvedValue({ _sum: { amount: { toNumber: () => 100 } } });
+
+    const report = await getProfitabilityReport(FROM, TO, ['branch-1']);
+
+    expect(report.grossProfit).toBeCloseTo(500, 5); // (10-5)*100
+    expect(report.operatingExpenses).toBe(200); // 50*2 days + 100 manual
+    expect(report.operatingProfit).toBeCloseTo(300, 5); // 500 - 200
+  });
+
+  it('is branch-scoped — a requested branchIds filter is applied to the order/return/payment/treasury queries', async () => {
+    const { getProfitabilityReport } = await import('./branchFinancialsService.js');
+    orderFindMany.mockResolvedValueOnce([]);
+    orderFindMany.mockResolvedValueOnce([]);
+
+    await getProfitabilityReport(FROM, TO, ['branch-a']);
+
+    expect(orderFindMany.mock.calls[0]![0].where.branchId).toEqual({ in: ['branch-a'] });
+    expect(orderItemReturnFindMany.mock.calls[0]![0].where.branchId).toEqual({ in: ['branch-a'] });
+    expect(treasuryAggregate.mock.calls[0]![0].where.branchId).toEqual({ in: ['branch-a'] });
+  });
+});

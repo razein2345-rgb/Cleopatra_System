@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { InventoryReconciliationRow, ReportsOverview } from '@cleopatra/shared';
+import type { InventoryReconciliationRow, ProfitabilityReport, ReportsOverview } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,9 +11,19 @@ import { downloadDocumentAsPdf } from '@/lib/documents/exportPdf';
 const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 const dateOnly = (iso: string) => new Date(iso).toLocaleDateString('ar-EG');
 
-type TabId = 'debts' | 'invoices' | 'expenses' | 'transfers' | 'purchases' | 'inventory' | 'reconciliation' | 'employees';
+type TabId =
+  | 'profitability'
+  | 'debts'
+  | 'invoices'
+  | 'expenses'
+  | 'transfers'
+  | 'purchases'
+  | 'inventory'
+  | 'reconciliation'
+  | 'employees';
 
 const TABS: Array<{ id: TabId; label: string }> = [
+  { id: 'profitability', label: 'الربحية' },
   { id: 'debts', label: 'ديون العملاء' },
   { id: 'invoices', label: 'فواتير البيع' },
   { id: 'expenses', label: 'المصروفات' },
@@ -45,6 +55,14 @@ const EMPLOYEE_PAYMENT_KIND_LABELS: Record<'SALARY_PAYMENT' | 'EMPLOYEE_ADVANCE'
  */
 export function ReportsOverviewPage() {
   const [overview, setOverview] = useState<ReportsOverview | null>(null);
+  // Accounting audit fix (2026-09-17, Phase 3 C/D) — unlike `overview`
+  // above (owner-confirmed always company-wide, no branch filter — see
+  // this page's own doc comment), `profitability` IS branch-scoped
+  // server-side (`/api/reports/profitability`, same `resolveBranchScope`
+  // convention as the branch-profit widget) — a branch-scoped user
+  // automatically sees only their own branch's figures here, while the
+  // rest of this page's tabs stay exactly as they were.
+  const [profitability, setProfitability] = useState<ProfitabilityReport | null>(null);
   // Accounting audit fix (2026-09-17, Phase G — Inventory reconciliation) —
   // unlike the other tabs above, this is a live snapshot of the current
   // `StockLevel` vs. `StockMovement` state, not a `from`/`to`-scoped
@@ -54,7 +72,7 @@ export function ReportsOverviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [tab, setTab] = useState<TabId>('debts');
+  const [tab, setTab] = useState<TabId>('profitability');
 
   const load = () => {
     const params = new URLSearchParams();
@@ -64,6 +82,9 @@ export function ReportsOverviewPage() {
     apiGet<ReportsOverview>(`/api/reports/overview${qs ? `?${qs}` : ''}`)
       .then(setOverview)
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل التقارير'));
+    apiGet<ProfitabilityReport>(`/api/reports/profitability${qs ? `?${qs}` : ''}`)
+      .then(setProfitability)
+      .catch(() => setProfitability(null));
   };
 
   useEffect(load, [from, to]);
@@ -190,6 +211,93 @@ export function ReportsOverviewPage() {
               </h3>
             ))}
           </div>
+
+          {tab === 'profitability' && (
+            <div className="space-y-4">
+              {!profitability ? (
+                <p className="text-muted-foreground p-4 text-center text-sm">جارٍ التحميل…</p>
+              ) : (
+                <>
+                  <p className="text-muted-foreground text-xs">
+                    الفترة: {dateOnly(profitability.from)} — {dateOnly(profitability.to)} (مقصورة على الفرع/الفروع
+                    المسموح لك برؤيتها، بعكس باقي التابات فوق).
+                  </p>
+                  <div>
+                    <h4 className="mb-2 text-sm font-semibold">الإيراد / التحصيل النقدي / المستحق</h4>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs">الإيراد (بعد خصم المرتجعات)</p>
+                        <p className="text-lg font-bold">{money(profitability.revenue)}</p>
+                      </Card>
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs">التحصيل النقدي الفعلي</p>
+                        <p className="text-success text-lg font-bold">{money(profitability.cashReceived)}</p>
+                      </Card>
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs">المستحق على العملاء (الحالة الحالية)</p>
+                        <p className={`text-lg font-bold ${profitability.accountsReceivable > 0 ? 'text-destructive' : ''}`}>
+                          {money(profitability.accountsReceivable)}
+                        </p>
+                      </Card>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 className="mb-2 text-sm font-semibold">
+                      الربح الإجمالي (Gross Profit)
+                      {profitability.hasUnknownProfitItems && (
+                        <span className="text-warning ms-1 text-xs" title="فيه أصناف في الفترة دي مالهاش سعر تكلفة مسجّل خالص">
+                          ⚠
+                        </span>
+                      )}
+                    </h4>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs" title="تكلفة مؤكدة من مورد/مخزون حقيقي">تكلفة مؤكدة</p>
+                        <p className="text-lg font-bold">{money(profitability.realCost)}</p>
+                      </Card>
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs" title="تكلفة مقدّرة (هامش السعر الافتراضي أو تكلفة لسه متأكدتش)">تكلفة تقديرية</p>
+                        <p className="text-lg font-bold">{money(profitability.estimatedCost)}</p>
+                      </Card>
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs">الربح الإجمالي (مؤكد + تقديري)</p>
+                        <p className="text-lg font-bold">{money(profitability.grossProfit)}</p>
+                      </Card>
+                    </div>
+                    {profitability.hasUnknownProfitItems && (
+                      <p className="text-muted-foreground mt-2 text-xs">
+                        ⚠ مبيعات بقيمة {money(profitability.unknownCostRevenue)} في الفترة دي من أصناف مالهاش سعر تكلفة
+                        مسجّل — مش داخلة في الربح الإجمالي أعلاه خالص.
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="mb-2 text-sm font-semibold">المصاريف التشغيلية والربح التشغيلي</h4>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs" title="مصاريف شهرية ثابتة (إيجار/رواتب) مقسّمة على أيام الفترة">مصاريف ثابتة (إيجار/رواتب)</p>
+                        <p className="text-lg font-bold">{money(profitability.fixedExpenseCost)}</p>
+                      </Card>
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs" title="حركات خزينة يدوية من نوع مصروف، غير مرتبطة بمورد أو راتب أو مرتجع">مصاريف يدوية أخرى</p>
+                        <p className="text-lg font-bold">{money(profitability.manualTreasuryExpenses)}</p>
+                      </Card>
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs">إجمالي المصاريف التشغيلية</p>
+                        <p className="text-lg font-bold">{money(profitability.operatingExpenses)}</p>
+                      </Card>
+                      <Card className="p-4">
+                        <p className="text-muted-foreground text-xs">الربح التشغيلي</p>
+                        <p className={`text-lg font-bold ${profitability.operatingProfit < 0 ? 'text-destructive' : ''}`}>
+                          {money(profitability.operatingProfit)}
+                        </p>
+                      </Card>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {tab === 'debts' && (
             <div className="border-border overflow-hidden rounded-2xl border">

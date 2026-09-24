@@ -77,3 +77,61 @@ export const companyFinancialSummarySchema = z.object({
 
 export type BranchFinancialSummary = z.infer<typeof branchFinancialSummarySchema>;
 export type CompanyFinancialSummary = z.infer<typeof companyFinancialSummarySchema>;
+
+/**
+ * Accounting audit fix (2026-09-17, Phase 3 C/D) — a proper, explicit-date-
+ * range Gross → Operating Profit report, plus the Revenue / Cash Received /
+ * Accounts Receivable breakdown the previous phase found missing. Every
+ * number here shares the SAME period (`from`→`to`) — never mixing an
+ * all-time figure with a period-scoped one (the exact bug Phase B fixed
+ * elsewhere). Definitions, verified against the existing Order/Payment/
+ * Return/Treasury model (not invented):
+ *
+ * - `revenue` — sum of `Order.finalTotal` for orders dated in the period,
+ *   minus `OrderItemReturn.refundAmount` for returns recorded in the same
+ *   period (a return reduces the period it happens in, standard
+ *   contra-revenue treatment) — NEVER derived from Treasury.
+ * - `cashReceived` — sum of `Payment.amount` for payments recorded in the
+ *   period — NEVER derived from Order totals (a customer may owe the rest).
+ * - `accountsReceivable` — the CURRENT outstanding balance across all
+ *   non-cancelled orders (point-in-time by nature, like any AR figure —
+ *   not itself bound to `from`/`to`), scoped to the requested branch(es).
+ * - `realCost`/`estimatedCost`/`unknownCostRevenue` — same REAL/ESTIMATED/
+ *   UNKNOWN classification as `resolveItemProfit`, summed over the
+ *   period's orders only.
+ * - `grossProfit` = `realProfit + estimatedProfit` (excludes
+ *   `unknownCostRevenue`, matching the existing `netProfit` convention —
+ *   an unknown cost basis is never guessed at).
+ * - `fixedExpenseCost` — `FixedMonthlyExpense`-derived daily rate ×
+ *   the number of days in `[from, to]` (Phase B's own fix — never a
+ *   mismatched one-day figure against a longer period).
+ * - `manualTreasuryExpenses` — ad-hoc `TreasuryEntry{type:EXPENSE,
+ *   sourceType:'MANUAL'}` rows in the period ONLY. Deliberately excludes
+ *   SUPPLIER_PAYMENT (already inside each item's own REAL cost basis via
+ *   SupplierPurchase/ItemSupplierTask — counting it again here would be
+ *   the exact double-count the audit warned against), SALARY_PAYMENT
+ *   (already inside `fixedExpenseCost` via the payroll-rate estimate),
+ *   EMPLOYEE_ADVANCE (a receivable from staff, not an expense), and RETURN
+ *   (already netted out of `revenue` above).
+ * - `operatingExpenses` = `fixedExpenseCost + manualTreasuryExpenses`.
+ * - `operatingProfit` = `grossProfit - operatingExpenses`.
+ */
+export const profitabilityReportSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  revenue: z.number(),
+  cashReceived: z.number(),
+  accountsReceivable: z.number(),
+  realCost: z.number(),
+  estimatedCost: z.number(),
+  unknownCostRevenue: z.number(),
+  realProfit: z.number(),
+  estimatedProfit: z.number(),
+  grossProfit: z.number(),
+  fixedExpenseCost: z.number(),
+  manualTreasuryExpenses: z.number(),
+  operatingExpenses: z.number(),
+  operatingProfit: z.number(),
+  hasUnknownProfitItems: z.boolean(),
+});
+export type ProfitabilityReport = z.infer<typeof profitabilityReportSchema>;

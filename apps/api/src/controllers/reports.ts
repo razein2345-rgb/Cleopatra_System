@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
-import { getCompanyFinancialSummary } from '../services/branchFinancialsService.js';
+import { getCompanyFinancialSummary, getProfitabilityReport } from '../services/branchFinancialsService.js';
 import { getReportsOverview } from '../services/reportsOverviewService.js';
+import { businessDayRangeUtc, todayInBusinessTimezone } from '../lib/businessTimezone.js';
 
 /**
  * Owner (2026-08-26, "افصل تماماً بين أمين خزينة كليوباترا و أمين خزينة
@@ -35,4 +36,25 @@ export async function getReportsOverviewHandler(req: Request, res: Response) {
   const to = typeof req.query.to === 'string' ? new Date(req.query.to) : undefined;
   const overview = await getReportsOverview(from, to);
   res.json({ success: true, data: overview });
+}
+
+/**
+ * Accounting audit fix (2026-09-17, Phase 3 C/D) — the Gross → Operating
+ * Profit + Revenue/Cash Received/AR report, requested with an explicit
+ * date range (defaults to today, Cairo business day, if omitted — the
+ * only unambiguous default; every OTHER date-range use in this endpoint
+ * requires the caller to actually pick one). Branch-scoped the same way
+ * as `getBranchFinancialSummaryHandler` above — a plain SALES/branch-
+ * scoped caller never sees another branch's figures through this report.
+ */
+export async function getProfitabilityReportHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const branchIds = auth.roleNames.includes('SUPER_ADMIN') ? undefined : auth.accessibleBranchIds;
+
+  const todayRange = businessDayRangeUtc(todayInBusinessTimezone().toISOString().slice(0, 10));
+  const from = typeof req.query.from === 'string' ? businessDayRangeUtc(req.query.from).start : todayRange.start;
+  const to = typeof req.query.to === 'string' ? businessDayRangeUtc(req.query.to).end : todayRange.end;
+
+  const report = await getProfitabilityReport(from, to, branchIds);
+  res.json({ success: true, data: report });
 }

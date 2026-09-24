@@ -1,4 +1,4 @@
-import type { BranchFinancialSummary, CompanyFinancialSummary } from '@cleopatra/shared';
+import type { BranchFinancialSummary, CompanyFinancialSummary, ProfitabilityReport } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { getDailyFixedCostByBranch } from './fixedExpensesService.js';
 import { businessDayRangeUtc, todayInBusinessTimezone } from '../lib/businessTimezone.js';
@@ -473,5 +473,215 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
     hasUnknownProfitItems: branchSummaries.some((b) => b.hasUnknownProfitItems),
     totalDailyFixedCost,
     totalNetAfterDailyFixedCost: totalNetProfit - totalDailyFixedCost,
+  };
+}
+
+/**
+ * Accounting audit fix (2026-09-17, Phase 3 C/D) — the Gross → Operating
+ * Profit report plus the Revenue/Cash Received/AR breakdown, both scoped
+ * to the SAME explicit `[from, to]` period and the caller's branch access
+ * (`resolveBranchScope`-style — `undefined` branchIds means unrestricted,
+ * an array clamps every query to it). See `ProfitabilityReport`'s own doc
+ * comment in `@cleopatra/shared` for the exact accounting definition of
+ * every field — none of them are invented here; each traces to an
+ * existing Order/Payment/Return/Treasury/FixedMonthlyExpense query this
+ * codebase already had, just consistently period- and branch-scoped.
+ */
+export async function getProfitabilityReport(from: Date, to: Date, branchIds?: string[]): Promise<ProfitabilityReport> {
+  const dateFilter = { gte: from, lte: to };
+  const branchWhere = branchIds ? { branchId: { in: branchIds } } : {};
+  const orderBranchWhere = branchIds ? { branchId: { in: branchIds } } : {};
+
+  const [
+    periodOrders,
+    periodReturns,
+    periodPayments,
+    arOrders,
+    inventoryItems,
+    readyProducts,
+    paperInventoryItems,
+    setting,
+    dailyFixedCost,
+    manualExpenseAgg,
+  ] = await Promise.all([
+    prisma.order.findMany({
+      where: { isDeleted: false, status: { not: 'CANCELLED' }, date: dateFilter, ...orderBranchWhere },
+      select: {
+        finalTotal: true,
+        discountPercent: true,
+        items: {
+          select: {
+            itemTotal: true,
+            discountAmount: true,
+            breakdown: true,
+            inventoryItemId: true,
+            readyProductId: true,
+            modelName: true,
+            supplierTasks: { where: { isDeleted: false }, select: { cost: true, status: true } },
+          },
+        },
+      },
+    }),
+    // Returns reduce THIS period's revenue (contra-revenue), regardless of
+    // which period the original sale fell in — see the schema doc comment.
+    prisma.orderItemReturn.findMany({
+      where: { createdAt: dateFilter, ...branchWhere },
+      select: { refundAmount: true },
+    }),
+    // Opening State / Cutover (Phase 3C.2 §15, mandatory) — "Cash Received"
+    // is exactly that: real cash received in this period. A Payment with
+    // sourceType OPENING_CREDIT_APPLICATION represents no new cash movement
+    // at all (the cash was already counted once, inside TreasuryOpening, at
+    // cutover) — summing it here unfiltered would overstate cash received
+    // by exactly the amount of every opening-credit settlement.
+    prisma.payment.findMany({
+      where: {
+        isDeleted: false,
+        createdAt: dateFilter,
+        sourceType: 'NORMAL',
+        order: branchIds ? { branchId: { in: branchIds } } : {},
+      },
+      select: { amount: true },
+    }),
+    // AR — current outstanding balance (point-in-time, not period-bound),
+    // scoped to the same branch access. Independent, deliberately not
+    // reusing `reportsOverviewService.ts`'s own `totalCustomerDebt` — that
+    // one is a documented, owner-approved always-company-wide figure never
+    // scoped by branch; this is a separate, branch-respecting computation
+    // for this specific report (see the audit's own Fix D discussion).
+    prisma.order.findMany({
+      where: { isDeleted: false, status: { not: 'CANCELLED' }, partnerId: { not: null }, ...orderBranchWhere },
+      select: {
+        finalTotal: true,
+        payments: { where: { isDeleted: false }, select: { amount: true } },
+        itemReturns: { select: { refundAmount: true } },
+      },
+    }),
+    prisma.inventoryItem.findMany({ select: { id: true, costPrice: true } }),
+    prisma.readyProduct.findMany({ where: { isDeleted: false }, select: { id: true, name: true, costPrice: true } }),
+    prisma.inventoryItem.findMany({
+      where: { sheetTypeId: { not: null } },
+      select: { id: true, sheetType: { select: { costPrice: true } } },
+    }),
+    prisma.setting.findFirst({ select: { zincSupplierCost: true } }),
+    getDailyFixedCostByBranch(),
+    // Fix E's own reasoning applied here: only MANUAL EXPENSE entries — see
+    // the schema doc comment for why SUPPLIER_PAYMENT/SALARY_PAYMENT/
+    // EMPLOYEE_ADVANCE/RETURN are deliberately excluded (each already
+    // counted elsewhere in this same report).
+    prisma.treasuryEntry.aggregate({
+      where: { isDeleted: false, type: 'EXPENSE', sourceType: 'MANUAL', date: dateFilter, ...branchWhere },
+      _sum: { amount: true },
+    }),
+  ]);
+
+  const costPriceByInventoryItemId = new Map(inventoryItems.map((i) => [i.id, i.costPrice?.toNumber() ?? null]));
+  const costPriceByReadyProductId = new Map(readyProducts.map((p) => [p.id, p.costPrice?.toNumber() ?? null]));
+  const costPriceByReadyProductName = new Map(
+    readyProducts.map((p) => [p.name.trim().toLowerCase(), p.costPrice?.toNumber() ?? null]),
+  );
+  const paperCostPriceByInventoryItemId = new Map(
+    paperInventoryItems.map((i) => [i.id, i.sheetType?.costPrice?.toNumber() ?? null]),
+  );
+  const zincSupplierCost = setting?.zincSupplierCost.toNumber() ?? 0;
+
+  let grossRevenue = 0;
+  let realCost = 0;
+  let estimatedCost = 0;
+  let unknownCostRevenue = 0;
+  let realProfit = 0;
+  let estimatedProfit = 0;
+  let hasUnknownProfitItems = false;
+
+  for (const order of periodOrders) {
+    const orderDiscountFactor = 1 - order.discountPercent.toNumber() / 100;
+    for (const item of order.items) {
+      const tasksWithCost = item.supplierTasks.every((t) => t.cost != null);
+      const supplierTasksCost =
+        item.supplierTasks.length > 0 && tasksWithCost
+          ? item.supplierTasks.reduce((sum, t) => sum + t.cost!.toNumber(), 0)
+          : null;
+      const supplierTasksConfirmed = tasksWithCost && item.supplierTasks.every((t) => t.status === 'RECEIVED');
+      const { revenue, profit, cost, confidence } = resolveItemProfit(
+        {
+          itemTotal: item.itemTotal?.toNumber() ?? null,
+          discountAmount: item.discountAmount.toNumber(),
+          breakdown: item.breakdown,
+          inventoryItemId: item.inventoryItemId,
+          readyProductId: item.readyProductId,
+          modelName: item.modelName,
+          supplierTasksCost,
+          supplierTasksConfirmed,
+        },
+        orderDiscountFactor,
+        costPriceByInventoryItemId,
+        costPriceByReadyProductId,
+        costPriceByReadyProductName,
+        paperCostPriceByInventoryItemId,
+        zincSupplierCost,
+      );
+      grossRevenue += revenue;
+      if (profit === null || confidence === 'UNKNOWN') {
+        hasUnknownProfitItems = true;
+        unknownCostRevenue += revenue;
+      } else if (confidence === 'REAL') {
+        realProfit += profit;
+        realCost += cost ?? 0;
+      } else {
+        estimatedProfit += profit;
+        estimatedCost += cost ?? 0;
+      }
+    }
+  }
+
+  const returnedAmount = periodReturns.reduce((sum, r) => sum + r.refundAmount.toNumber(), 0);
+  const revenue = grossRevenue - returnedAmount;
+  const cashReceived = periodPayments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
+
+  let accountsReceivable = 0;
+  for (const order of arOrders) {
+    const paid = order.payments.reduce((sum, p) => sum + p.amount.toNumber(), 0);
+    const returned = order.itemReturns.reduce((sum, r) => sum + r.refundAmount.toNumber(), 0);
+    const remaining = order.finalTotal.toNumber() - returned - paid;
+    if (remaining > 0) accountsReceivable += remaining;
+  }
+
+  // Phase B discipline — the fixed-cost rate is per-day; multiply by the
+  // exact number of days this report's own period spans, never a
+  // mismatched fixed one-day assumption. Company-wide `FixedMonthlyExpense`
+  // rows (branchId: null) are added exactly once regardless of scope — a
+  // branch-scoped caller still owes their share of company-wide overhead,
+  // same as `getCompanyFinancialSummary`'s own grand total does.
+  // +1ms accounts for an inclusive `to` conventionally landing at
+  // 23:59:59.999 of its day (e.g. `businessDayRangeUtc`'s own `end`) —
+  // without it, a "from=day1 00:00, to=day2 23:59:59.999" range (2 whole
+  // days) would compute as 1.999.. days and round down to a wrong count.
+  const daysInRange = Math.max(1, Math.round((to.getTime() - from.getTime() + 1) / 86400000));
+  const scopedBranchIds = branchIds ?? [...dailyFixedCost.perBranch.keys()];
+  const dailyFixedCostTotal =
+    scopedBranchIds.reduce((sum, id) => sum + (dailyFixedCost.perBranch.get(id) ?? 0), 0) + dailyFixedCost.companyWideDaily;
+  const fixedExpenseCost = dailyFixedCostTotal * daysInRange;
+
+  const manualTreasuryExpenses = manualExpenseAgg._sum.amount?.toNumber() ?? 0;
+  const grossProfit = realProfit + estimatedProfit;
+  const operatingExpenses = fixedExpenseCost + manualTreasuryExpenses;
+
+  return {
+    from: from.toISOString(),
+    to: to.toISOString(),
+    revenue,
+    cashReceived,
+    accountsReceivable,
+    realCost,
+    estimatedCost,
+    unknownCostRevenue,
+    realProfit,
+    estimatedProfit,
+    grossProfit,
+    fixedExpenseCost,
+    manualTreasuryExpenses,
+    operatingExpenses,
+    operatingProfit: grossProfit - operatingExpenses,
+    hasUnknownProfitItems,
   };
 }
