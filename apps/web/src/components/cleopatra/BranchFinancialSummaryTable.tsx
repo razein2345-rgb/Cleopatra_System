@@ -2,6 +2,22 @@ import type { CompanyFinancialSummary } from '@cleopatra/shared';
 
 const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
+const NO_SALES_TODAY_HINT = 'لسه مفيش مبيعات النهارده — الرقم = المصاريف الثابتة بس، هيتحسّن مع أول أوردر';
+
+/**
+ * Early in the day (or on a quiet one) today's profit is legitimately zero
+ * while today's fixed cost is still charged, so "الصافي بعد المصاريف" reads
+ * as a red negative equal to the fixed cost — correct, but it looks like a
+ * loss. Detected from the fields already in the summary (no API change): a
+ * branch with no real, estimated, or unknown-cost revenue today has no
+ * sales activity to explain the number with. (A same-day sale with exactly
+ * zero profit and zero unknown revenue would also trip this — a rare edge
+ * that only makes the hint slightly less precise, never the figure wrong.)
+ */
+function hasNoActivityToday(b: CompanyFinancialSummary['branches'][number]): boolean {
+  return b.realProfit === 0 && b.estimatedProfit === 0 && b.unknownCostRevenue === 0;
+}
+
 /**
  * Owner (2026-08-26, "افصل تماماً بين أمين خزينة كليوباترا و أمين خزينة
  * برينتنج هاوس... عايز انا يظهرلي إجمالي كليوباترا، إجمالي برينتنج، صافي
@@ -15,6 +31,9 @@ const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 
  * way).
  */
 export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinancialSummary }) {
+  const idleBranchIds = new Set(summary.branches.filter(hasNoActivityToday).map((b) => b.branchId));
+  const allBranchesIdle = summary.branches.length > 0 && idleBranchIds.size === summary.branches.length;
+
   return (
     <div className="space-y-3">
       <div className="overflow-x-auto">
@@ -50,6 +69,11 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
                 <td className="text-muted-foreground">{fmt(b.dailyFixedCost)}</td>
                 <td className={b.netAfterDailyFixedCost < 0 ? 'text-destructive font-medium' : 'font-medium'}>
                   {fmt(b.netAfterDailyFixedCost)}
+                  {idleBranchIds.has(b.branchId) && (
+                    <span className="text-muted-foreground ms-1 text-xs font-normal" title={NO_SALES_TODAY_HINT}>
+                      (لسه مفيش مبيعات)
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -60,6 +84,7 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
         "إجمالي المبيعات" رقم تراكمي لكل الوقت. أعمدة الربح والمصاريف الثابتة واليوم بعدها كلها عن اليوم الحالي فقط —
         نفس الفترة، عشان تكون قابلة للمقارنة مع بعضها.
       </p>
+      {allBranchesIdle && <p className="text-muted-foreground text-xs">{NO_SALES_TODAY_HINT}</p>}
       {summary.branches.length > 1 && (
         <div className="border-border grid grid-cols-2 gap-3 border-t pt-3 sm:grid-cols-3 lg:grid-cols-5">
           <div>
