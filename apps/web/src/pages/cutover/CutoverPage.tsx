@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { BranchSummary, CutoverRecord, InventoryOpening, TreasuryOpening } from '@cleopatra/shared';
+import type { BranchSummary, CutoverRecord, InventoryItem, InventoryOpening, TreasuryOpening } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 // Cutover-revision-round decision (post-3D) — Badge introduced here purely
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 // owner's explicit instruction to never blend a cosmetic change into a
 // logic-change commit.
 import { Badge } from '@/components/ui/badge';
+import { InventoryItemCombobox } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 /**
@@ -23,6 +24,24 @@ import { useAuth } from '@/state/AuthContext';
 
 const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
 
+// The API returns these as raw enum values; the UI is Arabic-only, so every
+// place that shows one goes through a label map (unknown values fall back to
+// the raw value rather than rendering blank).
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'مسودة',
+  REVIEW: 'قيد المراجعة',
+  APPROVED: 'معتمد',
+  ACTIVE: 'مُفعّل',
+};
+const VERIFICATION_LABELS: Record<string, string> = { UNVERIFIED: 'لم يتم التحقق', VERIFIED: 'تم التحقق' };
+const METHOD_LABELS: Record<string, string> = {
+  CASH: 'كاش',
+  VODAFONE_CASH: 'فودافون كاش',
+  INSTAPAY: 'انستاباي',
+  BANK_ACCOUNT: 'حساب بنكي',
+};
+const label = (map: Record<string, string>, key: string) => map[key] ?? key;
+
 type CutoverDetail = CutoverRecord & { treasuryOpenings: TreasuryOpening[]; inventoryOpenings: InventoryOpening[] };
 
 export function CutoverPage() {
@@ -31,6 +50,8 @@ export function CutoverPage() {
   const [selected, setSelected] = useState<CutoverDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [branches, setBranches] = useState<BranchSummary[]>([]);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
 
   const roleNames = authContext?.user.roles.map((r) => r.name) ?? [];
   const isSuperAdmin = roleNames.includes('SUPER_ADMIN');
@@ -43,6 +64,12 @@ export function CutoverPage() {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : 'تعذر تحميل قائمة الـCutover'));
   };
   useEffect(load, []);
+  useEffect(() => {
+    apiGet<BranchSummary[]>('/api/branches').then(setBranches).catch(() => undefined);
+    apiGet<InventoryItem[]>('/api/inventory-items').then(setInventoryItems).catch(() => undefined);
+  }, []);
+  const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? '—';
+  const itemName = (id: string) => inventoryItems.find((i) => i.id === id)?.name ?? '—';
 
   const loadDetail = (id: string) => {
     apiGet<CutoverDetail>(`/api/cutover/${id}`)
@@ -92,8 +119,10 @@ export function CutoverPage() {
               className={`border-border block w-full rounded-md border p-2 text-start text-sm ${selected?.id === c.id ? 'bg-accent' : ''}`}
             >
               <div className="flex items-center justify-between">
-                <span>{c.goLiveDate}</span>
-                <span className="text-xs">{c.status}{c.isSuperseded ? ' (Superseded)' : ''}</span>
+                <span>
+                  {branchName(c.branchId)} — {c.goLiveDate}
+                </span>
+                <span className="text-xs">{label(STATUS_LABELS, c.status)}{c.isSuperseded ? ' (أُلغي نهائيًا)' : ''}</span>
               </div>
             </button>
           ))}
@@ -103,9 +132,9 @@ export function CutoverPage() {
           <div className="border-border bg-card space-y-4 rounded-2xl border p-4 md:col-span-2">
             <div className="flex items-center justify-between">
               <div className="space-y-1">
-                <p className="font-semibold">Cutover — {selected.goLiveDate}</p>
+                <p className="font-semibold">Cutover {branchName(selected.branchId)} — {selected.goLiveDate}</p>
                 <p className="text-muted-foreground text-xs">
-                  آخر يوم يدوي: {selected.lastManualDate} · الحالة: {selected.status}
+                  آخر يوم يدوي: {selected.lastManualDate} · الحالة: {label(STATUS_LABELS, selected.status)}
                 </p>
                 {/* Cutover-revision-round decision (post-3D) — the logic (selfApprovedException itself) was already implemented in the services round; only its display here is new. */}
                 {selected.selfApprovedException && <Badge variant="destructive">⚠️ تم الاعتماد ذاتيًا (استثناء طارئ)</Badge>}
@@ -123,7 +152,7 @@ export function CutoverPage() {
                 )}
                 {selected.status === 'APPROVED' && isSuperAdmin && (
                   <Button size="sm" onClick={() => runAction(() => apiPost(`/api/cutover/${selected.id}/activate`, {}))}>
-                    تفعيل (Go-Live)
+                    تفعيل (بدء التشغيل)
                   </Button>
                 )}
                 {(selected.status === 'APPROVED' || selected.status === 'ACTIVE') && isAdmin && (
@@ -143,11 +172,11 @@ export function CutoverPage() {
                     size="sm"
                     variant="destructive"
                     onClick={() => {
-                      const reason = window.prompt('سبب الإلغاء النهائي (Supersede)؟ — سيسمح بإنشاء Cutover جديد لهذا الفرع');
+                      const reason = window.prompt('سبب الإلغاء النهائي؟ — سيسمح بإنشاء Cutover جديد لهذا الفرع');
                       if (reason) runAction(() => apiPost(`/api/cutover/${selected.id}/supersede`, { reason }));
                     }}
                   >
-                    Supersede
+                    إلغاء نهائي
                   </Button>
                 )}
               </div>
@@ -156,7 +185,7 @@ export function CutoverPage() {
             {selected.status === 'DRAFT' && (
               <>
                 <AddTreasuryOpeningForm cutoverId={selected.id} onAdded={() => loadDetail(selected.id)} />
-                <AddInventoryOpeningForm cutoverId={selected.id} onAdded={() => loadDetail(selected.id)} />
+                <AddInventoryOpeningForm cutoverId={selected.id} items={inventoryItems} onAdded={() => loadDetail(selected.id)} />
               </>
             )}
 
@@ -166,9 +195,9 @@ export function CutoverPage() {
                 <tbody>
                   {selected.treasuryOpenings.map((t) => (
                     <tr key={t.id} className="border-border border-b">
-                      <td className="p-2">{t.method}</td>
+                      <td className="p-2">{label(METHOD_LABELS, t.method)}</td>
                       <td className="p-2" dir="ltr">{fmt(t.amount)}</td>
-                      <td className="p-2 text-xs">{t.verificationStatus}</td>
+                      <td className="p-2 text-xs">{label(VERIFICATION_LABELS, t.verificationStatus)}</td>
                       {selected.status === 'DRAFT' && t.verificationStatus === 'UNVERIFIED' && (
                         <td className="p-2">
                           <button
@@ -201,8 +230,9 @@ export function CutoverPage() {
                 <tbody>
                   {selected.inventoryOpenings.map((i) => (
                     <tr key={i.id} className="border-border border-b">
+                      <td className="p-2">{itemName(i.inventoryItemId)}</td>
                       <td className="p-2" dir="ltr">{fmt(i.quantity)}</td>
-                      <td className="p-2 text-xs">{i.verificationStatus}</td>
+                      <td className="p-2 text-xs">{label(VERIFICATION_LABELS, i.verificationStatus)}</td>
                       <td className="p-2 text-xs">{i.activatedAt ? `مُفعّل — ${new Date(i.activatedAt).toLocaleDateString('ar-EG')}` : '—'}</td>
                       {selected.status === 'DRAFT' && i.verificationStatus === 'UNVERIFIED' && (
                         <td className="p-2">
@@ -336,7 +366,7 @@ function AddTreasuryOpeningForm({ cutoverId, onAdded }: { cutoverId: string; onA
   );
 }
 
-function AddInventoryOpeningForm({ cutoverId, onAdded }: { cutoverId: string; onAdded: () => void }) {
+function AddInventoryOpeningForm({ cutoverId, items, onAdded }: { cutoverId: string; items: InventoryItem[]; onAdded: () => void }) {
   const [inventoryItemId, setInventoryItemId] = useState('');
   const [quantity, setQuantity] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -344,6 +374,10 @@ function AddInventoryOpeningForm({ cutoverId, onAdded }: { cutoverId: string; on
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (!inventoryItemId) {
+      setError('اختر الصنف أولًا');
+      return;
+    }
     try {
       await apiPost(`/api/cutover/${cutoverId}/inventory-openings`, { inventoryItemId, quantity: Number(quantity) });
       setInventoryItemId('');
@@ -358,7 +392,7 @@ function AddInventoryOpeningForm({ cutoverId, onAdded }: { cutoverId: string; on
     <form onSubmit={submit} className="flex flex-wrap items-end gap-2 text-sm">
       <span className="font-semibold">+ رصيد مخزون افتتاحي:</span>
       {error && <span className="text-destructive">{error}</span>}
-      <input required placeholder="Inventory Item ID" value={inventoryItemId} onChange={(e) => setInventoryItemId(e.target.value)} className="border-input bg-background rounded-md border px-2 py-1" />
+      <InventoryItemCombobox items={items} value={inventoryItemId} onChange={(item) => setInventoryItemId(item.id)} placeholder="اختر الصنف…" className="w-56" />
       <input required type="number" min={0} step="0.001" placeholder="الكمية الفعلية" value={quantity} onChange={(e) => setQuantity(e.target.value)} className="border-input bg-background w-32 rounded-md border px-2 py-1" />
       <Button size="sm" type="submit">إضافة</Button>
     </form>
