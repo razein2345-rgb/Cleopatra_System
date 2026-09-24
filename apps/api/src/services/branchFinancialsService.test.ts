@@ -1,17 +1,18 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { resolveItemProfit } from './branchFinancialsService.js';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 
-// Cutover-revision-round decision (post-3D, Decision B1) — module-level
-// mocks needed by the "B1 exclusion guarantee" behavioral test further
-// below. Must live at the true top level (Vitest hoists `vi.mock` above
-// every import regardless of where it's textually placed) — harmless to
-// the `resolveItemProfit` tests above/below, since that function is pure
-// and never touches `prisma` or `fixedExpensesService.js`.
+// Accounting audit fix (2026-09-17, Phase B) — module-level mocks for the
+// `getCompanyFinancialSummary` time-basis regression tests further below.
+// Must live at the true top level (Vitest hoists `vi.mock` above every
+// import regardless of where it's textually placed, and warns/will error
+// if it isn't already there) — harmless to the `resolveItemProfit` tests
+// above/below, since that function is pure and never touches `prisma` or
+// `fixedExpensesService.js`.
 const branchFindMany = vi.fn();
 const treasuryGroupBy = vi.fn();
 const treasuryAggregate = vi.fn();
@@ -312,6 +313,290 @@ describe('resolveItemProfit', () => {
       expect(result.profit).toBeCloseTo(129.6, 5);
     });
   });
+
+  /**
+   * Accounting audit fix (2026-09-17, Phase 3/Decision 5) — every branch
+   * above must also carry an explicit REAL/ESTIMATED/UNKNOWN confidence
+   * tag, never silently blended. `cost` must always equal `revenue -
+   * profit` (the invariant `resolveItemProfit` is built to preserve).
+   */
+  describe('cost confidence classification (REAL / ESTIMATED / UNKNOWN)', () => {
+    it('REAL: INVENTORY_RETAIL with a recorded cost price', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      byInv.set('inv-1', 5);
+      const result = resolveItemProfit(
+        { itemTotal: 100, discountAmount: 0, breakdown: { quantity: 10, unitPrice: 10 }, inventoryItemId: 'inv-1', readyProductId: null, modelName: null },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(result.confidence).toBe('REAL');
+      expect(result.cost).toBeCloseTo(50, 5);
+      expect(result.cost).toBeCloseTo(result.revenue - (result.profit ?? 0), 5);
+    });
+
+    it('UNKNOWN: INVENTORY_RETAIL with no cost price recorded — never inferred as REAL just because a price exists elsewhere', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      byInv.set('inv-1', null);
+      const result = resolveItemProfit(
+        { itemTotal: 100, discountAmount: 0, breakdown: { quantity: 10, unitPrice: 10 }, inventoryItemId: 'inv-1', readyProductId: null, modelName: null },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(result.confidence).toBe('UNKNOWN');
+      expect(result.cost).toBeNull();
+      expect(result.profit).toBeNull();
+    });
+
+    it('REAL: PRODUCT via readyProductId FK', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      byProdId.set('rp-1', 30);
+      const result = resolveItemProfit(
+        { itemTotal: 200, discountAmount: 0, breakdown: { kind: 'PRODUCT', quantity: 2, unitPrice: 100 }, inventoryItemId: null, readyProductId: 'rp-1', modelName: 'دباسة' },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(result.confidence).toBe('REAL');
+    });
+
+    it('UNKNOWN: SERVICE/MANUAL with no cost basis concept at all', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      const result = resolveItemProfit(
+        { itemTotal: 100, discountAmount: 0, breakdown: { kind: 'SERVICE', quantity: 1, unitPrice: 100 }, inventoryItemId: null, readyProductId: null, modelName: null },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(result.confidence).toBe('UNKNOWN');
+    });
+
+    it('REAL: BOARDS with a configured supplierCost — the same figure that books a real SupplierPurchase', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      const result = resolveItemProfit(
+        { itemTotal: 600, discountAmount: 0, breakdown: { supplierCost: 200 }, inventoryItemId: null, readyProductId: null, modelName: null },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(result.confidence).toBe('REAL');
+    });
+
+    it('UNKNOWN: BOARDS with no supplierCost recorded (rate never configured)', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      const result = resolveItemProfit(
+        { itemTotal: 600, discountAmount: 0, breakdown: { material: 'FLEX', quantity: 2 }, inventoryItemId: null, readyProductId: null, modelName: null },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(result.confidence).toBe('UNKNOWN');
+    });
+
+    it('REAL: OFFSET real cost path (zinc supplier + paper merchant rates both configured)', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      const paperCost = new Map([['paper-1', 5]]);
+      const result = resolveItemProfit(
+        { itemTotal: 200, discountAmount: 0, breakdown: { subtotal: 120, sheetsNeeded: 10, colorCount: 2 }, inventoryItemId: 'paper-1', readyProductId: null, modelName: null },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+        paperCost,
+        3,
+      );
+      expect(result.confidence).toBe('REAL');
+    });
+
+    it('ESTIMATED: OFFSET margin-ratio fallback when the real supplier rate is not configured — never presented as REAL', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      const paperCost = new Map<string, number | null>([['paper-1', null]]);
+      const result = resolveItemProfit(
+        { itemTotal: 200, discountAmount: 0, breakdown: { subtotal: 120, sheetsNeeded: 10, colorCount: 2 }, inventoryItemId: 'paper-1', readyProductId: null, modelName: null },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+        paperCost,
+        3,
+      );
+      expect(result.confidence).toBe('ESTIMATED');
+    });
+
+    it('REAL: MANUAL item whose supplier task cost is confirmed (status RECEIVED)', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      const result = resolveItemProfit(
+        {
+          itemTotal: 300,
+          discountAmount: 0,
+          breakdown: { kind: 'MANUAL', quantity: 1, unitPrice: 300 },
+          inventoryItemId: null,
+          readyProductId: null,
+          modelName: null,
+          supplierTasksCost: 100,
+          supplierTasksConfirmed: true,
+        },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(result.confidence).toBe('REAL');
+      expect(result.profit).toBeCloseTo(200, 5);
+    });
+
+    it('ESTIMATED: MANUAL item whose supplier task cost is only typed in while still WAITING/SENT — a real number, not yet a confirmed payable', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      const result = resolveItemProfit(
+        {
+          itemTotal: 300,
+          discountAmount: 0,
+          breakdown: { kind: 'MANUAL', quantity: 1, unitPrice: 300 },
+          inventoryItemId: null,
+          readyProductId: null,
+          modelName: null,
+          supplierTasksCost: 100,
+          supplierTasksConfirmed: false,
+        },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(result.confidence).toBe('ESTIMATED');
+      expect(result.profit).toBeCloseTo(200, 5);
+    });
+
+    it('the cost/profit/revenue invariant (cost = revenue - profit) holds for every confidence tier, including under a discount', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      byInv.set('inv-1', 5);
+      const result = resolveItemProfit(
+        { itemTotal: 100, discountAmount: 10, breakdown: { quantity: 10, unitPrice: 10 }, inventoryItemId: 'inv-1', readyProductId: null, modelName: null },
+        0.9,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(result.cost).toBeCloseTo(result.revenue - (result.profit ?? 0), 10);
+    });
+
+    it('does not silently blend REAL and ESTIMATED into a single unlabeled figure — the two tests above prove the same shape of cost source (a real number typed in) produces different confidence depending on confirmation state', () => {
+      const { byInv, byProdId, byProdName } = noCostMaps();
+      const confirmed = resolveItemProfit(
+        { itemTotal: 300, discountAmount: 0, breakdown: { kind: 'MANUAL' }, inventoryItemId: null, readyProductId: null, modelName: null, supplierTasksCost: 100, supplierTasksConfirmed: true },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      const unconfirmed = resolveItemProfit(
+        { itemTotal: 300, discountAmount: 0, breakdown: { kind: 'MANUAL' }, inventoryItemId: null, readyProductId: null, modelName: null, supplierTasksCost: 100, supplierTasksConfirmed: false },
+        1,
+        byInv,
+        byProdId,
+        byProdName,
+      );
+      expect(confirmed.profit).toBe(unconfirmed.profit); // same math
+      expect(confirmed.confidence).not.toBe(unconfirmed.confidence); // different certainty, disclosed
+    });
+  });
+});
+
+/**
+ * Accounting audit fix (2026-09-17, Phase B/time-basis) — regression
+ * coverage for `getCompanyFinancialSummary`'s own time-basis fix:
+ * `netProfit`/`realProfit`/`estimatedProfit` must be scoped to TODAY
+ * (Cairo business day) only, matching `dailyFixedCost`'s own one-day
+ * period — `salesTotal` stays all-time, unchanged, so the two can be told
+ * apart in the same response.
+ */
+describe('getCompanyFinancialSummary — time-basis fix (Phase B)', () => {
+  beforeEach(() => {
+    branchFindMany.mockReset().mockResolvedValue([{ id: 'branch-1', name: 'الفرع الرئيسي' }]);
+    treasuryGroupBy.mockReset().mockResolvedValue([]);
+    orderFindMany.mockReset();
+    inventoryItemFindMany.mockReset().mockResolvedValue([{ id: 'inv-1', costPrice: { toNumber: () => 5 }, sheetType: null }]);
+    readyProductFindMany.mockReset().mockResolvedValue([]);
+    settingFindFirst.mockReset().mockResolvedValue({ zincSupplierCost: { toNumber: () => 0 } });
+    getDailyFixedCostByBranchMock.mockReset().mockResolvedValue({ perBranch: new Map(), companyWideDaily: 0 });
+  });
+
+  function inventoryRetailOrder(branchId: string, date: Date) {
+    return {
+      branchId,
+      date,
+      finalTotal: { toNumber: () => 100 },
+      discountPercent: { toNumber: () => 0 },
+      items: [
+        {
+          itemTotal: { toNumber: () => 100 },
+          discountAmount: { toNumber: () => 0 },
+          breakdown: { quantity: 10, unitPrice: 10 },
+          inventoryItemId: 'inv-1',
+          readyProductId: null,
+          modelName: null,
+          supplierTasks: [],
+        },
+      ],
+    };
+  }
+
+  it('includes a yesterday order in salesTotal (all-time) but NOT in netProfit/realProfit (today-only)', async () => {
+    const { getCompanyFinancialSummary } = await import('./branchFinancialsService.js');
+    const yesterday = new Date(Date.now() - 25 * 60 * 60 * 1000); // safely before today's Cairo midnight
+    orderFindMany.mockResolvedValue([inventoryRetailOrder('branch-1', yesterday)]);
+
+    const summary = await getCompanyFinancialSummary();
+    const branch = summary.branches[0]!;
+
+    expect(branch.salesTotal).toBe(100); // all-time — still counts the old order
+    expect(branch.netProfit).toBe(0); // today-only — the old order must NOT count
+    expect(branch.realProfit).toBe(0);
+  });
+
+  it('includes a today order in BOTH salesTotal and netProfit/realProfit', async () => {
+    const { getCompanyFinancialSummary } = await import('./branchFinancialsService.js');
+    orderFindMany.mockResolvedValue([inventoryRetailOrder('branch-1', new Date())]);
+
+    const summary = await getCompanyFinancialSummary();
+    const branch = summary.branches[0]!;
+
+    expect(branch.salesTotal).toBe(100);
+    expect(branch.netProfit).toBeCloseTo(50, 5); // (10-5)*10
+    expect(branch.realProfit).toBeCloseTo(50, 5);
+  });
+
+  it('a mix of yesterday + today orders: salesTotal sums both, netProfit reflects only today', async () => {
+    const { getCompanyFinancialSummary } = await import('./branchFinancialsService.js');
+    const yesterday = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    orderFindMany.mockResolvedValue([inventoryRetailOrder('branch-1', yesterday), inventoryRetailOrder('branch-1', new Date())]);
+
+    const summary = await getCompanyFinancialSummary();
+    const branch = summary.branches[0]!;
+
+    expect(branch.salesTotal).toBe(200); // both orders, all-time
+    expect(branch.netProfit).toBeCloseTo(50, 5); // only today's order
+  });
+
+  it('netAfterDailyFixedCost compares TODAY profit against the SAME one-day fixed cost — no all-time/one-day mixing', async () => {
+    const { getCompanyFinancialSummary } = await import('./branchFinancialsService.js');
+    getDailyFixedCostByBranchMock.mockResolvedValue({ perBranch: new Map([['branch-1', 20]]), companyWideDaily: 0 });
+    orderFindMany.mockResolvedValue([inventoryRetailOrder('branch-1', new Date())]);
+
+    const summary = await getCompanyFinancialSummary();
+    const branch = summary.branches[0]!;
+
+    expect(branch.netProfit).toBeCloseTo(50, 5);
+    expect(branch.dailyFixedCost).toBe(20);
+    expect(branch.netAfterDailyFixedCost).toBeCloseTo(30, 5); // 50 - 20, both today-scoped
+  });
 });
 
 /**
@@ -326,12 +611,7 @@ describe('resolveItemProfit', () => {
  * instead of silently reintroducing a profitability special-case. The
  * behavioral half (below) proves the same thing dynamically: an order
  * carrying `customerOpeningId` must compute the exact same salesTotal/
- * netProfit as an otherwise-identical ordinary order. `realProfit`
- * deliberately not asserted here — it does not exist on the committed
- * getCompanyFinancialSummary return type at all; it's a field the
- * still-uncommitted Phase C/D work adds. Narrowed to avoid an undisclosed
- * forward-dependency on that unrelated, unreviewed work (found via the
- * isolated worktree build check) — re-add once Phase C/D lands.
+ * netProfit/realProfit as an otherwise-identical ordinary order.
  */
 describe('B1 exclusion guarantee — customerOpeningId must never feed profitability', () => {
   it('customerOpeningId and ordersContinuingThisOpening are referenced zero times in the profitability-computing source files', () => {
@@ -343,7 +623,7 @@ describe('B1 exclusion guarantee — customerOpeningId must never feed profitabi
     }
   });
 
-  it('an order with customerOpeningId set contributes to salesTotal/netProfit exactly like an ordinary order with the same numbers', async () => {
+  it('an order with customerOpeningId set contributes to salesTotal/netProfit/realProfit exactly like an ordinary order with the same numbers', async () => {
     branchFindMany.mockReset().mockResolvedValue([{ id: 'branch-1', name: 'الفرع الرئيسي' }]);
     treasuryGroupBy.mockReset().mockResolvedValue([]);
     inventoryItemFindMany.mockReset().mockResolvedValue([{ id: 'inv-1', costPrice: { toNumber: () => 5 }, sheetType: null }]);
@@ -390,9 +670,7 @@ describe('B1 exclusion guarantee — customerOpeningId must never feed profitabi
     const [ordinaryBranch, continuationBranch] = [ordinary.branches[0]!, continuation.branches[0]!];
     expect(continuationBranch.salesTotal).toBe(ordinaryBranch.salesTotal);
     expect(continuationBranch.netProfit).toBe(ordinaryBranch.netProfit);
-    // realProfit deliberately not asserted — see the describe block's own
-    // doc comment above; the field doesn't exist on the committed return
-    // type yet (still-uncommitted Phase C/D work). Re-add once that lands.
+    expect(continuationBranch.realProfit).toBe(ordinaryBranch.realProfit);
     // Sanity pin, same math as the time-basis tests above: (10-5)*10 = 50.
     expect(continuationBranch.netProfit).toBeCloseTo(50, 5);
   });

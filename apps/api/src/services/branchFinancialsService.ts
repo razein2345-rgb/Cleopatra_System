@@ -1,6 +1,7 @@
 import type { BranchFinancialSummary, CompanyFinancialSummary } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import { getDailyFixedCostByBranch } from './fixedExpensesService.js';
+import { businessDayRangeUtc, todayInBusinessTimezone } from '../lib/businessTimezone.js';
 
 /**
  * Owner (2026-08-26, "افصل تماماً بين أمين خزينة كليوباترا و أمين خزينة
@@ -102,6 +103,33 @@ function resolveOffsetRealCost(
   return null;
 }
 
+/**
+ * Accounting audit fix (2026-09-17, Phase 3/Decision 5) — every cost basis
+ * this function can resolve now carries an explicit confidence tag instead
+ * of collapsing into one blended `profit` number:
+ *
+ * - `REAL` — the cost figure traces directly to an owner-entered actual
+ *   supplier rate/cost-price field (`InventoryItem.costPrice`,
+ *   `ReadyProduct.costPrice`, `SheetType.costPrice`/`Setting.
+ *   zincSupplierCost` for the OFFSET family, or the settings-configured
+ *   supplier rate behind a BOARDS item's `breakdown.supplierCost` — the
+ *   same figure `workflowInstanceService.maybeCreateBoardsSupplierPurchase`
+ *   books as a real `SupplierPurchase`), or a `ItemSupplierTask.cost` whose
+ *   task has actually reached `RECEIVED` (Decision 3 — only a RECEIVED
+ *   task is a confirmed payable, not just a typed-in estimate).
+ * - `ESTIMATED` — the pricing engine's own padded margin-ratio fallback
+ *   (used only when a REAL rate isn't configured), or an
+ *   `ItemSupplierTask.cost` whose task is still WAITING/SENT — a real
+ *   number was typed in, but it is not yet a confirmed payable.
+ * - `UNKNOWN` — no cost data resolvable at all; `profit`/`cost` stay
+ *   `null`, exactly as before this fix (never a guess).
+ *
+ * `cost` is always derived as `revenue - profit` once profit is computed,
+ * so the invariant `profit === revenue - cost` holds by construction —
+ * there is no separate cost computation that could drift from it.
+ */
+export type CostConfidence = 'REAL' | 'ESTIMATED' | 'UNKNOWN';
+
 export function resolveItemProfit(
   item: {
     itemTotal: number | null;
@@ -118,6 +146,14 @@ export function resolveItemProfit(
      * same as before this field existed.
      */
     supplierTasksCost?: number | null;
+    /**
+     * Accounting audit fix (2026-09-17, Decision 5) — true only when
+     * EVERY recorded supplier leg (the same set `supplierTasksCost` was
+     * summed from) has reached `RECEIVED`. A cost typed in while a task is
+     * still WAITING/SENT is a real number but not yet a confirmed
+     * payable — classified `ESTIMATED`, not `REAL`, until then.
+     */
+    supplierTasksConfirmed?: boolean;
   },
   orderDiscountFactor: number,
   costPriceByInventoryItemId: Map<string, number | null>,
@@ -125,20 +161,23 @@ export function resolveItemProfit(
   costPriceByReadyProductName: Map<string, number | null>,
   paperCostPriceByInventoryItemId: Map<string, number | null> = new Map(),
   zincSupplierCost = 0,
-): { revenue: number; profit: number | null } {
+): { revenue: number; profit: number | null; cost: number | null; confidence: CostConfidence } {
   const itemTotal = item.itemTotal ?? 0;
   const revenue = (itemTotal - item.discountAmount) * orderDiscountFactor;
   const breakdown = (item.breakdown ?? {}) as ItemBreakdownShape;
+
+  const known = (profit: number, confidence: CostConfidence) => ({ revenue, profit, cost: revenue - profit, confidence });
+  const unknown = () => ({ revenue, profit: null, cost: null, confidence: 'UNKNOWN' as const });
 
   // 1. Margin-priced kinds — subtotal is the pre-margin cost, always present.
   if (typeof breakdown.subtotal === 'number') {
     const realCost = resolveOffsetRealCost(breakdown, item, paperCostPriceByInventoryItemId, zincSupplierCost);
     if (realCost != null) {
-      return { revenue, profit: revenue - realCost * orderDiscountFactor };
+      return known(revenue - realCost * orderDiscountFactor, 'REAL');
     }
     // Fallback — the pricing engine's own frozen (padded) cost baseline, same as before real supplier costs were tracked.
     const marginRatio = itemTotal > 0 ? (itemTotal - breakdown.subtotal) / itemTotal : 0;
-    return { revenue, profit: revenue * marginRatio };
+    return known(revenue * marginRatio, 'ESTIMATED');
   }
 
   const quantity = typeof breakdown.quantity === 'number' ? breakdown.quantity : 1;
@@ -149,9 +188,9 @@ export function resolveItemProfit(
     const costPrice = costPriceByInventoryItemId.get(item.inventoryItemId);
     if (costPrice != null && unitPrice != null) {
       const costBasis = costPrice * quantity * orderDiscountFactor;
-      return { revenue, profit: revenue - costBasis };
+      return known(revenue - costBasis, 'REAL');
     }
-    return { revenue, profit: null };
+    return unknown();
   }
 
   // 3. PRODUCT — real FK when present, best-effort name match otherwise.
@@ -161,31 +200,34 @@ export function resolveItemProfit(
       : (item.modelName ? costPriceByReadyProductName.get(item.modelName.trim().toLowerCase()) : undefined);
     if (costPrice != null && unitPrice != null) {
       const costBasis = costPrice * quantity * orderDiscountFactor;
-      return { revenue, profit: revenue - costBasis };
+      return known(revenue - costBasis, 'REAL');
     }
-    return { revenue, profit: null };
+    return unknown();
   }
 
   // 4. BOARDS — real supplier cost, computed at pricing time from the
   // area/piece geometry × the settings-configured supplier rate (part 4 of
-  // this initiative). `undefined` means the item predates this feature or
-  // its material's supplier rate was never configured (still 0/default) —
-  // an honest "unknown" rather than a fabricated number.
+  // this initiative) — the same figure that gets booked as a real
+  // `SupplierPurchase` once the job reaches the EXTERNAL stage. `undefined`
+  // means the item predates this feature or its material's supplier rate
+  // was never configured (still 0/default) — an honest "unknown" rather
+  // than a fabricated number.
   if (typeof breakdown.supplierCost === 'number') {
     const costBasis = breakdown.supplierCost * orderDiscountFactor;
-    return { revenue, profit: revenue - costBasis };
+    return known(revenue - costBasis, 'REAL');
   }
 
-  // 5. MANUAL with real ad-hoc supplier costs recorded (owner, 2026-09-09,
-  // "وفين السعر اللي هدفعه للمورد؟") — same "real cost, never a guess"
-  // discipline as BOARDS above.
+  // 5. MANUAL with ad-hoc supplier costs recorded (owner, 2026-09-09, "وفين
+  // السعر اللي هدفعه للمورد؟") — REAL only once every recorded leg is
+  // actually RECEIVED (a confirmed payable, Decision 3); ESTIMATED while
+  // still WAITING/SENT (a real number, not yet a confirmed cost).
   if (item.supplierTasksCost != null) {
     const costBasis = item.supplierTasksCost * orderDiscountFactor;
-    return { revenue, profit: revenue - costBasis };
+    return known(revenue - costBasis, item.supplierTasksConfirmed ? 'REAL' : 'ESTIMATED');
   }
 
   // 6. SERVICE/MANUAL, or a BOARDS item with no supplier cost recorded — no cost basis concept yet.
-  return { revenue, profit: null };
+  return unknown();
 }
 
 /**
@@ -204,6 +246,35 @@ export function resolveItemProfit(
 export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<CompanyFinancialSummary> {
   const branchWhere = branchIds ? { id: { in: branchIds } } : {};
   const entryBranchWhere = branchIds ? { branchId: { in: branchIds } } : {};
+  // Accounting audit fix (2026-09-17, Phase B/time-basis) — `dailyFixedCost`
+  // is inherently a ONE-DAY rate (its own name and formula say so); the
+  // previous bug was subtracting it from an ALL-TIME cumulative `netProfit`
+  // instead of TODAY's profit — two different time bases combined into one
+  // number that corresponded to no real accounting period. `salesTotal`/
+  // `treasuryBalance` below are UNCHANGED (still all-time — never flagged
+  // as broken); only `netProfit`/`hasUnknownProfitItems`/the new REAL/
+  // ESTIMATED/UNKNOWN breakdown are now scoped to TODAY (Cairo business
+  // day), so they share the exact same period as the `dailyFixedCost`
+  // they're compared against. `resolveBranchScope`/date-range-driven
+  // reports (Phase C/D) are separate functions with an explicit,
+  // caller-required range — this function's own no-argument shape keeps
+  // serving the existing "today's spendable profit" dashboard widget.
+  //
+  // `todayInBusinessTimezone()` alone is NOT the right tool here — it
+  // returns a day-bucketing LABEL (same calendar-day number as Cairo's
+  // current date, expressed as literal UTC midnight; correct for a
+  // `@db.Date` column like `AttendanceEntry.date`), not the real UTC
+  // instant Cairo midnight falls at. Comparing a real timestamp
+  // (`order.date`) against that label directly is wrong for roughly the
+  // first 2-3 hours of every Cairo day (UTC is still "yesterday" by the
+  // label's own numbering) — verified live: this exact mistake was caught
+  // before commit by running this file's own test suite at 22:47 UTC,
+  // when the bug reproduced immediately. `businessDayRangeUtc` is the
+  // helper that resolves the real instant, and it's what `getReportsOverviewHandler`
+  // and this same audit's own Phase 3 C/D report already use for
+  // identical date-boundary comparisons — reused here rather than
+  // re-deriving it.
+  const todayStart = businessDayRangeUtc(todayInBusinessTimezone().toISOString().slice(0, 10)).start;
   const [branches, treasuryGrouped, orders, inventoryItems, readyProducts, paperInventoryItems, setting, dailyFixedCost] = await Promise.all([
     prisma.branch.findMany({ where: { isDeleted: false, ...branchWhere }, select: { id: true, name: true } }),
     prisma.treasuryEntry.groupBy({
@@ -215,6 +286,7 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
       where: { isDeleted: false, status: { not: 'CANCELLED' }, ...entryBranchWhere },
       select: {
         branchId: true,
+        date: true,
         finalTotal: true,
         discountPercent: true,
         items: {
@@ -228,8 +300,9 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
             // Owner (2026-09-09, "وفين السعر اللي هدفعه للمورد؟ علشان تعرف
             // تحسب صافي الربح") — real per-leg supplier cost for a manual
             // item with ad-hoc supplier work (see `resolveItemProfit`'s
-            // step 3.5).
-            supplierTasks: { where: { isDeleted: false }, select: { cost: true } },
+            // step 3.5). `status` (Decision 5) distinguishes a confirmed
+            // RECEIVED cost from a still-WAITING/SENT estimate.
+            supplierTasks: { where: { isDeleted: false }, select: { cost: true, status: true } },
           },
         },
       },
@@ -258,12 +331,36 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
 
   const byBranch = new Map<
     string,
-    { income: number; expense: number; salesTotal: number; salesCount: number; netProfit: number; hasUnknown: boolean }
+    {
+      income: number;
+      expense: number;
+      salesTotal: number;
+      salesCount: number;
+      netProfit: number;
+      realProfit: number;
+      estimatedProfit: number;
+      realCost: number;
+      estimatedCost: number;
+      unknownCostRevenue: number;
+      hasUnknown: boolean;
+    }
   >();
   const ensure = (branchId: string) => {
     const existing = byBranch.get(branchId);
     if (existing) return existing;
-    const fresh = { income: 0, expense: 0, salesTotal: 0, salesCount: 0, netProfit: 0, hasUnknown: false };
+    const fresh = {
+      income: 0,
+      expense: 0,
+      salesTotal: 0,
+      salesCount: 0,
+      netProfit: 0,
+      realProfit: 0,
+      estimatedProfit: 0,
+      realCost: 0,
+      estimatedCost: 0,
+      unknownCostRevenue: 0,
+      hasUnknown: false,
+    };
     byBranch.set(branchId, fresh);
     return fresh;
   };
@@ -277,18 +374,23 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
 
   for (const order of orders) {
     const entry = ensure(order.branchId);
+    // `salesTotal`/`salesCount` stay ALL-TIME (unchanged) — only the
+    // profit/cost-confidence breakdown below is scoped to today.
     entry.salesTotal += order.finalTotal.toNumber();
     entry.salesCount += 1;
+    if (order.date < todayStart) continue;
     const orderDiscountFactor = 1 - order.discountPercent.toNumber() / 100;
     for (const item of order.items) {
       // Owner (2026-09-09) — a known cost basis only when EVERY recorded
       // supplier leg has a cost typed in; a partial cost would understate
       // the real spend and overstate profit, worse than an honest gap.
+      const tasksWithCost = item.supplierTasks.every((t) => t.cost != null);
       const supplierTasksCost =
-        item.supplierTasks.length > 0 && item.supplierTasks.every((t) => t.cost != null)
+        item.supplierTasks.length > 0 && tasksWithCost
           ? item.supplierTasks.reduce((sum, t) => sum + t.cost!.toNumber(), 0)
           : null;
-      const { profit } = resolveItemProfit(
+      const supplierTasksConfirmed = tasksWithCost && item.supplierTasks.every((t) => t.status === 'RECEIVED');
+      const { revenue: itemRevenue, profit, cost, confidence } = resolveItemProfit(
         {
           itemTotal: item.itemTotal?.toNumber() ?? null,
           discountAmount: item.discountAmount.toNumber(),
@@ -297,6 +399,7 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
           readyProductId: item.readyProductId,
           modelName: item.modelName,
           supplierTasksCost,
+          supplierTasksConfirmed,
         },
         orderDiscountFactor,
         costPriceByInventoryItemId,
@@ -305,10 +408,18 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
         paperCostPriceByInventoryItemId,
         zincSupplierCost,
       );
-      if (profit === null) {
+      if (profit === null || confidence === 'UNKNOWN') {
         entry.hasUnknown = true;
+        entry.unknownCostRevenue += itemRevenue;
       } else {
         entry.netProfit += profit;
+        if (confidence === 'REAL') {
+          entry.realProfit += profit;
+          entry.realCost += cost ?? 0;
+        } else {
+          entry.estimatedProfit += profit;
+          entry.estimatedCost += cost ?? 0;
+        }
       }
     }
   }
@@ -328,7 +439,16 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
       treasuryBalance: entry.income - entry.expense,
       salesTotal: entry.salesTotal,
       salesCount: entry.salesCount,
+      // Accounting audit fix (2026-09-17, Phase B) — `netProfit` and
+      // everything below it are now TODAY's figures (Cairo business day),
+      // matching `dailyFixedCost`'s own period — `salesTotal` above stays
+      // all-time, unchanged. See this function's own doc comment.
       netProfit: entry.netProfit,
+      realProfit: entry.realProfit,
+      estimatedProfit: entry.estimatedProfit,
+      realCost: entry.realCost,
+      estimatedCost: entry.estimatedCost,
+      unknownCostRevenue: entry.unknownCostRevenue,
       hasUnknownProfitItems: entry.hasUnknown,
       dailyFixedCost: branchDailyFixedCost,
       netAfterDailyFixedCost: entry.netProfit - branchDailyFixedCost,
@@ -347,6 +467,9 @@ export async function getCompanyFinancialSummary(branchIds?: string[]): Promise<
     totalTreasuryBalance: branchSummaries.reduce((sum, b) => sum + b.treasuryBalance, 0),
     totalSales: branchSummaries.reduce((sum, b) => sum + b.salesTotal, 0),
     totalNetProfit,
+    totalRealProfit: branchSummaries.reduce((sum, b) => sum + b.realProfit, 0),
+    totalEstimatedProfit: branchSummaries.reduce((sum, b) => sum + b.estimatedProfit, 0),
+    totalUnknownCostRevenue: branchSummaries.reduce((sum, b) => sum + b.unknownCostRevenue, 0),
     hasUnknownProfitItems: branchSummaries.some((b) => b.hasUnknownProfitItems),
     totalDailyFixedCost,
     totalNetAfterDailyFixedCost: totalNetProfit - totalDailyFixedCost,

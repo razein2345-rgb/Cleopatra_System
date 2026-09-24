@@ -27,8 +27,25 @@ export const branchFinancialSummarySchema = z.object({
    * retail/ready-product item with no costPrice set) contribute nothing
    * here rather than a wrong guess — see `hasUnknownProfitItems`.
    */
+  /**
+   * Accounting audit fix (2026-09-17, Phase B) — scoped to TODAY (Cairo
+   * business day) only, matching `dailyFixedCost`'s own period — this
+   * used to sum ALL-TIME items, mixed against a one-day fixed cost below
+   * (the exact time-basis bug the accounting audit found). `salesTotal`
+   * above is unaffected — still all-time.
+   */
   netProfit: z.number(),
-  /** true when at least one item counted toward `salesTotal` had no computable cost basis — `netProfit` is a partial/lower-bound figure, not the full picture, whenever this is true. */
+  /** Accounting audit fix (2026-09-17, Decision 5) — the portion of `netProfit` backed by a REAL (owner-confirmed actual supplier/material) cost — never blended with `estimatedProfit` into one undisclosed figure. */
+  realProfit: z.number(),
+  /** The portion of `netProfit` backed by an ESTIMATED cost (the pricing engine's padded margin fallback, or a not-yet-RECEIVED supplier task cost) — disclosed separately, never presented with the same certainty as `realProfit`. */
+  estimatedProfit: z.number(),
+  /** Sum of the REAL cost basis behind `realProfit` (i.e. `realProfit`'s items' revenue minus this = realProfit). */
+  realCost: z.number(),
+  /** Sum of the ESTIMATED cost basis behind `estimatedProfit`. */
+  estimatedCost: z.number(),
+  /** Revenue from items with NO resolvable cost basis at all (UNKNOWN) — contributes to `salesTotal` but to none of `netProfit`/`realProfit`/`estimatedProfit`. */
+  unknownCostRevenue: z.number(),
+  /** true when at least one TODAY item had no computable cost basis (UNKNOWN) — `netProfit` is a partial/lower-bound figure, not the full picture, whenever this is true. */
   hasUnknownProfitItems: z.boolean(),
   /**
    * Owner (2026-09-08, "محتاج قسم خاص بالخزينة يكون فيه المصروفات الشهرية
@@ -50,6 +67,9 @@ export const companyFinancialSummarySchema = z.object({
   totalTreasuryBalance: z.number(),
   totalSales: z.number(),
   totalNetProfit: z.number(),
+  totalRealProfit: z.number(),
+  totalEstimatedProfit: z.number(),
+  totalUnknownCostRevenue: z.number(),
   hasUnknownProfitItems: z.boolean(),
   totalDailyFixedCost: z.number(),
   totalNetAfterDailyFixedCost: z.number(),

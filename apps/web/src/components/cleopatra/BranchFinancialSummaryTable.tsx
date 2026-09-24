@@ -23,10 +23,11 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
             <tr className="text-muted-foreground text-xs *:p-1.5 *:text-start">
               <th>الفرع</th>
               <th>رصيد الخزينة</th>
-              <th>إجمالي المبيعات</th>
-              <th>صافي الربح</th>
+              <th>إجمالي المبيعات (كل الوقت)</th>
+              <th title="تكلفة مؤكدة من مورد/مخزون حقيقي — مش تقدير">ربح مؤكد (اليوم)</th>
+              <th title="تكلفة مقدّرة (هامش السعر الافتراضي أو تكلفة لسه متأكدتش) — مش مؤكدة">ربح تقديري (اليوم)</th>
               <th title="مصاريف شهرية ثابتة وأصلها الشهري (إيجار/رواتب...) مقسّمة على 30 يوم">المصاريف الثابتة يوميًا</th>
-              <th>الصافي بعد المصاريف اليومية</th>
+              <th title="(ربح مؤكد + ربح تقديري لليوم) − المصاريف الثابتة يوميًا">الصافي بعد المصاريف اليومية (اليوم)</th>
             </tr>
           </thead>
           <tbody>
@@ -37,10 +38,11 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
                 <td>
                   {fmt(b.salesTotal)} <span className="text-muted-foreground text-xs">({b.salesCount} فاتورة)</span>
                 </td>
+                <td className="text-success">{fmt(b.realProfit)}</td>
                 <td>
-                  {fmt(b.netProfit)}
+                  {fmt(b.estimatedProfit)}
                   {b.hasUnknownProfitItems && (
-                    <span className="text-warning ms-1 text-xs" title="فيه أصناف مالهاش سعر تكلفة مسجّل — الرقم ده تقديري ناقص">
+                    <span className="text-warning ms-1 text-xs" title="فيه أصناف اليوم مالهاش سعر تكلفة مسجّل خالص — صافي الربح المعروض ناقص">
                       ⚠
                     </span>
                   )}
@@ -54,6 +56,10 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
           </tbody>
         </table>
       </div>
+      <p className="text-muted-foreground text-xs">
+        "إجمالي المبيعات" رقم تراكمي لكل الوقت. أعمدة الربح والمصاريف الثابتة واليوم بعدها كلها عن اليوم الحالي فقط —
+        نفس الفترة، عشان تكون قابلة للمقارنة مع بعضها.
+      </p>
       {summary.branches.length > 1 && (
         <div className="border-border grid grid-cols-2 gap-3 border-t pt-3 sm:grid-cols-3 lg:grid-cols-5">
           <div>
@@ -63,14 +69,18 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
             </p>
           </div>
           <div>
-            <p className="text-muted-foreground text-xs">إجمالي المبيعات العام</p>
+            <p className="text-muted-foreground text-xs">إجمالي المبيعات العام (كل الوقت)</p>
             <p className="text-lg font-bold">{fmt(summary.totalSales)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground text-xs">إجمالي صافي الربح العام</p>
+            <p className="text-muted-foreground text-xs">إجمالي الربح المؤكد (اليوم)</p>
+            <p className="text-lg font-bold">{fmt(summary.totalRealProfit)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground text-xs">إجمالي الربح التقديري (اليوم)</p>
             <p className="text-lg font-bold">
-              {fmt(summary.totalNetProfit)}
-              {summary.hasUnknownProfitItems && <span className="text-warning ms-1 text-xs">⚠ تقديري</span>}
+              {fmt(summary.totalEstimatedProfit)}
+              {summary.hasUnknownProfitItems && <span className="text-warning ms-1 text-xs">⚠ فيه أصناف غير معروفة التكلفة</span>}
             </p>
           </div>
           <div>
@@ -78,7 +88,7 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
             <p className="text-lg font-bold">{fmt(summary.totalDailyFixedCost)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground text-xs">الصافي العام بعد المصاريف اليومية</p>
+            <p className="text-muted-foreground text-xs">الصافي العام بعد المصاريف اليومية (اليوم)</p>
             <p className={`text-lg font-bold ${summary.totalNetAfterDailyFixedCost < 0 ? 'text-destructive' : ''}`}>
               {fmt(summary.totalNetAfterDailyFixedCost)}
             </p>
@@ -87,9 +97,9 @@ export function BranchFinancialSummaryTable({ summary }: { summary: CompanyFinan
       )}
       {summary.hasUnknownProfitItems && (
         <p className="text-muted-foreground text-xs">
-          ⚠ فيه أصناف (منتجات جاهزة/بضاعة مخزون/لوحات وإعلانات) مالهاش سعر تكلفة مسجّل بعد — صافي الربح المعروض
-          أقل من الحقيقي لحد ما يتسجّل سعر التكلفة بتاعها من شاشة المخزون/المنتجات الجاهزة، أو سعر تكلفة المورد
-          للوحات من شاشة الإعدادات.
+          ⚠ فيه أصناف اليوم (منتجات جاهزة/بضاعة مخزون/لوحات وإعلانات) مالهاش سعر تكلفة مسجّل بعد — بمبيعات
+          {fmt(summary.totalUnknownCostRevenue)} مش داخلة في الربح المؤكد ولا التقديري خالص، لحد ما يتسجّل سعر
+          التكلفة بتاعها من شاشة المخزون/المنتجات الجاهزة، أو سعر تكلفة المورد للوحات من شاشة الإعدادات.
         </p>
       )}
     </div>
