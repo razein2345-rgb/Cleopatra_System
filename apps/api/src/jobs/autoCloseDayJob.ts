@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { closeTreasuryDay, DayAlreadyClosedError, getDayClosurePreview } from '../services/treasuryService.js';
+import { BUSINESS_TIMEZONE } from '../lib/businessTimezone.js';
 
 const CHECK_INTERVAL_MS = 60 * 1000;
 
@@ -34,8 +35,20 @@ async function runOnce(): Promise<void> {
   const closeTime = setting?.autoCloseDayTime;
   if (!closeTime) return;
 
+  // Accounting audit fix (2026-09-17, Decision 4) — `Setting.autoCloseDayTime`
+  // is entered by the owner thinking in Cairo local time ("الوقت المحدد
+  // في الإعدادات"), but this used to compare against `now.getHours()`,
+  // which reflects the SERVER's own timezone (typically UTC on cloud
+  // hosting) — 2-3 hours off from Cairo depending on DST. Computed via
+  // `Intl.DateTimeFormat` against `BUSINESS_TIMEZONE` instead of the
+  // server clock's local timezone.
   const now = new Date();
-  const nowHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const nowHHMM = new Intl.DateTimeFormat('en-GB', {
+    timeZone: BUSINESS_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(now);
   if (nowHHMM < closeTime) return;
 
   const superAdmin = await prisma.userRole.findFirst({

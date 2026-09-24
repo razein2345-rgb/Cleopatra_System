@@ -32,8 +32,14 @@ export async function getBranchFinancialSummaryHandler(req: Request, res: Respon
  * فوق) — فمفيش `branchId` هنا خالص.
  */
 export async function getReportsOverviewHandler(req: Request, res: Response) {
-  const from = typeof req.query.from === 'string' ? new Date(req.query.from) : undefined;
-  const to = typeof req.query.to === 'string' ? new Date(req.query.to) : undefined;
+  // Accounting audit fix (2026-09-17, Decision 4) — `from`/`to` are
+  // date-only strings from a plain `<input type="date">`; parsing them
+  // with `new Date(...)` treats them as UTC midnight, not Cairo midnight,
+  // which shifts a single-day report window ~2-3 hours earlier than the
+  // Cairo calendar day the user actually picked. `businessDayRangeUtc`
+  // resolves each to the real UTC instant range that Cairo day spans.
+  const from = typeof req.query.from === 'string' ? businessDayRangeUtc(req.query.from).start : undefined;
+  const to = typeof req.query.to === 'string' ? businessDayRangeUtc(req.query.to).end : undefined;
   const overview = await getReportsOverview(from, to);
   res.json({ success: true, data: overview });
 }

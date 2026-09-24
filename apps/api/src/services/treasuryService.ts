@@ -11,7 +11,7 @@ import type {
   UpdateTreasuryEntryInput,
 } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
-import { businessDayRangeUtc } from '../lib/businessTimezone.js';
+import { todayInBusinessTimezone, businessDayRangeUtc } from '../lib/businessTimezone.js';
 
 type TreasuryEntryRecord = Prisma.TreasuryEntryGetPayload<object>;
 
@@ -435,10 +435,21 @@ function mapDayClosureToDto(record: Prisma.TreasuryDayClosureGetPayload<object>)
   };
 }
 
-/** UTC midnight of a given date (defaults to today) — matches the `@db.Date` column's own storage, no time-of-day component. */
+/**
+ * The Cairo calendar day a given moment falls on, shaped as UTC midnight to
+ * match the `@db.Date` column's own storage. Accounting audit fix
+ * (2026-09-17, Decision 4) — this used to bucket by plain UTC day
+ * (`Date.UTC(source.getUTCFullYear(), ...)`), which misclassifies any
+ * moment between Cairo midnight and Cairo's UTC offset (00:00-02:00/03:00
+ * Cairo time) into the *previous* UTC day — the exact bug class already
+ * found and fixed for attendance (`businessTimezone.ts`'s own doc comment).
+ * Reuses that existing helper rather than re-deriving the offset here
+ * (rule 5) — this changes which Cairo calendar day a NEW entry or a NEW
+ * day-close is considered part of; it does not rewrite any already-stored
+ * `TreasuryDayClosure`/`TreasuryEntry` row's own date value.
+ */
 function dateOnly(input?: Date | string): Date {
-  const source = input ? new Date(input) : new Date();
-  return new Date(Date.UTC(source.getUTCFullYear(), source.getUTCMonth(), source.getUTCDate()));
+  return todayInBusinessTimezone(input ? new Date(input) : new Date());
 }
 
 /**
