@@ -314,6 +314,18 @@ export class FieldAssignmentNotFoundError extends Error {
   }
 }
 
+/**
+ * Branch an existing field assignment belongs to - lets the controller check
+ * branch access on delete by the ASSIGNMENT's own branch (not the caller's).
+ */
+export async function getFieldAssignmentBranchId(id: string): Promise<string> {
+  const existing = await prisma.fieldAssignment.findUnique({ where: { id }, select: { branchId: true, isDeleted: true } });
+  if (!existing || existing.isDeleted) {
+    throw new FieldAssignmentNotFoundError();
+  }
+  return existing.branchId;
+}
+
 /** Owner (2026-08-19, "أقدر أحذف المهمة دي من عند الموظف؟") — soft delete, same `isDeleted`/`deletedAt`/`deletedBy` columns the model already carried unused. */
 export async function deleteFieldAssignment(
   id: string,

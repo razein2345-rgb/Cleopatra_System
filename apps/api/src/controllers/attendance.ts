@@ -15,6 +15,7 @@ import {
   createFieldAssignment,
   deleteFieldAssignment,
   FieldAssignmentNotFoundError,
+  getFieldAssignmentBranchId,
   getTodayEntryForStaff,
   InvalidKioskCredentialsError,
   kioskSubmit,
@@ -27,6 +28,7 @@ import {
   upsertAttendanceEntry,
 } from '../services/attendanceService.js';
 import { recordAudit } from '../services/auditService.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 
 export async function getMyTodayAttendanceHandler(req: Request, res: Response) {
   const auth = req.auth!;
@@ -177,7 +179,21 @@ export async function confirmFieldAssignmentHandler(req: Request<{ id: string }>
 export async function createFieldAssignmentHandler(req: Request, res: Response) {
   const auth = req.auth!;
   const input = createFieldAssignmentSchema.parse(req.body);
+  // Owner decision (2026-09-25) - `employees.edit` alone let the caller file a
+  // task under ANY branch id. The assignment's branch must be one the caller can access.
+  if (!canAccessBranch(auth, input.branchId)) {
+    forbidBranch(res);
+    return;
+  }
   const assignment = await createFieldAssignment(input, auth.staffId);
+  await recordAudit({
+    entityType: 'FieldAssignment',
+    entityId: assignment.id,
+    action: 'CREATE',
+    performedById: auth.staffId,
+    branchId: assignment.branchId,
+    newValue: { staffId: input.staffId, date: input.date, locationLabel: input.locationLabel },
+  });
   res.status(201).json({ success: true, data: assignment });
 }
 
@@ -190,6 +206,20 @@ export async function listFieldAssignmentsHandler(req: Request, res: Response) {
 /** Owner (2026-08-19, "أقدر أحذف المهمة دي من عند الموظف؟") — same `employees.edit` weight as creating one. */
 export async function deleteFieldAssignmentHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+  // Same rule as create: the ASSIGNMENT's own branch decides access, never the caller's home branch.
+  try {
+    const assignmentBranchId = await getFieldAssignmentBranchId(req.params.id);
+    if (!canAccessBranch(auth, assignmentBranchId)) {
+      forbidBranch(res);
+      return;
+    }
+  } catch (err) {
+    if (err instanceof FieldAssignmentNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    throw err;
+  }
   let result;
   try {
     result = await deleteFieldAssignment(req.params.id, auth.staffId);
