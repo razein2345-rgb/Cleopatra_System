@@ -55,6 +55,8 @@ const {
   CutoverActivationNotAllowedError,
   InvalidCutoverTransitionError,
   CutoverSupersededError,
+  reopenCutover,
+  supersedeCutover,
 } = await import('./cutoverService.js');
 
 const CUTOVER_ID = '11111111-1111-1111-1111-111111111111';
@@ -280,5 +282,40 @@ describe('activateCutover', () => {
       where: { id: CUTOVER_ID },
       data: { status: 'ACTIVE', activatedById: OTHER_STAFF_ID, activatedAt: expect.any(Date) },
     });
+  });
+});
+
+/**
+ * Owner decision (2026-09-25) — a superseded cutover is dead: reopen and
+ * supersede-again reject it (server-side, not just hidden buttons) and write
+ * nothing, same as activate above.
+ */
+describe('reopenCutover / supersedeCutover — superseded records', () => {
+  const superseded = { id: CUTOVER_ID, branchId: BRANCH_ID, status: 'APPROVED', isSuperseded: true };
+
+  it('reopen of a superseded cutover is rejected and writes nothing', async () => {
+    cutoverRecordFindUnique.mockResolvedValue(superseded);
+    await expect(reopenCutover(CUTOVER_ID, OTHER_STAFF_ID, ['SUPER_ADMIN'], 'خطأ')).rejects.toThrow(CutoverSupersededError);
+    expect(cutoverRecordUpdate).not.toHaveBeenCalled();
+  });
+
+  it('superseding an already superseded cutover is rejected — the first who/when/why is never overwritten', async () => {
+    cutoverRecordFindUnique.mockResolvedValue(superseded);
+    await expect(supersedeCutover(CUTOVER_ID, OTHER_STAFF_ID, ['SUPER_ADMIN'], 'سبب تاني')).rejects.toThrow(CutoverSupersededError);
+    expect(cutoverRecordUpdate).not.toHaveBeenCalled();
+  });
+
+  it('a normal (non-superseded) cutover can still be reopened and superseded', async () => {
+    cutoverRecordFindUnique.mockResolvedValue({ ...superseded, isSuperseded: false });
+    cutoverRecordUpdate.mockResolvedValue({
+      id: CUTOVER_ID, branchId: BRANCH_ID, lastManualDate: new Date('2026-09-30'), goLiveDate: new Date('2026-10-01'),
+      status: 'DRAFT', isSuperseded: true, supersededById: null, supersededAt: null, supersededReason: null,
+      createdById: CREATOR_ID, reviewedById: null, reviewedAt: null, approvedById: null, approvedAt: null,
+      activatedById: null, activatedAt: null, reopenedById: null, reopenedAt: null, reopenReason: null,
+      notes: null, createdAt: new Date(), updatedAt: new Date(),
+    });
+    await expect(reopenCutover(CUTOVER_ID, OTHER_STAFF_ID, ['SUPER_ADMIN'], 'تصحيح')).resolves.toBeDefined();
+    await expect(supersedeCutover(CUTOVER_ID, OTHER_STAFF_ID, ['SUPER_ADMIN'], 'إلغاء')).resolves.toBeDefined();
+    expect(cutoverRecordUpdate).toHaveBeenCalledTimes(2);
   });
 });

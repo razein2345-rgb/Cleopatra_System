@@ -49,7 +49,7 @@ export class ActiveCutoverExistsError extends Error {
 
 /**
  * Owner decision (2026-09-25, found while testing the UI) — a superseded
- * cutover is dead: it was cancelled to free the branch's slot for a new one.
+ * cutover is dead (activate, reopen and supersede-again all reject it): it was cancelled to free the branch's slot for a new one.
  * Activating it anyway would still post its inventory openings (real
  * StockMovement/StockLevel writes) on a branch with live customers and
  * orders, while the `isSuperseded = false` lookups would never treat it as
@@ -57,7 +57,7 @@ export class ActiveCutoverExistsError extends Error {
  */
 export class CutoverSupersededError extends Error {
   constructor() {
-    super('هذا الـ Cutover أُلغي نهائيًا — لا يمكن تفعيله. أنشئ Cutover جديدًا للفرع بدلًا منه.');
+    super('هذا الـ Cutover أُلغي نهائيًا — لا يمكن تفعيله أو إعادة فتحه أو إلغاؤه مرة أخرى. أنشئ Cutover جديدًا للفرع بدلًا منه.');
     this.name = 'CutoverSupersededError';
   }
 }
@@ -382,6 +382,7 @@ export async function activateCutover(cutoverId: string, staffId: string, roleNa
 export async function reopenCutover(cutoverId: string, staffId: string, roleNames: string[], reason: string): Promise<CutoverRecord> {
   const cutover = await prisma.cutoverRecord.findUnique({ where: { id: cutoverId } });
   if (!cutover) throw new CutoverNotFoundError();
+  if (cutover.isSuperseded) throw new CutoverSupersededError();
   if (cutover.status !== 'APPROVED' && cutover.status !== 'ACTIVE') {
     throw new InvalidCutoverTransitionError(cutover.status, 'DRAFT');
   }
@@ -405,6 +406,8 @@ export async function supersedeCutover(cutoverId: string, staffId: string, roleN
 
   const cutover = await prisma.cutoverRecord.findUnique({ where: { id: cutoverId } });
   if (!cutover) throw new CutoverNotFoundError();
+  // Superseding twice would overwrite who/when/why of the first cancellation.
+  if (cutover.isSuperseded) throw new CutoverSupersededError();
 
   const updated = await prisma.cutoverRecord.update({
     where: { id: cutoverId },
