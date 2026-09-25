@@ -20,6 +20,7 @@ import { lowStockWidget } from './widgets/LowStockWidget';
 import { reorderDueWidget } from './widgets/ReorderDueWidget';
 import { branchProfitWidget } from './widgets/BranchProfitWidget';
 import { employeeCashCustodyWidget } from './widgets/EmployeeCashCustodyWidget';
+import { followUpsWidget } from './widgets/FollowUpsWidget';
 
 /**
  * Every Dashboard card, in render order. Add a widget by writing a
@@ -50,6 +51,7 @@ export const DASHBOARD_WIDGETS: DashboardWidgetDefinition[] = [
   readyForDeliveryWidget,
   lowStockWidget,
   reorderDueWidget,
+  followUpsWidget,
   branchProfitWidget,
 ];
 

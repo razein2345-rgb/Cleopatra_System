@@ -10,12 +10,14 @@ import type {
   LeadStage,
   ParsedLeadImportRow,
   UpdateLeadInput,
+  User,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   ContactLinks,
+  EditableDateCell,
   EditableSelectCell,
   EditableTextCell,
   LogCallDialog,
@@ -26,6 +28,7 @@ import {
   type StatusTone,
 } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
+import { localDateKey } from '@/lib/followUps';
 import { LEAD_SOURCE_LABELS, LEAD_SOURCE_OPTIONS } from '@/pages/partners/partnerLabels';
 
 const PAGE_SIZE = 25;
@@ -66,6 +69,8 @@ export function LeadsPage() {
   const confirm = useConfirm();
   const [leads, setLeads] = useState<Lead[] | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
+  // `/api/users` needs employees.view; a user without it gets an empty list and the assignee field simply stays read-only.
+  const [users, setUsers] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showImport, setShowImport] = useState(false);
@@ -84,6 +89,11 @@ export function LeadsPage() {
   };
 
   useEffect(load, []);
+  useEffect(() => {
+    apiGet<User[]>('/api/users')
+      .then(setUsers)
+      .catch(() => setUsers([]));
+  }, []);
 
   const advance = async (lead: Lead) => {
     const next = NEXT_STAGE[lead.stage];
@@ -138,6 +148,9 @@ export function LeadsPage() {
 
   const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? id;
   const branchOptions = branches.map((b) => [b.id, b.name] as const);
+  const staffOptions = users.filter((u) => u.isActive).map((u) => [u.id, u.name] as const);
+  const staffName = (id: string | null) => (id ? (users.find((u) => u.id === id)?.name ?? '—') : '—');
+  const today = localDateKey(new Date());
   const canEditFields = can('leads.edit');
 
   /** Owner (2026-09-09, "عايز اقدر اعدل على جدول الليدز من بره") — same direct-in-table edit `EditableTextCell`/`EditableSelectCell` already give the Partners list, applied here too. */
@@ -174,6 +187,7 @@ export function LeadsPage() {
       {showCreate && (
         <CreateLeadForm
           branches={branches}
+          staffOptions={staffOptions}
           onCreated={() => {
             setShowCreate(false);
             load();
@@ -202,6 +216,8 @@ export function LeadsPage() {
               <th className="p-3">المصدر</th>
               <th className="p-3">الفرع</th>
               <th className="p-3">المرحلة</th>
+              <th className="p-3">المسؤول</th>
+              <th className="p-3">موعد المتابعة</th>
               <th className="p-3"></th>
             </tr>
           </thead>
@@ -258,6 +274,32 @@ export function LeadsPage() {
                     <StatusBadge tone={LEAD_STAGE_TONES[lead.stage]}>{LEAD_STAGE_LABELS[lead.stage]}</StatusBadge>
                     {lead.stage === 'REJECTED' && lead.rejectedReason && (
                       <p className="text-muted-foreground mt-0.5 text-xs">{lead.rejectedReason}</p>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    {canEditFields && staffOptions.length > 0 ? (
+                      <EditableSelectCell
+                        value={lead.assignedToId ?? ''}
+                        options={[['', '— غير معيّن —'], ...staffOptions]}
+                        onSave={(next) => updateLeadField(lead.id, { assignedToId: next || null })}
+                        renderValue={(v) => (v ? staffName(v) : '—')}
+                      />
+                    ) : (
+                      staffName(lead.assignedToId)
+                    )}
+                  </td>
+                  <td className="p-3">
+                    {/* A follow-up only matters while the lead is open; overdue ones are flagged red. */}
+                    {canEditFields && isOpen ? (
+                      <EditableDateCell
+                        value={lead.nextFollowUpAt ? lead.nextFollowUpAt.slice(0, 10) : null}
+                        onSave={(next) => updateLeadField(lead.id, { nextFollowUpAt: next })}
+                        className={lead.nextFollowUpAt && lead.nextFollowUpAt.slice(0, 10) < today ? 'text-destructive' : undefined}
+                      />
+                    ) : lead.nextFollowUpAt ? (
+                      new Date(lead.nextFollowUpAt).toLocaleDateString('ar-EG')
+                    ) : (
+                      '—'
                     )}
                   </td>
                   <td className="p-3">
@@ -319,7 +361,7 @@ export function LeadsPage() {
             })}
             {leads.length === 0 && (
               <tr>
-                <td className="text-muted-foreground p-3" colSpan={7}>
+                <td className="text-muted-foreground p-3" colSpan={9}>
                   لا يوجد Leads مسجّلة بعد.
                 </td>
               </tr>
@@ -349,7 +391,15 @@ export function LeadsPage() {
   );
 }
 
-function CreateLeadForm({ branches, onCreated }: { branches: BranchSummary[]; onCreated: () => void }) {
+function CreateLeadForm({
+  branches,
+  staffOptions,
+  onCreated,
+}: {
+  branches: BranchSummary[];
+  staffOptions: ReadonlyArray<readonly [string, string]>;
+  onCreated: () => void;
+}) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
@@ -357,6 +407,8 @@ function CreateLeadForm({ branches, onCreated }: { branches: BranchSummary[]; on
   const [source, setSource] = useState<LeadSource | ''>('');
   const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
   const [notes, setNotes] = useState('');
+  const [assignedToId, setAssignedToId] = useState('');
+  const [nextFollowUpAt, setNextFollowUpAt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -370,6 +422,8 @@ function CreateLeadForm({ branches, onCreated }: { branches: BranchSummary[]; on
         name,
         phone,
         branchId,
+        assignedToId: assignedToId || undefined,
+        nextFollowUpAt: nextFollowUpAt || undefined,
         email: email.trim() || undefined,
         facebookUrl: facebookUrl.trim() || undefined,
         source: source || undefined,
@@ -448,6 +502,29 @@ function CreateLeadForm({ branches, onCreated }: { branches: BranchSummary[]; on
           onChange={(e) => setNotes(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm sm:col-span-2"
         />
+        {staffOptions.length > 0 && (
+          <select
+            value={assignedToId}
+            onChange={(e) => setAssignedToId(e.target.value)}
+            className="border-input bg-background rounded-md border px-3 py-2 text-sm"
+          >
+            <option value="">المسؤول (اختياري)</option>
+            {staffOptions.map(([id, label]) => (
+              <option key={id} value={id}>
+                {label}
+              </option>
+            ))}
+          </select>
+        )}
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground shrink-0 text-xs">موعد المتابعة (اختياري)</span>
+          <input
+            type="date"
+            value={nextFollowUpAt}
+            onChange={(e) => setNextFollowUpAt(e.target.value)}
+            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+          />
+        </label>
       </div>
       <Button type="submit" disabled={submitting}>
         {submitting ? 'جارٍ الحفظ…' : 'حفظ الـLead'}
