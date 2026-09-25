@@ -592,3 +592,17 @@ dates) and machine/assignment lists.
 **Decide later:** whether a branch-scoped caller should see other branches'
 movements/machines at all, or only company-wide item totals. If yes, clamp with
 the same `resolveBranchScope` / `canAccessBranch` pattern the treasury reads use.
+
+---
+
+## Field assignments: the assigned employee's own branch is not checked — found 2026-09-25, not urgent
+
+`POST /api/attendance/field-assignments` (commit `e7a95ef`) now requires the
+caller to be able to access the **assignment's** `branchId`, but does not check
+the **target employee's** own branch. A caller with `employees.edit` and access to
+branch A can therefore file a task under branch A for an employee whose home
+branch is B. No money is involved (a location task and its GPS confirmation), so
+the owner classed it as not urgent; it should be closed in a later review by also
+requiring access to the employee's branch (or rejecting an employee outside the
+assignment's branch). Note: an employee granted access to a branch other than
+their home branch is a legitimate case, so the rule needs a decision before code.
