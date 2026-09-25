@@ -598,6 +598,18 @@ export async function deleteStockMovement(
   return { item: mapInventoryItemToDto(updated), previous, reversedTreasuryEntry: reversedEntry ? mapTreasuryEntryToDto(reversedEntry) : null };
 }
 
+/**
+ * Branch a movement currently belongs to. Lets the controller enforce branch
+ * access on edit/delete by the MOVEMENT's own branch (not the caller's home
+ * branch, which is what the audit log used to record). 404 for a missing or
+ * already-deleted movement.
+ */
+export async function getStockMovementBranchId(movementId: string): Promise<string> {
+  const row = await prisma.stockMovement.findUnique({ where: { id: movementId }, select: { branchId: true, isDeleted: true } });
+  if (!row || row.isDeleted) throw new StockMovementNotFoundError();
+  return row.branchId;
+}
+
 export async function deleteInventoryItem(id: string, deletedBy: string): Promise<void> {
   const existing = await prisma.inventoryItem.findUnique({ where: { id } });
   if (!existing || existing.isDeleted) throw new InventoryItemNotFoundError();

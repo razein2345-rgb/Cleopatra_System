@@ -15,6 +15,7 @@ import {
   getInventoryItem,
   getInventoryItemByBarcode,
   getInventoryReconciliationReport,
+  getStockMovementBranchId,
   InventoryItemInUseError,
   InventoryItemNotFoundError,
   listInventoryItems,
@@ -30,6 +31,7 @@ import {
 import { resolveBranchScope } from './treasuryEntries.js';
 import { DayClosedError } from '../services/treasuryService.js';
 import { recordAudit } from '../services/auditService.js';
+import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 import { rejectCostPriceWrite, stripCostPrice, stripCostPriceList } from '../lib/costPriceGuard.js';
 import { idempotencyKeyFromHeader, runIdempotent, sendIdempotencyError } from '../services/idempotencyService.js';
 
@@ -247,6 +249,22 @@ export async function updateStockMovementHandler(req: Request<{ id: string; move
   const auth = req.auth!;
   const input = updateStockMovementSchema.parse(req.body);
 
+  // Branch access is checked against the MOVEMENT's own branch, and against the
+  // destination too when the edit moves it (`branchId` in the body) - editing a
+  // quick-sale movement also rescales/moves its paired treasury entry, so both
+  // branches' money is touched. Never the caller's home branch.
+  let movementBranchId: string;
+  try {
+    movementBranchId = await getStockMovementBranchId(req.params.movementId);
+  } catch (err) {
+    if (handleServiceError(err, res)) return;
+    throw err;
+  }
+  if (!canAccessBranch(auth, movementBranchId) || (input.branchId !== undefined && !canAccessBranch(auth, input.branchId))) {
+    forbidBranch(res);
+    return;
+  }
+
   let result;
   try {
     result = await updateStockMovement(req.params.movementId, input);
@@ -260,7 +278,7 @@ export async function updateStockMovementHandler(req: Request<{ id: string; move
     entityId: req.params.movementId,
     action: 'UPDATE',
     performedById: auth.staffId,
-    branchId: auth.branchId,
+    branchId: result.previous.branchId,
     previousValue: { type: result.previous.type, quantity: result.previous.quantity, reference: result.previous.reference, date: result.previous.date },
     newValue: input,
   });
@@ -270,8 +288,8 @@ export async function updateStockMovementHandler(req: Request<{ id: string; move
       entityId: result.updatedTreasuryEntry.id,
       action: 'UPDATE',
       performedById: auth.staffId,
-      branchId: auth.branchId,
-      newValue: { amount: result.updatedTreasuryEntry.amount, causedByStockMovementEdit: req.params.movementId },
+      branchId: result.previous.branchId,
+      newValue: { amount: result.updatedTreasuryEntry.amount, branchId: result.updatedTreasuryEntry.branchId, causedByStockMovementEdit: req.params.movementId },
     });
   }
 
@@ -280,6 +298,20 @@ export async function updateStockMovementHandler(req: Request<{ id: string; move
 
 export async function deleteStockMovementHandler(req: Request<{ id: string; movementId: string }>, res: Response) {
   const auth = req.auth!;
+
+  // Same rule as the edit above: the movement's own branch decides access
+  // (deleting a quick-sale movement also reverses its paired treasury entry).
+  let movementBranchId: string;
+  try {
+    movementBranchId = await getStockMovementBranchId(req.params.movementId);
+  } catch (err) {
+    if (handleServiceError(err, res)) return;
+    throw err;
+  }
+  if (!canAccessBranch(auth, movementBranchId)) {
+    forbidBranch(res);
+    return;
+  }
 
   let result;
   try {
@@ -294,7 +326,7 @@ export async function deleteStockMovementHandler(req: Request<{ id: string; move
     entityId: req.params.movementId,
     action: 'DELETE',
     performedById: auth.staffId,
-    branchId: auth.branchId,
+    branchId: result.previous.branchId,
     previousValue: { type: result.previous.type, quantity: result.previous.quantity, reference: result.previous.reference, date: result.previous.date },
   });
   if (result.reversedTreasuryEntry) {
@@ -303,7 +335,7 @@ export async function deleteStockMovementHandler(req: Request<{ id: string; move
       entityId: result.reversedTreasuryEntry.id,
       action: 'DELETE',
       performedById: auth.staffId,
-      branchId: auth.branchId,
+      branchId: result.previous.branchId,
       previousValue: { amount: result.reversedTreasuryEntry.amount, causedByStockMovementDelete: req.params.movementId },
     });
   }
