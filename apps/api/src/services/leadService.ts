@@ -49,8 +49,11 @@ export function mapLeadToDto(lead: LeadRecord): Lead {
   };
 }
 
-export async function listLeads(): Promise<Lead[]> {
-  const leads = await prisma.lead.findMany({ where: { isDeleted: false }, orderBy: { createdAt: 'desc' } });
+export async function listLeads(filter: { branchIds?: string[] } = {}): Promise<Lead[]> {
+  const leads = await prisma.lead.findMany({
+    where: { isDeleted: false, ...(filter.branchIds ? { branchId: { in: filter.branchIds } } : {}) },
+    orderBy: { createdAt: 'desc' },
+  });
   return leads.map(mapLeadToDto);
 }
 
@@ -184,6 +187,17 @@ export async function convertLeadToPartner(
     });
     return { leadId: id, partnerId: partner.id, partner: mapPartnerToDto(partner, []) };
   });
+}
+
+/**
+ * Branch a lead belongs to - lets the controller check branch access by the LEAD's own
+ * branch before any update / stage change / reject / convert / delete. 404 when the lead
+ * does not exist or was deleted.
+ */
+export async function getLeadBranchId(id: string): Promise<string> {
+  const lead = await prisma.lead.findUnique({ where: { id }, select: { branchId: true, isDeleted: true } });
+  if (!lead || lead.isDeleted) throw new LeadNotFoundError();
+  return lead.branchId;
 }
 
 export async function deleteLead(id: string, deletedBy: string): Promise<void> {

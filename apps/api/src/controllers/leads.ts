@@ -9,6 +9,7 @@ import {
   createLead,
   deleteLead,
   getLead,
+  getLeadBranchId,
   LeadAlreadyResolvedError,
   LeadNotFoundError,
   listLeads,
@@ -29,14 +30,43 @@ function handleServiceError(err: unknown, res: Response): boolean {
   return false;
 }
 
-export async function listLeadsHandler(_req: Request, res: Response) {
-  res.json({ success: true, data: await listLeads() });
+/**
+ * Branch access on leads (owner decision, 2026-09-25 - found in the CRM review). Every lead
+ * action is checked against the LEAD's own branch, never the caller's home branch: the list
+ * only returns branches the caller can access, and get/update/stage/reject/convert/delete
+ * answer 404 for a missing lead and 403 for a branch the caller cannot access. Converting a
+ * lead creates a real customer in the lead's branch, so it is checked like the rest.
+ */
+async function authorizeLeadBranch(req: Request<{ id: string }>, res: Response, extraBranchId?: string): Promise<string | null> {
+  const auth = req.auth!;
+  let leadBranchId: string;
+  try {
+    leadBranchId = await getLeadBranchId(req.params.id);
+  } catch (err) {
+    if (handleServiceError(err, res)) return null;
+    throw err;
+  }
+  if (!canAccessBranch(auth, leadBranchId) || (extraBranchId !== undefined && !canAccessBranch(auth, extraBranchId))) {
+    forbidBranch(res);
+    return null;
+  }
+  return leadBranchId;
+}
+
+export async function listLeadsHandler(req: Request, res: Response) {
+  const auth = req.auth!;
+  const branchIds = auth.roleNames.includes('SUPER_ADMIN') ? undefined : auth.accessibleBranchIds;
+  res.json({ success: true, data: await listLeads({ branchIds }) });
 }
 
 export async function getLeadHandler(req: Request<{ id: string }>, res: Response) {
   const lead = await getLead(req.params.id);
   if (!lead) {
     res.status(404).json({ success: false, error: { message: 'Lead not found' } });
+    return;
+  }
+  if (!canAccessBranch(req.auth!, lead.branchId)) {
+    forbidBranch(res);
     return;
   }
   res.json({ success: true, data: lead });
@@ -68,6 +98,8 @@ export async function createLeadHandler(req: Request, res: Response) {
 export async function updateLeadHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
   const input = updateLeadSchema.parse(req.body);
+  // the destination branch too, when the edit moves the lead
+  if (!(await authorizeLeadBranch(req, res, input.branchId))) return;
 
   try {
     const lead = await updateLead(req.params.id, input);
@@ -89,6 +121,7 @@ export async function updateLeadHandler(req: Request<{ id: string }>, res: Respo
 export async function advanceLeadStageHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
   const input = advanceLeadStageSchema.parse(req.body);
+  if (!(await authorizeLeadBranch(req, res))) return;
 
   try {
     const lead = await advanceLeadStage(req.params.id, input.stage);
@@ -110,6 +143,7 @@ export async function advanceLeadStageHandler(req: Request<{ id: string }>, res:
 export async function rejectLeadHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
   const input = rejectLeadSchema.parse(req.body);
+  if (!(await authorizeLeadBranch(req, res))) return;
 
   try {
     const lead = await rejectLead(req.params.id, input.reason);
@@ -137,6 +171,7 @@ export async function rejectLeadHandler(req: Request<{ id: string }>, res: Respo
  */
 export async function convertLeadHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+  if (!(await authorizeLeadBranch(req, res))) return;
 
   let result;
   try {
@@ -219,6 +254,8 @@ export async function importLeadsHandler(req: Request, res: Response) {
 
 export async function deleteLeadHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+  const leadBranchId = await authorizeLeadBranch(req, res);
+  if (!leadBranchId) return;
 
   try {
     await deleteLead(req.params.id, auth.staffId);
@@ -232,6 +269,7 @@ export async function deleteLeadHandler(req: Request<{ id: string }>, res: Respo
     entityId: req.params.id,
     action: 'DELETE',
     performedById: auth.staffId,
+    branchId: leadBranchId,
   });
 
   res.json({ success: true, data: { id: req.params.id } });
