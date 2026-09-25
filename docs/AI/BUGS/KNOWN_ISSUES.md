@@ -606,3 +606,33 @@ the owner classed it as not urgent; it should be closed in a later review by als
 requiring access to the employee's branch (or rejecting an employee outside the
 assignment's branch). Note: an employee granted access to a branch other than
 their home branch is a legitimate case, so the rule needs a decision before code.
+
+---
+
+## Update 2026-09-25 (later): field-assignment employee-branch gap is CLOSED
+
+The gap recorded above ("the assigned employee's own branch is not checked") was
+closed the same day on the owner's decision: `createFieldAssignment` now requires
+the employee to exist and to have the task's branch as their home branch or an
+explicit `UserBranchAccess` grant on it (404 / 400 `STAFF_NOT_IN_BRANCH`, nothing
+written). Tests: `attendanceService.fieldAssignment.test.ts` and the controller
+mapping in `attendance.fieldAssignments.test.ts`.
+
+---
+
+## Deleting a customer that still has invoices is not blocked — found 2026-09-25, OPEN (decision needed)
+
+`DELETE /api/partners/:id` soft-deletes the customer with no check on their
+invoices. Found when the owner deleted a test customer before its invoice: the
+invoice page then failed with "Business partner not found" and the invoice could
+not be opened, paid, corrected or deleted. The page failure itself is fixed
+(`OrderDocumentPage` now loads with the customer shown as "عميل محذوف"), but the
+underlying gap remains:
+
+- a customer with unpaid invoices can be deleted, leaving debt attached to a
+  customer that no longer appears anywhere in the customer screens;
+- the documents list groups invoices by customer, so a deleted customer's
+  invoices drop out of that view.
+
+**Decide:** block deletion while the customer has non-deleted invoices/quotations
+(or unpaid balance), or allow it with an explicit warning that lists them.
