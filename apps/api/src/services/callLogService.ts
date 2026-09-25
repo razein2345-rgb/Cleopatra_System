@@ -17,6 +17,14 @@ export class CallLogNotFoundError extends Error {
   }
 }
 
+/** The customer or lead a new call log points at does not exist (or was deleted). */
+export class CallLogTargetNotFoundError extends Error {
+  constructor() {
+    super('العميل أو الـ Lead المختار غير موجود');
+    this.name = 'CallLogTargetNotFoundError';
+  }
+}
+
 function mapToDto(row: CallLogRecord): CallLog {
   return {
     id: row.id,
@@ -55,6 +63,33 @@ export async function listCallLogs(filter: {
     orderBy: { createdAt: 'desc' },
   });
   return rows.map(mapToDto);
+}
+
+/**
+ * Branch ids of the customer / lead a NEW call log links to, so the controller can require
+ * access to them too (a log linked to another branch's customer surfaces in that customer's
+ * activity). Throws CallLogTargetNotFoundError for a missing or deleted target.
+ */
+export async function getCallTargetBranchIds(target: { partnerId?: string; leadId?: string }): Promise<string[]> {
+  const branchIds: string[] = [];
+  if (target.partnerId) {
+    const partner = await prisma.businessPartner.findUnique({ where: { id: target.partnerId }, select: { branchId: true, isDeleted: true } });
+    if (!partner || partner.isDeleted) throw new CallLogTargetNotFoundError();
+    branchIds.push(partner.branchId);
+  }
+  if (target.leadId) {
+    const lead = await prisma.lead.findUnique({ where: { id: target.leadId }, select: { branchId: true, isDeleted: true } });
+    if (!lead || lead.isDeleted) throw new CallLogTargetNotFoundError();
+    branchIds.push(lead.branchId);
+  }
+  return branchIds;
+}
+
+/** Branch a call log belongs to - the controller checks access by it before an edit/delete. 404 when missing or deleted. */
+export async function getCallLogBranchId(id: string): Promise<string> {
+  const row = await prisma.callLog.findUnique({ where: { id }, select: { branchId: true, isDeleted: true } });
+  if (!row || row.isDeleted) throw new CallLogNotFoundError();
+  return row.branchId;
 }
 
 export async function createCallLog(input: CreateCallLogInput, staffId: string): Promise<CallLog> {
