@@ -16,6 +16,17 @@ export interface NavLink {
   end?: boolean;
   /** FEATURE-005 Sprint 2.5 — an attention count (e.g. delayed jobs), not a status. Omitted or 0 renders no badge. */
   badgeCount?: number;
+  /**
+   * A link whose `to` carries a query string (e.g. `/reports?tab=reconciliation`) is only
+   * highlighted while the URL's query contains it (react-router's NavLink alone matches the
+   * path and would highlight it together with its plain sibling `/reports`).
+   * The plain sibling sets this to the query that should switch ITS highlight off.
+   */
+  inactiveWhenSearch?: string;
+  /** Path prefixes on which this link is NOT highlighted even though its own path matches (a sibling with a longer path owns them, e.g. `/users` vs `/users/advances-report`). */
+  inactiveOnPaths?: string[];
+  /** Extra path prefixes that belong to this link's page (e.g. `/orders/` for the documents list) — used only to auto-open the sidebar group that contains the current page. */
+  alsoMatches?: string[];
 }
 
 /**

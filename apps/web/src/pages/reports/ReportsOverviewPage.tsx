@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { InventoryReconciliationRow, ProfitabilityReport, ReportsOverview } from '@cleopatra/shared';
 import { apiGet } from '@/lib/api';
 import { Card } from '@/components/ui/card';
@@ -72,7 +72,13 @@ export function ReportsOverviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
-  const [tab, setTab] = useState<TabId>('profitability');
+  // The active tab lives in the URL (`?tab=`) so a link can open the page straight on it
+  // (the sidebar's "مطابقة المخزون" shortcut) and the sidebar highlight follows the tab.
+  // No/unknown value = the default "الربحية" tab; switching tabs replaces the history entry.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const tab: TabId = TABS.find((t) => t.id === requestedTab)?.id ?? 'profitability';
+  const setTab = (next: TabId) => setSearchParams(next === 'profitability' ? {} : { tab: next }, { replace: true });
 
   const load = () => {
     const params = new URLSearchParams();

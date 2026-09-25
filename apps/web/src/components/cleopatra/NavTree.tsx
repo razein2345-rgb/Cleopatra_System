@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { NavLink as RouterNavLink } from 'react-router-dom';
+import { NavLink as RouterNavLink, useLocation } from 'react-router-dom';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from '@/state/AuthContext';
 import { cn } from '@/lib/utils';
 import type { NavEntry } from './nav-types';
+import { isNavLinkActive, navGroupContainsPath } from './nav-helpers';
 
 /** A string requires that exact permission; an array is satisfied by holding any one of them. `superAdminOnly` is a role check, independent of (and in addition to) any `permission`. */
 function isPermitted(
@@ -28,6 +29,7 @@ interface NavTreeProps {
 
 export function NavTree({ entries, collapsed = false, onNavigate, depth = 0 }: NavTreeProps) {
   const { can, authContext } = useAuth();
+  const location = useLocation();
   const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
   const visible = entries.filter((entry) => isPermitted(can, entry.permission, entry.superAdminOnly, isSuperAdmin));
 
@@ -45,7 +47,7 @@ export function NavTree({ entries, collapsed = false, onNavigate, depth = 0 }: N
                   'relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
                   depth > 0 && 'ps-8',
                   collapsed && 'justify-center px-2',
-                  isActive
+                  isNavLinkActive(entry, isActive, location.pathname, location.search)
                     ? 'bg-accent text-accent-foreground'
                     : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                 )
@@ -93,7 +95,13 @@ function NavGroupItem({
 }) {
   const { can, authContext } = useAuth();
   const isSuperAdmin = authContext?.user.roles.some((r) => r.name === 'SUPER_ADMIN') ?? false;
-  const [open, setOpen] = useState(true);
+  const location = useLocation();
+  // Groups are collapsed unless they contain the current page (owner decision, 2026-09-25 -
+  // with 7 groups an all-open sidebar is too long). Until the user toggles a group by hand
+  // its state simply follows the current page; a manual choice then sticks.
+  const containsCurrentPage = navGroupContainsPath(entry.items, location.pathname);
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const open = manualOpen ?? containsCurrentPage;
   const visibleItems = entry.items.filter((item) => isPermitted(can, item.permission, item.superAdminOnly, isSuperAdmin));
   if (visibleItems.length === 0) return null;
 
@@ -101,7 +109,7 @@ function NavGroupItem({
     <li>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setManualOpen(!open)}
         className={cn(
           'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground',
           collapsed && 'justify-center px-2',
