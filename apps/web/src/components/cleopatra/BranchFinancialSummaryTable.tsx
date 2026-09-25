@@ -1,6 +1,8 @@
 import type { CompanyFinancialSummary } from '@cleopatra/shared';
 
-const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
+// max 2 decimals too: the daily fixed cost is monthly/30, so without the cap
+// the default (3) shows e.g. 1,753.571 in a money column.
+const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const NO_SALES_TODAY_HINT = 'لسه مفيش مبيعات النهارده — الرقم = المصاريف الثابتة بس، هيتحسّن مع أول أوردر';
 

@@ -77,3 +77,11 @@ describe('BranchFinancialSummaryTable — "no sales yet today" hint', () => {
     expect(render(summaryOf([]))).not.toContain(HINT);
   });
 });
+
+describe('BranchFinancialSummaryTable — money formatting', () => {
+  it('never shows more than 2 decimals (daily fixed cost is monthly/30)', () => {
+    const html = render(summaryOf([branch('b1', 'x', { dailyFixedCost: 1753.5714285, netAfterDailyFixedCost: -1753.5714285 })]));
+    expect(html).toContain('1,753.57');
+    expect(html).not.toContain('1,753.571');
+  });
+});

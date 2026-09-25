@@ -42,7 +42,7 @@ export function FixedMonthlyExpensesEditor({
     }
   };
 
-  const dailyOf = (amount: number) => (amount / 30).toLocaleString('en-US', { minimumFractionDigits: 2 });
+  const dailyOf = (amount: number) => (amount / 30).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
     <div>
