@@ -73,6 +73,17 @@ async function loadOpen(id: string): Promise<CampaignRecord> {
   return row;
 }
 
+/**
+ * Branch a campaign belongs to, or null for a company-wide one (`branchId` empty = "الشركة
+ * كلها", visible to every branch). Lets the controller check branch access by the CAMPAIGN's
+ * own branch before an edit/delete. 404 for a missing or deleted campaign.
+ */
+export async function getCampaignBranchId(id: string): Promise<string | null> {
+  const row = await prisma.campaign.findUnique({ where: { id }, select: { branchId: true, isDeleted: true } });
+  if (!row || row.isDeleted) throw new CampaignNotFoundError();
+  return row.branchId;
+}
+
 export async function updateCampaign(id: string, input: UpdateCampaignInput): Promise<Campaign> {
   await loadOpen(id);
   const updated = await prisma.campaign.update({
