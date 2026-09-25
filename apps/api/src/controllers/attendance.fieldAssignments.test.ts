@@ -19,6 +19,8 @@ vi.mock('../services/attendanceService.js', () => ({
   deleteFieldAssignment,
   getFieldAssignmentBranchId,
   FieldAssignmentNotFoundError: class FieldAssignmentNotFoundError extends Error {},
+  FieldAssignmentStaffNotFoundError: class FieldAssignmentStaffNotFoundError extends Error {},
+  FieldAssignmentStaffNotInBranchError: class FieldAssignmentStaffNotInBranchError extends Error {},
   AlreadyCheckedInError: class AlreadyCheckedInError extends Error {},
   AlreadyCheckedOutError: class AlreadyCheckedOutError extends Error {},
   AlreadyDoneForTodayError: class AlreadyDoneForTodayError extends Error {},
@@ -109,6 +111,29 @@ describe('createFieldAssignmentHandler - branch isolation', () => {
     expect(res.statusCode).toBe(201);
     expect(createFieldAssignment).toHaveBeenCalledTimes(1);
     expect(recordAudit).toHaveBeenCalledWith(expect.objectContaining({ entityType: 'FieldAssignment', action: 'CREATE', branchId: BRANCH_A }));
+  });
+
+  it('an assignee who does not belong to the branch is a 400 STAFF_NOT_IN_BRANCH - nothing is audited', async () => {
+    const { FieldAssignmentStaffNotInBranchError } = await import('../services/attendanceService.js');
+    createFieldAssignment.mockRejectedValue(new (FieldAssignmentStaffNotInBranchError as new () => Error)());
+    const res = makeRes();
+
+    await createFieldAssignmentHandler(createReq(branchAUser, BRANCH_A), res as never);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toMatchObject({ error: { code: 'STAFF_NOT_IN_BRANCH' } });
+    expect(recordAudit).not.toHaveBeenCalled();
+  });
+
+  it('an unknown / deleted assignee is a 404 - nothing is audited', async () => {
+    const { FieldAssignmentStaffNotFoundError } = await import('../services/attendanceService.js');
+    createFieldAssignment.mockRejectedValue(new (FieldAssignmentStaffNotFoundError as new () => Error)());
+    const res = makeRes();
+
+    await createFieldAssignmentHandler(createReq(branchAUser, BRANCH_A), res as never);
+
+    expect(res.statusCode).toBe(404);
+    expect(recordAudit).not.toHaveBeenCalled();
   });
 
   it('a SUPER_ADMIN may file one under any branch', async () => {

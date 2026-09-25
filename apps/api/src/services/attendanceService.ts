@@ -271,10 +271,42 @@ function mapFieldAssignmentToDto(record: Prisma.FieldAssignmentGetPayload<object
   };
 }
 
+/** The assigned employee does not exist (or was deleted). */
+export class FieldAssignmentStaffNotFoundError extends Error {
+  constructor() {
+    super('الموظف المكلَّف غير موجود');
+    this.name = 'FieldAssignmentStaffNotFoundError';
+  }
+}
+
+/**
+ * Owner decision (2026-09-25) - the assigned employee must actually belong to the
+ * assignment's branch: either it is their home branch, or they hold an explicit
+ * `UserBranchAccess` grant on it. (The caller's own access to the branch is
+ * checked separately, in the controller.)
+ */
+export class FieldAssignmentStaffNotInBranchError extends Error {
+  constructor() {
+    super('هذا الموظف لا ينتمي لفرع المهمة — لا كفرع أساسي ولا بصلاحية وصول إضافية لهذا الفرع');
+    this.name = 'FieldAssignmentStaffNotInBranchError';
+  }
+}
+
 export async function createFieldAssignment(
   input: CreateFieldAssignmentInput,
   createdById: string,
 ): Promise<FieldAssignment> {
+  const assignee = await prisma.staffProfile.findUnique({
+    where: { id: input.staffId },
+    select: { isDeleted: true, branchId: true, branchAccess: { where: { branchId: input.branchId }, select: { id: true } } },
+  });
+  if (!assignee || assignee.isDeleted) {
+    throw new FieldAssignmentStaffNotFoundError();
+  }
+  if (assignee.branchId !== input.branchId && assignee.branchAccess.length === 0) {
+    throw new FieldAssignmentStaffNotInBranchError();
+  }
+
   const record = await prisma.fieldAssignment.create({
     data: {
       staffId: input.staffId,

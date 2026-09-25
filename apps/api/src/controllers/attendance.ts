@@ -15,6 +15,8 @@ import {
   createFieldAssignment,
   deleteFieldAssignment,
   FieldAssignmentNotFoundError,
+  FieldAssignmentStaffNotFoundError,
+  FieldAssignmentStaffNotInBranchError,
   getFieldAssignmentBranchId,
   getTodayEntryForStaff,
   InvalidKioskCredentialsError,
@@ -185,7 +187,20 @@ export async function createFieldAssignmentHandler(req: Request, res: Response) 
     forbidBranch(res);
     return;
   }
-  const assignment = await createFieldAssignment(input, auth.staffId);
+  let assignment;
+  try {
+    assignment = await createFieldAssignment(input, auth.staffId);
+  } catch (err) {
+    if (err instanceof FieldAssignmentStaffNotFoundError) {
+      res.status(404).json({ success: false, error: { message: err.message } });
+      return;
+    }
+    if (err instanceof FieldAssignmentStaffNotInBranchError) {
+      res.status(400).json({ success: false, error: { message: err.message, code: 'STAFF_NOT_IN_BRANCH' } });
+      return;
+    }
+    throw err;
+  }
   await recordAudit({
     entityType: 'FieldAssignment',
     entityId: assignment.id,
