@@ -11,6 +11,7 @@ import type {
 import { apiDelete, apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { EditableDateCell, EditableSelectCell, EditableTextCell, StatusBadge, useConfirm, type StatusTone } from '@/components/cleopatra';
+import { assignableStaff } from '@/lib/assignableStaff';
 import { useAuth } from '@/state/AuthContext';
 
 const PLATFORM_LABELS: Record<ContentPlatform, string> = {
@@ -88,7 +89,7 @@ export function ContentCalendarPage() {
   };
 
   const branchName = (id: string | null) => (id ? (branches.find((b) => b.id === id)?.name ?? '—') : 'الشركة كلها');
-  const userOptions: [string, string][] = [['', '— بدون —'], ...users.map((u): [string, string] => [u.id, u.name])];
+  const userOptions: [string, string][] = [['', '— بدون —'], ...assignableStaff(users).map((u): [string, string] => [u.id, u.name])];
 
   if (error && !entries) return <div className="text-destructive">{error}</div>;
   if (!entries) return <div className="text-muted-foreground">جارٍ التحميل…</div>;

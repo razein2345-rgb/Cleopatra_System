@@ -52,7 +52,15 @@ import { useIdempotencyKey, useIdempotencyKeyMap } from '@/lib/useIdempotencyKey
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Combobox, InventoryItemCombobox, PartnerCombobox, useConfirm } from '@/components/cleopatra';
+import {
+  Combobox,
+  DuplicatePhoneWarning,
+  InventoryItemCombobox,
+  PartnerCombobox,
+  asDuplicatePhone,
+  useConfirm,
+  type DuplicatePhoneInfo,
+} from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 
 type PricingKind = OrderItemPricingInput['kind'];
@@ -6855,12 +6863,14 @@ function QuickAddPartnerDialog({
   const [isIndividual, setIsIndividual] = useState(false);
   const [gender, setGender] = useState<Gender | ''>('');
   const [error, setError] = useState<string | null>(null);
+  const [duplicate, setDuplicate] = useState<DuplicatePhoneInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (e: React.FormEvent | null, allowDuplicate = false) => {
+    e?.preventDefault();
     if (submitting) return;
     setError(null);
+    setDuplicate(null);
     setSubmitting(true);
     try {
       const partner = await apiPost<BusinessPartner>('/api/partners', {
@@ -6870,10 +6880,13 @@ function QuickAddPartnerDialog({
         roles: ['CUSTOMER'],
         isIndividual,
         gender: isIndividual ? gender || undefined : undefined,
+        allowDuplicate: allowDuplicate || undefined,
       });
       onCreated(partner);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر إضافة العميل');
+      const conflict = asDuplicatePhone(err);
+      if (conflict) setDuplicate(conflict);
+      else setError(err instanceof Error ? err.message : 'تعذر إضافة العميل');
     } finally {
       setSubmitting(false);
     }
@@ -6885,7 +6898,7 @@ function QuickAddPartnerDialog({
         <DialogHeader>
           <DialogTitle>عميل جديد</DialogTitle>
         </DialogHeader>
-        <form onSubmit={submit} className="space-y-3">
+        <form onSubmit={(e) => void submit(e)} className="space-y-3">
           {error && <p className="text-destructive text-sm">{error}</p>}
           <label className="block space-y-1 text-sm">
             <span className="text-muted-foreground">اسم العميل</span>
@@ -6923,6 +6936,16 @@ function QuickAddPartnerDialog({
                 <option value="FEMALE">أنثى (السيدة)</option>
               </select>
             </label>
+          )}
+          {duplicate && (
+            <DuplicatePhoneWarning
+              info={duplicate}
+              submitting={submitting}
+              newTab
+              proceedLabel="أضفه برضه"
+              onProceed={() => void submit(null, true)}
+              onEdit={() => setDuplicate(null)}
+            />
           )}
           <div className="flex justify-end gap-2 pt-2">
             <Button type="button" variant="secondary" onClick={onClose}>

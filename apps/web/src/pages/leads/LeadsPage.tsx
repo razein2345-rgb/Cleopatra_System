@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import type {
   BranchSummary,
   CreateLeadInput,
@@ -9,16 +9,18 @@ import type {
   LeadSource,
   LeadStage,
   ParsedLeadImportRow,
-  PhoneMatch,
   UpdateLeadInput,
   User,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
-import { ApiRequestError } from '@/lib/apiError';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   ContactLinks,
+  DuplicatePhoneMatches,
+  DuplicatePhoneWarning,
+  asDuplicatePhone,
+  type DuplicatePhoneInfo,
   EditableDateCell,
   EditableSelectCell,
   EditableTextCell,
@@ -31,6 +33,7 @@ import {
 } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { localDateKey } from '@/lib/followUps';
+import { assignableStaff } from '@/lib/assignableStaff';
 import { LEAD_SOURCE_LABELS, LEAD_SOURCE_OPTIONS } from '@/pages/partners/partnerLabels';
 
 const PAGE_SIZE = 25;
@@ -65,42 +68,6 @@ const NEXT_STAGE: Partial<Record<LeadStage, 'CONTACTED' | 'QUALIFIED'>> = {
  * staff straight into the normal quotation composer in the same motion,
  * never a bare "convert" with nothing behind it.
  */
-/** The 409 DUPLICATE_PHONE conflict: the phone number already belongs to a customer or lead. */
-interface DuplicateInfo {
-  message: string;
-  matches: PhoneMatch[];
-  hiddenCount: number;
-}
-
-function asDuplicate(err: unknown): DuplicateInfo | null {
-  if (!(err instanceof ApiRequestError) || err.code !== 'DUPLICATE_PHONE') return null;
-  return {
-    message: err.message,
-    matches: Array.isArray(err.payload.matches) ? (err.payload.matches as PhoneMatch[]) : [],
-    hiddenCount: Number(err.payload.hiddenCount ?? 0),
-  };
-}
-
-/** The existing records that share the number; customers link to their profile. Matches in a branch the user cannot access are only counted. */
-function DuplicateMatchList({ info }: { info: DuplicateInfo }) {
-  return (
-    <ul className="list-inside list-disc space-y-0.5 text-sm">
-      {info.matches.map((m) => (
-        <li key={`${m.kind}-${m.id}`}>
-          {m.kind === 'partner' ? (
-            <Link to={`/partners/${m.id}`} className="text-primary hover:underline">
-              عميل: {m.name}
-            </Link>
-          ) : (
-            <span>Lead: {m.name}</span>
-          )}
-        </li>
-      ))}
-      {info.hiddenCount > 0 && <li className="text-muted-foreground">{info.hiddenCount} سجل في فرع تاني (مش ظاهر ليك)</li>}
-    </ul>
-  );
-}
-
 export function LeadsPage() {
   const { can } = useAuth();
   const navigate = useNavigate();
@@ -116,7 +83,7 @@ export function LeadsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejectingLead, setRejectingLead] = useState<Lead | null>(null);
   const [loggingCallLead, setLoggingCallLead] = useState<Lead | null>(null);
-  const [duplicateConvert, setDuplicateConvert] = useState<{ lead: Lead; info: DuplicateInfo } | null>(null);
+  const [duplicateConvert, setDuplicateConvert] = useState<{ lead: Lead; info: DuplicatePhoneInfo } | null>(null);
 
   const load = () => {
     Promise.all([apiGet<Lead[]>('/api/leads'), apiGet<BranchSummary[]>('/api/branches')])
@@ -159,7 +126,7 @@ export function LeadsPage() {
       );
       navigate(`/orders/new?partnerId=${result.partnerId}&documentType=QUOTATION`);
     } catch (err) {
-      const duplicate = asDuplicate(err);
+      const duplicate = asDuplicatePhone(err);
       if (duplicate) {
         // a customer with this number already exists - let the user decide instead of silently making a second copy
         setDuplicateConvert({ lead, info: duplicate });
@@ -196,14 +163,28 @@ export function LeadsPage() {
 
   const branchName = (id: string) => branches.find((b) => b.id === id)?.name ?? id;
   const branchOptions = branches.map((b) => [b.id, b.name] as const);
-  const staffOptions = users.filter((u) => u.isActive).map((u) => [u.id, u.name] as const);
+  const staffOptions = assignableStaff(users).map((u) => [u.id, u.name] as const);
   const staffName = (id: string | null) => (id ? (users.find((u) => u.id === id)?.name ?? '—') : '—');
   const today = localDateKey(new Date());
   const canEditFields = can('leads.edit');
 
   /** Owner (2026-09-09, "عايز اقدر اعدل على جدول الليدز من بره") — same direct-in-table edit `EditableTextCell`/`EditableSelectCell` already give the Partners list, applied here too. */
   const updateLeadField = async (id: string, patch: UpdateLeadInput) => {
-    const updated = await apiPut<Lead>(`/api/leads/${id}`, patch);
+    let updated: Lead;
+    try {
+      updated = await apiPut<Lead>(`/api/leads/${id}`, patch);
+    } catch (err) {
+      // the new number already belongs to someone: show who, and only save it if the user insists
+      const duplicate = patch.phone !== undefined ? asDuplicatePhone(err) : null;
+      if (!duplicate) throw err;
+      const names = duplicate.matches.map((m) => (m.kind === 'partner' ? `عميل: ${m.name}` : `Lead: ${m.name}`)).join('، ');
+      const proceed = await confirm({
+        title: 'الرقم ده موجود بالفعل',
+        description: `${duplicate.message}${names ? ` (${names})` : ''} تحفظه برضه؟`,
+      });
+      if (!proceed) throw new Error('الرقم ما اتغيّرش', { cause: err });
+      updated = await apiPut<Lead>(`/api/leads/${id}`, { ...patch, allowDuplicate: true });
+    }
     setLeads((prev) => prev?.map((l) => (l.id === id ? updated : l)) ?? prev);
   };
 
@@ -434,7 +415,7 @@ export function LeadsPage() {
             </DialogHeader>
             <div className="space-y-3">
               <p className="text-sm">{duplicateConvert.info.message}</p>
-              <DuplicateMatchList info={duplicateConvert.info} />
+              <DuplicatePhoneMatches info={duplicateConvert.info} />
               <div className="flex flex-wrap justify-end gap-2">
                 <Button variant="secondary" onClick={() => setDuplicateConvert(null)}>
                   إلغاء
@@ -491,12 +472,14 @@ function CreateLeadForm({
   const [email, setEmail] = useState('');
   const [facebookUrl, setFacebookUrl] = useState('');
   const [source, setSource] = useState<LeadSource | ''>('');
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
+  // Owner decision (2026-09-25): no branch is pre-selected - a lead saved without touching the field used to
+  // land in the first branch unnoticed, which corrupts the per-branch lists.
+  const [branchId, setBranchId] = useState('');
   const [notes, setNotes] = useState('');
   const [assignedToId, setAssignedToId] = useState('');
   const [nextFollowUpAt, setNextFollowUpAt] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [duplicate, setDuplicate] = useState<DuplicateInfo | null>(null);
+  const [duplicate, setDuplicate] = useState<DuplicatePhoneInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async (e: React.FormEvent | null, allowDuplicate = false) => {
@@ -504,6 +487,10 @@ function CreateLeadForm({
     if (submitting) return;
     setError(null);
     setDuplicate(null);
+    if (!branchId) {
+      setError('اختر الفرع أولًا');
+      return;
+    }
     setSubmitting(true);
     try {
       const input: CreateLeadInput = {
@@ -521,7 +508,7 @@ function CreateLeadForm({
       await apiPost('/api/leads', input);
       onCreated();
     } catch (err) {
-      const conflict = asDuplicate(err);
+      const conflict = asDuplicatePhone(err);
       if (conflict) setDuplicate(conflict);
       else setError(err instanceof Error ? err.message : 'تعذر إنشاء الـLead');
     } finally {
@@ -562,10 +549,12 @@ function CreateLeadForm({
           ))}
         </select>
         <select
+          required
           value={branchId}
           onChange={(e) => setBranchId(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         >
+          <option value="">— اختر الفرع —</option>
           {branches.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
@@ -618,18 +607,7 @@ function CreateLeadForm({
         </label>
       </div>
       {duplicate && (
-        <div className="border-warning/50 bg-warning/10 space-y-2 rounded-md border p-3">
-          <p className="text-sm font-medium">{duplicate.message}</p>
-          <DuplicateMatchList info={duplicate} />
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" size="sm" disabled={submitting} onClick={() => void submit(null, true)}>
-              احفظه برضه
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setDuplicate(null)}>
-              تعديل الرقم
-            </Button>
-          </div>
-        </div>
+        <DuplicatePhoneWarning info={duplicate} submitting={submitting} onProceed={() => void submit(null, true)} onEdit={() => setDuplicate(null)} />
       )}
       <Button type="submit" disabled={submitting}>
         {submitting ? 'جارٍ الحفظ…' : 'حفظ الـLead'}
@@ -659,7 +637,8 @@ function ImportLeadsDialog({
   onImported: () => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
+  // no branch pre-selected (owner decision, 2026-09-25) - the whole batch would land in the wrong branch unnoticed
+  const [branchId, setBranchId] = useState('');
   const [source, setSource] = useState<LeadSource | ''>('');
   const [rows, setRows] = useState<PreviewRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -788,6 +767,7 @@ function ImportLeadsDialog({
                   onChange={(e) => setBranchId(e.target.value)}
                   className="border-input bg-background rounded-md border px-3 py-2 text-sm"
                 >
+                  <option value="">— اختر الفرع —</option>
                   {branches.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}

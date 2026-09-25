@@ -3,7 +3,17 @@ import { Link } from 'react-router-dom';
 import type { BranchSummary, BusinessPartner, CreateBusinessPartnerInput, UpdateBusinessPartnerInput } from '@cleopatra/shared';
 import { apiGet, apiPost, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { ContactLinks, EditableSelectCell, EditableTextCell, paginate, Pagination, StatusBadge } from '@/components/cleopatra';
+import {
+  ContactLinks,
+  DuplicatePhoneWarning,
+  asDuplicatePhone,
+  EditableSelectCell,
+  EditableTextCell,
+  paginate,
+  Pagination,
+  StatusBadge,
+  type DuplicatePhoneInfo,
+} from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { PARTNER_ROLE_LABELS, PARTNER_STATUS_LABELS, PARTNER_STATUS_OPTIONS, PARTNER_STATUS_TONES } from './partnerLabels';
 
@@ -192,33 +202,44 @@ function CreatePartnerForm({
   onCreated: () => void;
 }) {
   const [nameAr, setNameAr] = useState('');
-  const [branchId, setBranchId] = useState(branches[0]?.id ?? '');
+  // Owner decision (2026-09-25): no branch is pre-selected (a customer saved without touching the field
+  // used to land in the first branch unnoticed).
+  const [branchId, setBranchId] = useState('');
   const [phone, setPhone] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [duplicate, setDuplicate] = useState<DuplicatePhoneInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (e: React.FormEvent | null, allowDuplicate = false) => {
+    e?.preventDefault();
     if (submitting) return;
     setError(null);
+    setDuplicate(null);
+    if (!branchId) {
+      setError('اختر الفرع أولًا');
+      return;
+    }
     setSubmitting(true);
     try {
       const input: CreateBusinessPartnerInput = {
         nameAr,
         branchId,
         phone: phone || undefined,
+        allowDuplicate: allowDuplicate || undefined,
       };
       await apiPost('/api/partners', input);
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر إنشاء العميل');
+      const conflict = asDuplicatePhone(err);
+      if (conflict) setDuplicate(conflict);
+      else setError(err instanceof Error ? err.message : 'تعذر إنشاء العميل');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={submit} className="border-border bg-card space-y-3 rounded-2xl border p-4">
+    <form onSubmit={(e) => void submit(e)} className="border-border bg-card space-y-3 rounded-2xl border p-4">
       <p className="text-muted-foreground text-sm">
         إضافة سريعة — يمكن تحديد الأدوار والحالة والبيانات الكاملة من صفحة العميل بعد الإنشاء.
       </p>
@@ -232,10 +253,12 @@ function CreatePartnerForm({
           className="border-input bg-background rounded-md border px-3 py-2 text-sm sm:col-span-2"
         />
         <select
+          required
           value={branchId}
           onChange={(e) => setBranchId(e.target.value)}
           className="border-input bg-background rounded-md border px-3 py-2 text-sm"
         >
+          <option value="">— اختر الفرع —</option>
           {branches.map((b) => (
             <option key={b.id} value={b.id}>
               {b.name}
@@ -249,6 +272,9 @@ function CreatePartnerForm({
           className="border-input bg-background rounded-md border px-3 py-2 text-sm sm:col-span-3"
         />
       </div>
+      {duplicate && (
+        <DuplicatePhoneWarning info={duplicate} submitting={submitting} onProceed={() => void submit(null, true)} onEdit={() => setDuplicate(null)} proceedLabel="أنشئه برضه" />
+      )}
       <Button type="submit" disabled={submitting}>
         {submitting ? 'جارٍ الإنشاء…' : 'إنشاء العميل'}
       </Button>
