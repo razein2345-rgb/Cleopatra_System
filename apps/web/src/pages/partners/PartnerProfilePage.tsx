@@ -12,7 +12,7 @@ import type {
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPut } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Combobox, ContactLinks, LogCallDialog, useConfirm } from '@/components/cleopatra';
+import { Combobox, ContactLinks, DuplicatePhoneWarning, LogCallDialog, asDuplicatePhone, useConfirm, type DuplicatePhoneInfo } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { LEAD_SOURCE_OPTIONS, PARTNER_ROLE_OPTIONS, PARTNER_STATUS_OPTIONS } from './partnerLabels';
 import { ContactsTab } from './ContactsTab';
@@ -234,16 +234,18 @@ function OverviewForm({
   const [lastContactedAt, setLastContactedAt] = useState(partner.lastContactedAt?.slice(0, 10) ?? '');
   const [nextFollowUpAt, setNextFollowUpAt] = useState(partner.nextFollowUpAt?.slice(0, 10) ?? '');
   const [error, setError] = useState<string | null>(null);
+  const [duplicate, setDuplicate] = useState<DuplicatePhoneInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const toggleRole = (role: PartnerRole) => {
     setRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
   };
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (e: React.FormEvent | null, allowDuplicate = false) => {
+    e?.preventDefault();
     if (submitting) return;
     setError(null);
+    setDuplicate(null);
     setSubmitting(true);
     try {
       const input: UpdateBusinessPartnerInput = {
@@ -262,20 +264,33 @@ function OverviewForm({
         leadSource: leadSource || null,
         lastContactedAt: lastContactedAt || null,
         nextFollowUpAt: nextFollowUpAt || null,
+        allowDuplicate: allowDuplicate || undefined,
       };
       const updated = await apiPut<BusinessPartner>(`/api/partners/${partner.id}`, input);
       onSaved(updated);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر حفظ بيانات الشريك التجاري');
+      const conflict = asDuplicatePhone(err);
+      if (conflict) setDuplicate(conflict);
+      else setError(err instanceof Error ? err.message : 'تعذر حفظ بيانات الشريك التجاري');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={submit} className="border-border bg-card space-y-4 rounded-2xl border p-4">
+    <form onSubmit={(e) => void submit(e)} className="border-border bg-card space-y-4 rounded-2xl border p-4">
       <h2 className="font-semibold">نظرة عامة</h2>
       {error && <div className="text-destructive text-sm">{error}</div>}
+      {duplicate && (
+        <DuplicatePhoneWarning
+          info={duplicate}
+          submitting={submitting}
+          newTab
+          proceedLabel="احفظ الرقم برضه"
+          onProceed={() => void submit(null, true)}
+          onEdit={() => setDuplicate(null)}
+        />
+      )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="space-y-1 text-sm">

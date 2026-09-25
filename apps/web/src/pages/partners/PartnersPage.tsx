@@ -12,6 +12,7 @@ import {
   paginate,
   Pagination,
   StatusBadge,
+  useConfirm,
   type DuplicatePhoneInfo,
 } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
@@ -26,6 +27,7 @@ const PAGE_SIZE = 25;
 
 export function PartnersPage() {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const [partners, setPartners] = useState<BusinessPartner[] | null>(null);
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +61,21 @@ export function PartnersPage() {
    * revert their own draft and surface the error if the PUT fails.
    */
   const updatePartnerField = async (id: string, patch: UpdateBusinessPartnerInput) => {
-    const updated = await apiPut<BusinessPartner>(`/api/partners/${id}`, patch);
+    let updated: BusinessPartner;
+    try {
+      updated = await apiPut<BusinessPartner>(`/api/partners/${id}`, patch);
+    } catch (err) {
+      // the new number already belongs to someone: show who, and only save it if the user insists
+      const duplicate = patch.phone !== undefined ? asDuplicatePhone(err) : null;
+      if (!duplicate) throw err;
+      const names = duplicate.matches.map((m) => (m.kind === 'partner' ? `عميل: ${m.name}` : `Lead: ${m.name}`)).join('، ');
+      const proceed = await confirm({
+        title: 'الرقم ده موجود بالفعل',
+        description: `${duplicate.message}${names ? ` (${names})` : ''} تحفظه برضه؟`,
+      });
+      if (!proceed) throw new Error('الرقم ما اتغيّرش', { cause: err });
+      updated = await apiPut<BusinessPartner>(`/api/partners/${id}`, { ...patch, allowDuplicate: true });
+    }
     setPartners((prev) => prev?.map((p) => (p.id === id ? updated : p)) ?? prev);
   };
 

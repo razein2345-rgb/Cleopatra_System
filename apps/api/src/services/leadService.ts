@@ -59,13 +59,13 @@ export function describePhoneMatch(match: PhoneMatch): string {
  * represents it. `remember` adds a row created during a batch so later rows of the same file
  * are caught too.
  */
-export async function loadPhoneIndex(options: { includeLeads: boolean; excludeLeadId?: string }): Promise<{
+export async function loadPhoneIndex(options: { includeLeads: boolean; excludeLeadId?: string; excludePartnerId?: string }): Promise<{
   lookup: (phone: string) => PhoneMatch[];
   remember: (match: PhoneMatch, phone: string) => void;
 }> {
   const [partners, leads] = await Promise.all([
     prisma.businessPartner.findMany({
-      where: { isDeleted: false, phone: { not: null } },
+      where: { isDeleted: false, phone: { not: null }, ...(options.excludePartnerId ? { id: { not: options.excludePartnerId } } : {}) },
       select: { id: true, nameAr: true, phone: true, branchId: true, status: true },
     }),
     options.includeLeads
@@ -95,7 +95,10 @@ export async function loadPhoneIndex(options: { includeLeads: boolean; excludeLe
 }
 
 /** Throws DuplicatePhoneError when the phone already exists (see `loadPhoneIndex`). */
-export async function assertNoDuplicatePhone(phone: string, options: { includeLeads: boolean; excludeLeadId?: string }): Promise<void> {
+export async function assertNoDuplicatePhone(
+  phone: string,
+  options: { includeLeads: boolean; excludeLeadId?: string; excludePartnerId?: string },
+): Promise<void> {
   const { lookup } = await loadPhoneIndex(options);
   const matches = lookup(phone);
   if (matches.length > 0) throw new DuplicatePhoneError(matches);

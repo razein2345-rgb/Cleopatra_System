@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { createBusinessPartnerSchema, updateBusinessPartnerSchema } from '@cleopatra/shared';
+import { createBusinessPartnerSchema, normalizePhoneKey, updateBusinessPartnerSchema } from '@cleopatra/shared';
 import { prisma } from '../lib/prisma.js';
 import {
   getBusinessPartnerDto,
@@ -115,7 +115,7 @@ export async function createBusinessPartner(req: Request, res: Response) {
 
 export async function updateBusinessPartner(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
-  const input = updateBusinessPartnerSchema.parse(req.body);
+  const { allowDuplicate, ...input } = updateBusinessPartnerSchema.parse(req.body);
 
   const existing = await prisma.businessPartner.findUnique({ where: { id: req.params.id } });
   if (!existing || existing.isDeleted) {
@@ -141,6 +141,24 @@ export async function updateBusinessPartner(req: Request<{ id: string }>, res: R
       },
     });
     return;
+  }
+
+  // Changing the number to one that already belongs to a customer or an open lead is refused unless the
+  // user saw it and chose to go on (same rule as creating a customer). Only an actual CHANGE is checked -
+  // re-typing the same number in another format, or editing anything else, never trips it - and a
+  // supplier-only partner is a different list.
+  const effectiveRoles = input.roles ?? existing.roles;
+  const supplierOnly = effectiveRoles.length > 0 && !effectiveRoles.includes('CUSTOMER');
+  if (input.phone && !allowDuplicate && !supplierOnly && normalizePhoneKey(input.phone) !== normalizePhoneKey(existing.phone ?? '')) {
+    try {
+      await assertNoDuplicatePhone(input.phone, { includeLeads: true, excludePartnerId: existing.id });
+    } catch (err) {
+      if (err instanceof DuplicatePhoneError) {
+        sendDuplicatePhone(err, auth, res);
+        return;
+      }
+      throw err;
+    }
   }
 
   // General update never touches category/tags (see businessPartner.ts's

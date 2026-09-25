@@ -92,6 +92,8 @@ export const updateBusinessPartnerSchema = z.object({
   leadSource: leadSourceSchema.nullable().optional(),
   lastContactedAt: z.string().nullable().optional(),
   nextFollowUpAt: z.string().nullable().optional(),
+  /** The user saw the "this phone number already exists" warning and chose to change the number anyway. Never stored. */
+  allowDuplicate: z.boolean().optional(),
 });
 
 export type PartnerStatus = z.infer<typeof partnerStatusSchema>;
