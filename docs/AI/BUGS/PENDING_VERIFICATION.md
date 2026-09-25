@@ -185,3 +185,72 @@ payment, expenses, advances, profitability report against a known day.
 Not changed, for the owner: on a superseded Cutover the server still accepts
 reopen/approve/submit/supersede (harmless now that activation is blocked), and
 superseding twice overwrites who/when/why.
+
+---
+
+## Final results — 2026-09-25 (after cleanup, live checks on production)
+
+Cleanup confirmed by the owner (payment, invoice `CLP-INV-2026-000067`, test
+customer deleted; Printing House treasury back to 1,682.41, sales 1,924.00 /
+5 invoices). Render confirmed by the owner for `f017e9e`.
+
+### Verified live
+- **Overpayment rejection** (normal payment): a 600 payment on a 500 invoice is
+  refused with "المبلغ أكبر من المتبقي على الفاتورة (500.00 ج.م) — لا يمكن تسجيل
+  دفعة تزيد عن المستحق."; the invoice stays at paid 0.00 / remaining 500.00.
+- **Empty defaults on a new invoice:** branch shows "— اختر الفرع —" and the
+  customer "— اختر العميل —"; saving with neither → "اختر الفرع أولًا", with only
+  a branch → "اختر العميل أولًا", with both → saved (`CLP-INV-2026-000068`, 500.00).
+- **Cutover page** after supersede: Arabic status labels, branch name in the list,
+  no action buttons on the superseded record.
+- **Profitability report, one known day (2026-09-02):** arithmetic ties out —
+  manual expenses 3,500.00 = 2,000 + 500 + 600 + 400 (the four manual expense
+  entries of that day); gross profit 450.75 = (6,344.15 − 4,790.40 unknown-cost
+  revenue) − (220.00 confirmed + 883.00 estimated cost); operating profit
+  −5,012.82 = 450.75 − (1,963.57 fixed + 3,500.00 manual). The invoices tab for
+  the period lists exactly the two invoices of that day.
+- **Expenses:** amount 0 is rejected server-side; nothing was persisted.
+
+### Explained, not a bug — for the owner's awareness
+- Report revenue for 2026-09-02 is 6,344.15 while the two invoices total
+  6,345.00: revenue sums each item's exact value, whereas an invoice total is
+  rounded UP to a whole pound (`Math.ceil`). The 0.85 difference is that rounding
+  (0.25 + 0.60).
+
+### Needs an owner decision (not changed)
+1. **The "صرف سلفة لموظف" dialog opens with the first employee pre-selected**
+   ("أحمد") — same shape as the customer/branch defaults fixed today, on a cash
+   payout. Proposed: start empty, require a choice.
+2. **New-customer dialog** (`/partners`) also opens with the first branch
+   pre-selected. Lower risk (a customer can be re-branched), same pattern.
+3. **Invoice line unit price is shown rounded to 2 decimals while the line total
+   uses the exact price** (e.g. 1000 × "1.10" = "1,103.75"). Display of a
+   pricing figure — not touched.
+
+### Minor UI notes (not changed)
+- After a rejected payment the payment dialog closes and the error appears on the
+  page, so the entered amount is lost.
+- Server validation messages still show the English field key ("amount: ...").
+- Expense "الفئة" is free text (no suggestions from existing categories).
+
+### Not tested live (would post real cash that the assistant cannot remove)
+- Expense DUE → PAID (posts a treasury OUT), creating an employee advance and a
+  repayment. Their validation/forms were inspected; their logic is covered by the
+  unit suites.
+- The opening-credit-linked order flow was verified live on 2026-09-22; since
+  then only the overpayment guard was added to it, covered by unit tests
+  (`orderService.openingCredit.test.ts`).
+
+### Test data currently live
+| What | Identifier |
+|---|---|
+| Customer | "اختبار 2026-09-25" — partner `0a0fd1f7-f034-4bf0-a067-5518a93a554c` |
+| Invoice | `CLP-INV-2026-000068`, order `c192c10d-7d7f-4f93-9387-002863cf6db6`, 500.00, **no payments** |
+| Cutover | Printing House, superseded (kept, cannot be deleted from the UI) |
+
+Invoice numbers 000067 (deleted) and the gap it leaves are expected.
+
+### Access-review fixes shipped today (each with tests, isolated check, pushed)
+Stock-movement edit/delete, field-assignment create/delete, machine
+create/update/delete now check the record's own branch and audit under it;
+unscoped READ endpoints are recorded in `KNOWN_ISSUES.md`.
