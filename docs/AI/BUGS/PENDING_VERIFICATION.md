@@ -175,3 +175,13 @@ assistant from deleting the payment, which was the correct call):
 ## Still to test
 NewOrderPage opening-balance-linked order, OrderDocumentPage opening-credit
 payment, expenses, advances, profitability report against a known day.
+
+## Follow-up fixes (same day, after the owner's decisions)
+| Change | Kind |
+|---|---|
+| **A superseded Cutover can no longer be activated.** `activateCutover` only checked `status === APPROVED`; a superseded record keeps that status and the UI still offered "تفعيل", which would have posted its inventory openings on a branch with live data. Now: server throws `CutoverSupersededError` (409, Arabic) before any write; UI hides submit/approve/activate/reopen/supersede, the add-line forms and verify links on a superseded row and shows "أُلغي نهائيًا — للعرض فقط". | financial logic + UI |
+| **New invoice/quotation starts with no branch** (same rule as the customer). Submit rejects with "اختر الفرع أولًا"; "+ عميل جديد" and quick manual income are disabled until a branch is chosen. | behavior |
+
+Not changed, for the owner: on a superseded Cutover the server still accepts
+reopen/approve/submit/supersede (harmless now that activation is blocked), and
+superseding twice overwrites who/when/why.
