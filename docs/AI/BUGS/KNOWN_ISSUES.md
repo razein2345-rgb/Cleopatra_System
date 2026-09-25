@@ -536,3 +536,29 @@ data. This exposes only what every employee already sees on paper.
 **Reopen this only if** the endpoint ever starts returning anything beyond
 public-facing branch identity/contact fields (e.g., a treasury balance, a
 cost, an internal note) — then it must be gated or field-trimmed.
+
+---
+
+## Inventory reconciliation shows two items with legacy differences — needs the owner's manual review BEFORE any real Cutover activation
+
+**Found:** 2026-09-25, UI pass over the reports (تقرير "مطابقة المخزون").
+**Owner instruction:** do not touch anything; record as legacy data for his
+own manual review before a real Cutover is activated on this data.
+
+The report compares each item/branch's stored quantity against the quantity
+computed from the full stock-movement history. Two rows differ (everything
+else read "مطابق"):
+
+| Item | Branch | Stored | From movements | Difference |
+|---|---|---|---|---|
+| قلم بيانو سوستة أزرق | برينتنج هاوس | 390 | -22 | +412 |
+| كوشيه 115 | برينتنج هاوس | 100 | 0 | +100 |
+
+**Likely cause (not confirmed):** opening stock typed straight into the item
+without a matching stock movement, so movements alone can't reproduce the
+stored figure. The Cutover inventory opening is the designed way to record
+such a starting balance; whether it should be entered there, or the items
+corrected another way, is the owner's call.
+
+**Nothing was changed** — no adjustment, no movement, no edit. The system
+never auto-corrects a balance from this report (by design).

@@ -116,3 +116,62 @@ Full details, what's still open (the 401-as-reload behavior itself,
 `useIdempotencyKeyMap`'s narrower version of the same original gap), and
 why a symptom recurrence shouldn't be assumed to be "the same bug back
 again" without first re-checking the upstream issue: `docs/AI/BUGS/KNOWN_ISSUES.md`.
+
+---
+
+# UI pass over the financial system — 2026-09-25
+
+Method: the owner's logged-in production session (SUPER_ADMIN), clearly labeled
+test data ("اختبار 2026-09-25"). Simple UI defects fixed directly; anything
+touching financial logic / RBAC / intended behavior stopped and presented
+first, then changed only on the owner's decision.
+
+## Verified OK
+- Cutover (Printing House): create (branch selector offers both branches) →
+  add treasury opening → verify line → submit → approve (self-approval badge
+  shown). Activation deliberately never exercised (owner instruction).
+- Reports: debts tab (3,349 + 451 + 226 = 4,026) equals the header card and
+  the invoices tab's remaining amounts.
+- NewOrderPage: customer search, manual item, cart total (250 x 2 = 500.00),
+  "حفظ فقط" → invoice number assigned, document page matches.
+- OrderDocumentPage: payment recorded and shown in the payment log (this is
+  also how the overpayment gap below was found).
+
+## Fixed
+| Change | Kind | Commit state |
+|---|---|---|
+| Cutover "Branch ID" free-text → branch selector | UI | pushed (`c64ce19`) |
+| Cutover: raw "Inventory Item ID" box → item picker; branch name in list; Arabic status/method/verification labels and buttons | UI | local |
+| Money shown with 3 decimals (`1,753.571`, `1,963.571`) in branch summary, fixed-expense editor, reports overview → 2 | UI | local |
+| Reports heading "(Gross Profit)" English gloss removed | UI | local |
+| Treasury table: 295/346 editable rows showed raw `CASH` and `130` → Arabic label and `130.00` | UI | local |
+| **Overpayment rejected** (owner decision): `recordPayment`, a raised `updatePayment` amount and `createOrder`'s initial payments are capped at finalTotal − returns − other payments; 409 `PAYMENT_EXCEEDS_REMAINING`, Arabic message with the true remaining; per-order advisory lock; lowering/method-only edits never blocked | financial logic | local |
+| **New invoice starts with no customer** (owner decision): it defaulted to the first partner in the list | behavior | local |
+
+## Recorded, not changed
+- `GET /api/branches` is requireAuth-only by design (owner: leave) —
+  `KNOWN_ISSUES.md`.
+- Inventory reconciliation differences on two Printing House items —
+  `KNOWN_ISSUES.md`; owner reviews manually before any real Cutover
+  activation.
+- Related observation: the branch field of a new invoice also defaults to the
+  first branch in the list (`branches[0]`). Same shape as the customer default
+  but no debt is attached to a wrong branch silently visible in the form; not
+  changed, raised for the owner.
+- Invoice numbers are sequential: removing a test invoice leaves a gap.
+
+## Test data — cleanup status
+Left in production by this pass; the owner is removing the payment, invoice and
+customer himself from the UI (the session's permission classifier blocked the
+assistant from deleting the payment, which was the correct call):
+
+| What | Identifier |
+|---|---|
+| Customer | "اختبار 2026-09-25" — partner `80b8ff2e-edd1-4d73-a9ff-e925806cbae2` |
+| Invoice | `CLP-INV-2026-000067`, order `b8c0f714-10ea-4966-a0bb-056779fcd33c` |
+| Payment | one CASH payment of 600.00 on that invoice (+ its INCOME treasury entry) |
+| Cutover | Printing House, go-live 2026-09-26, notes "اختبار 2026-09-25 — سجل تجريبي، لا يُفعَّل", APPROVED, never activated — to be superseded (owner decision) |
+
+## Still to test
+NewOrderPage opening-balance-linked order, OrderDocumentPage opening-credit
+payment, expenses, advances, profitability report against a known day.
