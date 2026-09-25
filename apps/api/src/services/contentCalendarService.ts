@@ -75,6 +75,17 @@ async function loadOpen(id: string): Promise<ContentCalendarEntryRecord> {
   return row;
 }
 
+/**
+ * Branch a content-calendar entry belongs to, or null for a company-wide one (visible to every
+ * branch). Lets the controller check branch access by the ENTRY's own branch before an
+ * edit/delete. 404 for a missing or deleted entry.
+ */
+export async function getContentCalendarEntryBranchId(id: string): Promise<string | null> {
+  const row = await prisma.contentCalendarEntry.findUnique({ where: { id }, select: { branchId: true, isDeleted: true } });
+  if (!row || row.isDeleted) throw new ContentCalendarEntryNotFoundError();
+  return row.branchId;
+}
+
 export async function updateContentCalendarEntry(
   id: string,
   input: UpdateContentCalendarEntryInput,

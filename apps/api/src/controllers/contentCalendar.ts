@@ -6,6 +6,7 @@ import {
   ContentCalendarEntryNotFoundError,
   createContentCalendarEntry,
   deleteContentCalendarEntry,
+  getContentCalendarEntryBranchId,
   listContentCalendarEntries,
   updateContentCalendarEntry,
 } from '../services/contentCalendarService.js';
@@ -16,6 +17,29 @@ function handleServiceError(err: unknown, res: Response): boolean {
     return true;
   }
   return false;
+}
+
+/**
+ * Branch access on edit/delete (owner decision, 2026-09-25 - found in the CRM review). Checked
+ * against the ENTRY's own branch, never the caller's home branch, and against the destination
+ * when an edit moves it. A company-wide entry (no branch) stays editable by anyone holding the
+ * permission, exactly as before. Returns the entry's branch id (null = company-wide), or
+ * `undefined` once a response (404/403) was already sent.
+ */
+async function authorizeEntryBranch(req: Request<{ id: string }>, res: Response, destinationBranchId?: string | null): Promise<string | null | undefined> {
+  const auth = req.auth!;
+  let entryBranchId: string | null;
+  try {
+    entryBranchId = await getContentCalendarEntryBranchId(req.params.id);
+  } catch (err) {
+    if (handleServiceError(err, res)) return undefined;
+    throw err;
+  }
+  if ((entryBranchId && !canAccessBranch(auth, entryBranchId)) || (destinationBranchId && !canAccessBranch(auth, destinationBranchId))) {
+    forbidBranch(res);
+    return undefined;
+  }
+  return entryBranchId;
 }
 
 export async function listContentCalendarEntriesHandler(req: Request, res: Response) {
@@ -49,6 +73,8 @@ export async function createContentCalendarEntryHandler(req: Request, res: Respo
 export async function updateContentCalendarEntryHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
   const input = updateContentCalendarEntrySchema.parse(req.body);
+  const originalBranchId = await authorizeEntryBranch(req, res, input.branchId);
+  if (originalBranchId === undefined) return;
 
   try {
     const entry = await updateContentCalendarEntry(req.params.id, input);
@@ -57,7 +83,8 @@ export async function updateContentCalendarEntryHandler(req: Request<{ id: strin
       entityId: entry.id,
       action: 'UPDATE',
       performedById: auth.staffId,
-      branchId: entry.branchId,
+      // the entry's ORIGINAL branch; a branch move is visible in newValue
+      branchId: originalBranchId,
       newValue: input,
     });
     res.json({ success: true, data: entry });
@@ -69,6 +96,8 @@ export async function updateContentCalendarEntryHandler(req: Request<{ id: strin
 
 export async function deleteContentCalendarEntryHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+  const entryBranchId = await authorizeEntryBranch(req, res);
+  if (entryBranchId === undefined) return;
 
   try {
     await deleteContentCalendarEntry(req.params.id, auth.staffId);
@@ -77,6 +106,6 @@ export async function deleteContentCalendarEntryHandler(req: Request<{ id: strin
     throw err;
   }
 
-  await recordAudit({ entityType: 'ContentCalendarEntry', entityId: req.params.id, action: 'DELETE', performedById: auth.staffId });
+  await recordAudit({ entityType: 'ContentCalendarEntry', entityId: req.params.id, action: 'DELETE', performedById: auth.staffId, branchId: entryBranchId });
   res.json({ success: true, data: { id: req.params.id } });
 }
