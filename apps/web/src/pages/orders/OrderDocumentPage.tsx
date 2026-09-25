@@ -95,7 +95,10 @@ export function OrderDocumentPage() {
         return Promise.all([
           // Owner (2026-08-20, "فاتورة بدون إسم العميل") — a walk-in/cash
           // invoice has no BusinessPartner to fetch.
-          o.partnerId ? apiGet<BusinessPartner>(`/api/partners/${o.partnerId}`) : Promise.resolve(null),
+          // A customer deleted AFTER this invoice was created 404s here; that must not
+          // take the whole invoice page down (the invoice would become unopenable, and
+          // so undeletable/unpayable) - load it with no customer and label it instead.
+          o.partnerId ? apiGet<BusinessPartner>(`/api/partners/${o.partnerId}`).catch(() => null) : Promise.resolve(null),
           apiGet<BusinessIdentity>('/api/settings/business-identity'),
           apiGet<BranchSummary[]>('/api/branches').catch(() => []),
           apiGet<User[]>('/api/users').catch(() => []),
@@ -351,7 +354,7 @@ export function OrderDocumentPage() {
               {!editingPartner ? (
                 <div className="flex flex-wrap items-center gap-2 text-sm">
                   <span className="text-muted-foreground">
-                    العميل: <span className="text-foreground font-medium">{partner ? partner.nameAr : 'عميل'}</span>
+                    العميل: <span className="text-foreground font-medium">{partner ? partner.nameAr : order.partnerId ? 'عميل محذوف' : 'عميل'}</span>
                   </span>
                   {partner ? (
                     canGoWalkIn && (
