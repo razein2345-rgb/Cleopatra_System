@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { Prisma } from '../generated/prisma/client.js';
 
 /**
  * Opening State / Cutover (Phase 3C.1 §6 / 3C.2 §23) — `updatePayment`/
@@ -14,6 +15,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 const paymentFindUnique = vi.fn();
 const paymentUpdate = vi.fn();
 const paymentAggregate = vi.fn();
+const paymentCreate = vi.fn();
+const orderItemReturnAggregate = vi.fn();
+const treasuryEntryCreate = vi.fn();
 const treasuryEntryUpdateMany = vi.fn();
 const treasuryDayClosureFindUnique = vi.fn();
 const treasuryDayClosureUpdate = vi.fn();
@@ -28,8 +32,13 @@ function makeTx() {
       findUnique: (...args: unknown[]) => paymentFindUnique(...args),
       update: (...args: unknown[]) => paymentUpdate(...args),
       aggregate: (...args: unknown[]) => paymentAggregate(...args),
+      create: (...args: unknown[]) => paymentCreate(...args),
     },
-    treasuryEntry: { updateMany: (...args: unknown[]) => treasuryEntryUpdateMany(...args) },
+    orderItemReturn: { aggregate: (...args: unknown[]) => orderItemReturnAggregate(...args) },
+    treasuryEntry: {
+      updateMany: (...args: unknown[]) => treasuryEntryUpdateMany(...args),
+      create: (...args: unknown[]) => treasuryEntryCreate(...args),
+    },
     treasuryDayClosure: {
       findUnique: (...args: unknown[]) => treasuryDayClosureFindUnique(...args),
       update: (...args: unknown[]) => treasuryDayClosureUpdate(...args),
@@ -50,7 +59,7 @@ vi.mock('../lib/prisma.js', () => ({
   prisma: { $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(makeTx()) },
 }));
 
-const { updatePayment, deletePayment, OpeningCreditExceededError } = await import('./orderService.js');
+const { updatePayment, deletePayment, recordPayment, OpeningCreditExceededError, PaymentExceedsRemainingError } = await import('./orderService.js');
 
 const ORDER_ID = '11111111-1111-1111-1111-111111111111';
 const PAYMENT_ID = '22222222-2222-2222-2222-222222222222';
@@ -65,7 +74,10 @@ function decimal(n: number) {
 beforeEach(() => {
   vi.clearAllMocks();
   executeRawLockKeys.length = 0;
-  orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, branchId: BRANCH_ID, invoiceNumber: 'CLP-INV-1' });
+  orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, branchId: BRANCH_ID, invoiceNumber: 'CLP-INV-1', finalTotal: new Prisma.Decimal(1000000) });
+  paymentAggregate.mockResolvedValue({ _sum: { amount: null } });
+  orderItemReturnAggregate.mockResolvedValue({ _sum: { refundAmount: null } });
+  paymentCreate.mockResolvedValue({ id: PAYMENT_ID });
   orderFindUniqueOrThrow.mockResolvedValue({ id: ORDER_ID });
   // A closed day exists — reopenDayIfClosed's real implementation will
   // flip it open if (and only if) it's actually called.
@@ -112,7 +124,7 @@ describe('updatePayment — Treasury Day reopen guard', () => {
  */
 describe('updatePayment — Opening Credit ceiling re-check', () => {
   beforeEach(() => {
-    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, branchId: BRANCH_ID, partnerId: PARTNER_ID, invoiceNumber: 'CLP-INV-1' });
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, branchId: BRANCH_ID, partnerId: PARTNER_ID, invoiceNumber: 'CLP-INV-1', finalTotal: new Prisma.Decimal(1000000) });
   });
 
   it('raising the amount within the true remaining credit succeeds', async () => {
@@ -127,7 +139,8 @@ describe('updatePayment — Opening Credit ceiling re-check', () => {
     await expect(updatePayment(ORDER_ID, PAYMENT_ID, { amount: 4000 }, STAFF_ID)).resolves.toBeDefined();
 
     expect(paymentUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ amount: 4000 }) }));
-    expect(executeRawLockKeys).toEqual([PARTNER_ID]);
+    // partner lock (opening-credit ceiling) first, then the per-order payment lock — always in that order, so it can't deadlock with recordPayment (order lock only) or applyOpeningCreditPayment (partner lock only)
+    expect(executeRawLockKeys).toEqual([PARTNER_ID, `order-payments:${ORDER_ID}`]);
   });
 
   it('raising the amount past the true remaining credit is rejected — payment is never updated', async () => {
@@ -137,7 +150,7 @@ describe('updatePayment — Opening Credit ceiling re-check', () => {
     });
     customerOpeningFindUnique.mockResolvedValue({ creditAmount: decimal(5000) });
     // Another 3,000 already consumed by a different payment — only 2,000 truly remains.
-    paymentAggregate.mockResolvedValue({ _sum: { amount: decimal(3000) } });
+    paymentAggregate.mockResolvedValue({ _sum: { amount: new Prisma.Decimal(3000) } });
 
     await expect(updatePayment(ORDER_ID, PAYMENT_ID, { amount: 2500 }, STAFF_ID)).rejects.toThrow(OpeningCreditExceededError);
 
@@ -154,7 +167,7 @@ describe('updatePayment — Opening Credit ceiling re-check', () => {
       sourceType: 'OPENING_CREDIT_APPLICATION', createdAt: new Date(),
     });
     customerOpeningFindUnique.mockResolvedValue({ creditAmount: decimal(5000) });
-    paymentAggregate.mockResolvedValue({ _sum: { amount: decimal(3000) } });
+    paymentAggregate.mockResolvedValue({ _sum: { amount: new Prisma.Decimal(3000) } });
 
     await expect(updatePayment(ORDER_ID, PAYMENT_ID, { amount: 2000 }, STAFF_ID)).resolves.toBeDefined();
   });
@@ -181,7 +194,10 @@ describe('updatePayment — Opening Credit ceiling re-check', () => {
     await updatePayment(ORDER_ID, PAYMENT_ID, { amount: 999999 }, STAFF_ID);
 
     expect(customerOpeningFindUnique).not.toHaveBeenCalled();
-    expect(paymentAggregate).not.toHaveBeenCalled();
+    // (the overpayment check aggregates payments now, but never the opening-credit-only sum)
+    expect(paymentAggregate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ sourceType: 'OPENING_CREDIT_APPLICATION' }) }),
+    );
   });
 });
 
@@ -213,5 +229,78 @@ describe('deletePayment — Treasury Day reopen guard', () => {
     expect(paymentUpdate).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ isDeleted: true }) }),
     );
+  });
+});
+
+/**
+ * Owner decision (2026-09-25) — a normal payment may not exceed what the
+ * customer still owes (same standard opening-credit applications and
+ * advance repayments already enforce). "Remaining" = finalTotal - returns
+ * - other payments, the same figure the UI calls remainingBalance.
+ */
+describe('recordPayment — overpayment rejection', () => {
+  beforeEach(() => {
+    treasuryDayClosureFindUnique.mockResolvedValue(null);
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, branchId: BRANCH_ID, partnerId: PARTNER_ID, invoiceNumber: 'CLP-INV-1', finalTotal: new Prisma.Decimal(500) });
+  });
+
+  it('a 600 payment on a 500 invoice is rejected and nothing is written', async () => {
+    await expect(recordPayment(ORDER_ID, { method: 'CASH', amount: 600 }, STAFF_ID)).rejects.toThrow(PaymentExceedsRemainingError);
+    expect(paymentCreate).not.toHaveBeenCalled();
+    expect(treasuryEntryCreate).not.toHaveBeenCalled();
+  });
+
+  it('carries the true remaining so the UI can say how much is still owed', async () => {
+    paymentAggregate.mockResolvedValue({ _sum: { amount: new Prisma.Decimal(200) } });
+    await expect(recordPayment(ORDER_ID, { method: 'CASH', amount: 400 }, STAFF_ID)).rejects.toMatchObject({ remaining: 300 });
+  });
+
+  it('paying exactly the remaining balance is allowed (boundary)', async () => {
+    paymentAggregate.mockResolvedValue({ _sum: { amount: new Prisma.Decimal(200) } });
+    await expect(recordPayment(ORDER_ID, { method: 'CASH', amount: 300 }, STAFF_ID)).resolves.toBeDefined();
+    expect(paymentCreate).toHaveBeenCalledTimes(1);
+    expect(treasuryEntryCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns reduce what is owed: a 500 invoice with 100 returned only allows 400', async () => {
+    orderItemReturnAggregate.mockResolvedValue({ _sum: { refundAmount: new Prisma.Decimal(100) } });
+    await expect(recordPayment(ORDER_ID, { method: 'CASH', amount: 401 }, STAFF_ID)).rejects.toThrow(PaymentExceedsRemainingError);
+    await expect(recordPayment(ORDER_ID, { method: 'CASH', amount: 400 }, STAFF_ID)).resolves.toBeDefined();
+  });
+
+  it('the check runs under a per-order advisory lock so concurrent payments serialize', async () => {
+    await recordPayment(ORDER_ID, { method: 'CASH', amount: 100 }, STAFF_ID);
+    expect(executeRawLockKeys).toContain(`order-payments:${ORDER_ID}`);
+  });
+});
+
+describe('updatePayment — overpayment rejection (NORMAL payments)', () => {
+  beforeEach(() => {
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, branchId: BRANCH_ID, partnerId: PARTNER_ID, invoiceNumber: 'CLP-INV-1', finalTotal: new Prisma.Decimal(500) });
+    paymentFindUnique.mockResolvedValue({
+      id: PAYMENT_ID, isDeleted: false, orderId: ORDER_ID, amount: decimal(100), method: 'CASH',
+      sourceType: 'NORMAL', createdAt: new Date(),
+    });
+  });
+
+  it('raising a payment past the invoice total is rejected; the payment is never updated', async () => {
+    await expect(updatePayment(ORDER_ID, PAYMENT_ID, { amount: 600 }, STAFF_ID)).rejects.toThrow(PaymentExceedsRemainingError);
+    expect(paymentUpdate).not.toHaveBeenCalled();
+    // this payment's own old amount must not count as "already paid"
+    expect(paymentAggregate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ id: { not: PAYMENT_ID } }) }),
+    );
+  });
+
+  it('raising within the total is allowed, including up to exactly the total', async () => {
+    await expect(updatePayment(ORDER_ID, PAYMENT_ID, { amount: 500 }, STAFF_ID)).resolves.toBeDefined();
+    expect(paymentUpdate).toHaveBeenCalled();
+  });
+
+  it('lowering the amount or changing only the method never runs the check (an already-overpaid order stays correctable)', async () => {
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, branchId: BRANCH_ID, partnerId: PARTNER_ID, invoiceNumber: 'CLP-INV-1', finalTotal: new Prisma.Decimal(50) });
+    await expect(updatePayment(ORDER_ID, PAYMENT_ID, { amount: 80 }, STAFF_ID)).resolves.toBeDefined();
+    await expect(updatePayment(ORDER_ID, PAYMENT_ID, { method: 'BANK_ACCOUNT' }, STAFF_ID)).resolves.toBeDefined();
+    expect(paymentAggregate).not.toHaveBeenCalled();
   });
 });

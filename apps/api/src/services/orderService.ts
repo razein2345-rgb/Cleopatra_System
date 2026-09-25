@@ -960,6 +960,13 @@ export async function createOrder(
     // every payment here shares the same branch+today's date.
     if ((input.payments?.length ?? 0) > 0) {
       await assertBranchDayNotClosed(input.branchId, new Date(), tx);
+      // Owner decision (2026-09-25) — same overpayment rule as
+      // `recordPayment`; a brand-new order has no returns/other payments,
+      // so it's just the sum of the initial payments vs the final total.
+      const initialPaid = (input.payments ?? []).reduce((sum, p) => sum.plus(p.amount), new Prisma.Decimal(0));
+      if (initialPaid.greaterThan(finalTotal)) {
+        throw new PaymentExceedsRemainingError(finalTotal);
+      }
     }
     for (const payment of input.payments ?? []) {
       const createdPayment = await tx.payment.create({
@@ -1510,6 +1517,47 @@ export async function deleteOrder(
 }
 
 /**
+ * Owner decision (2026-09-25, found in the UI pass) — a normal invoice
+ * payment could exceed what the customer still owes (a 600 payment on a
+ * 500 invoice was accepted, remaining showed -100) while opening-credit
+ * applications and employee-advance repayments already reject an
+ * over-amount. Same standard everywhere now: the sum of payments may not
+ * exceed the order's net total (`finalTotal` minus returns — the same
+ * figure `mapOrderToDto` calls `netTotal`, so "remaining" here is exactly
+ * the `remainingBalance` the user sees).
+ */
+export class PaymentExceedsRemainingError extends Error {
+  constructor(public readonly remaining: number) {
+    super(`Payment exceeds the order's remaining balance of ${remaining.toFixed(2)}`);
+    this.name = 'PaymentExceedsRemainingError';
+  }
+}
+
+/**
+ * Serialized per order (advisory lock on the order id, first statement in
+ * the caller's transaction) so two concurrent payments can't both pass the
+ * check against the same remaining balance. `excludePaymentId` is the
+ * payment being edited — its own old amount is not "already paid".
+ */
+async function assertPaymentWithinRemaining(
+  tx: Prisma.TransactionClient,
+  order: { id: string; finalTotal: Prisma.Decimal },
+  amount: number,
+  excludePaymentId?: string,
+): Promise<void> {
+  await acquireAdvisoryLock(tx, `order-payments:${order.id}`);
+  const paid = await tx.payment.aggregate({
+    where: { orderId: order.id, isDeleted: false, ...(excludePaymentId ? { id: { not: excludePaymentId } } : {}) },
+    _sum: { amount: true },
+  });
+  const returned = await tx.orderItemReturn.aggregate({ where: { orderId: order.id }, _sum: { refundAmount: true } });
+  const remaining = order.finalTotal.minus(returned._sum.refundAmount ?? 0).minus(paid._sum.amount ?? 0);
+  if (new Prisma.Decimal(amount).greaterThan(remaining)) {
+    throw new PaymentExceedsRemainingError(Math.max(0, remaining.toNumber()));
+  }
+}
+
+/**
  * Records a payment against an Order and its matching Treasury entry in
  * one transaction (FEATURE-006 M3, "Payments + Treasury" — never allow a
  * payment saved without a Treasury entry or vice versa). `sourceType:
@@ -1529,6 +1577,7 @@ export async function recordPayment(
       throw new OrderNotFoundError();
     }
     await assertBranchDayNotClosed(order.branchId, new Date(), tx);
+    await assertPaymentWithinRemaining(tx, order, input.amount);
 
     const payment = await tx.payment.create({
       data: { orderId: order.id, method: input.method, amount: input.amount },
@@ -1614,6 +1663,15 @@ export async function updatePayment(
         const remaining = (opening?.creditAmount.toNumber() ?? 0) - (consumedByOthers._sum.amount?.toNumber() ?? 0);
         if (input.amount > remaining) throw new OpeningCreditExceededError(remaining);
       }
+    }
+
+    // Owner decision (2026-09-25) — only a RAISED amount can newly
+    // overpay; lowering it or changing just the method never blocks (an
+    // order already overpaid before this rule must stay correctable).
+    // Opening-credit rows have their own ceiling above, and still count
+    // toward what's paid on the order.
+    if (input.amount !== undefined && input.amount > payment.amount.toNumber()) {
+      await assertPaymentWithinRemaining(tx, order, input.amount, paymentId);
     }
 
     await tx.payment.update({ where: { id: paymentId }, data: { amount: newAmount, method: newMethod } });

@@ -28,6 +28,7 @@ import {
   OrderNotFoundError,
   ORDER_INCLUDE,
   PartnerRequiredError,
+  PaymentExceedsRemainingError,
   PaymentNotFoundError,
   PricingInputError,
   recordPayment,
@@ -190,6 +191,7 @@ export async function createOrderHandler(req: Request, res: Response) {
       res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
       return;
     }
+    if (sendPaymentExceeded(err, res)) return;
     if (err instanceof ItemDiscountExceedsTotalError) {
       res.status(400).json({ success: false, error: { message: err.message, code: 'ITEM_DISCOUNT_EXCEEDS_TOTAL' } });
       return;
@@ -444,6 +446,25 @@ export async function deleteOrderHandler(req: Request<{ id: string }>, res: Resp
  * directly. No Quotation involvement anywhere — works identically for a
  * direct Order (M2) or a Quotation-converted one.
  */
+/**
+ * Owner decision (2026-09-25) — a payment (initial, added, or raised) may
+ * not exceed what the customer still owes. 409 like the sibling
+ * `OPENING_CREDIT_EXCEEDED`; Arabic message written here (new error, per
+ * the same rule the Cutover-revision errors follow).
+ */
+function sendPaymentExceeded(err: unknown, res: Response): boolean {
+  if (!(err instanceof PaymentExceedsRemainingError)) return false;
+  res.status(409).json({
+    success: false,
+    error: {
+      message: `المبلغ أكبر من المتبقي على الفاتورة (${err.remaining.toFixed(2)} ج.م) — لا يمكن تسجيل دفعة تزيد عن المستحق.`,
+      code: 'PAYMENT_EXCEEDS_REMAINING',
+      remaining: err.remaining,
+    },
+  });
+  return true;
+}
+
 export async function recordPaymentHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
   const orderBranchId = await loadOrderBranchOr404(req.params.id, res);
@@ -489,6 +510,7 @@ export async function recordPaymentHandler(req: Request<{ id: string }>, res: Re
       res.status(404).json({ success: false, error: { message: err.message } });
       return;
     }
+    if (sendPaymentExceeded(err, res)) return;
     if (err instanceof DayClosedError) {
       res.status(409).json({ success: false, error: { message: err.message, code: 'DAY_CLOSED' } });
       return;
@@ -519,6 +541,7 @@ export async function updatePaymentHandler(req: Request<{ id: string; paymentId:
   try {
     result = await updatePayment(req.params.id, req.params.paymentId, input, auth.staffId);
   } catch (err) {
+    if (sendPaymentExceeded(err, res)) return;
     if (err instanceof PaymentNotFoundError || err instanceof OrderNotFoundError) {
       res.status(404).json({ success: false, error: { message: err.message } });
       return;
