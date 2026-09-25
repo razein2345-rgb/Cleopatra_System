@@ -8,7 +8,7 @@ import { PAYMENT_METHOD_LABELS } from '@/pages/partners/partnerLabels';
 import { WALLET_COLORS } from '@/pages/treasury/treasuryLabels';
 import { downloadDocumentAsPdf } from '@/lib/documents/exportPdf';
 
-const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2 });
+const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const dateOnly = (iso: string) => new Date(iso).toLocaleDateString('ar-EG');
 
 type TabId =
@@ -243,7 +243,7 @@ export function ReportsOverviewPage() {
                   </div>
                   <div>
                     <h4 className="mb-2 text-sm font-semibold">
-                      الربح الإجمالي (Gross Profit)
+                      الربح الإجمالي
                       {profitability.hasUnknownProfitItems && (
                         <span className="text-warning ms-1 text-xs" title="فيه أصناف في الفترة دي مالهاش سعر تكلفة مسجّل خالص">
                           ⚠
