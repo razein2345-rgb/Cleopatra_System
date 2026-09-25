@@ -72,6 +72,8 @@ export const createBusinessPartnerSchema = z.object({
   leadSource: leadSourceSchema.optional(),
   lastContactedAt: z.string().optional(),
   nextFollowUpAt: z.string().optional(),
+  /** The user saw the "this phone number already exists" warning and chose to create the customer anyway. Never stored. */
+  allowDuplicate: z.boolean().optional(),
 });
 
 export const updateBusinessPartnerSchema = z.object({

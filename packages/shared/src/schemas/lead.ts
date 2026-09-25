@@ -67,6 +67,8 @@ export const updateLeadSchema = z.object({
   branchId: z.string().uuid().optional(),
   assignedToId: z.string().uuid().nullable().optional(),
   nextFollowUpAt: z.string().nullable().optional(),
+  /** Changing the phone to a number that already exists: the user saw the warning and chose to go on. Never stored. */
+  allowDuplicate: z.boolean().optional(),
 });
 
 /** Advances an open Lead one step (NEW → CONTACTED → QUALIFIED) — never jumps straight to CONVERTED/REJECTED, those are their own dedicated actions below. */

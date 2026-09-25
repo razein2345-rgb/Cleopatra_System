@@ -1,6 +1,15 @@
 import type { Request, Response } from 'express';
-import { advanceLeadStageSchema, convertLeadSchema, createLeadSchema, importLeadsSchema, rejectLeadSchema, updateLeadSchema } from '@cleopatra/shared';
+import {
+  advanceLeadStageSchema,
+  convertLeadSchema,
+  createLeadSchema,
+  importLeadsSchema,
+  normalizePhoneKey,
+  rejectLeadSchema,
+  updateLeadSchema,
+} from '@cleopatra/shared';
 import { canAccessBranch, forbidBranch } from '../services/authContext.js';
+import { sendDuplicatePhone } from './duplicatePhone.js';
 import { recordAudit } from '../services/auditService.js';
 import {
   advanceLeadStage,
@@ -19,27 +28,6 @@ import {
   updateLead,
 } from '../services/leadService.js';
 import { LeadImportParseError, parseLeadImportFile } from '../services/leadImportParser.js';
-
-/**
- * 409 for a phone number that already exists. Matching is business-wide, but a branch-scoped caller
- * is only told about records of branches they can access; the rest are just counted, so this can't
- * be used to read another branch's customers.
- */
-function sendDuplicatePhone(err: DuplicatePhoneError, auth: NonNullable<Request['auth']>, res: Response): void {
-  const visible = err.matches.filter((m) => canAccessBranch(auth, m.branchId));
-  const hiddenCount = err.matches.length - visible.length;
-  const first = visible[0];
-  const what = first ? (first.kind === 'partner' ? `عميل "${first.name}"` : `Lead "${first.name}"`) : 'سجل في فرع تاني';
-  res.status(409).json({
-    success: false,
-    error: {
-      message: `الرقم ده موجود بالفعل عند ${what}${err.matches.length > 1 ? ` (و${err.matches.length - 1} تانيين)` : ''}.`,
-      code: 'DUPLICATE_PHONE',
-      matches: visible,
-      hiddenCount,
-    },
-  });
-}
 
 function handleServiceError(err: unknown, res: Response): boolean {
   if (err instanceof LeadNotFoundError) {
@@ -132,9 +120,26 @@ export async function createLeadHandler(req: Request, res: Response) {
 
 export async function updateLeadHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
-  const input = updateLeadSchema.parse(req.body);
+  const { allowDuplicate, ...input } = updateLeadSchema.parse(req.body);
   // the destination branch too, when the edit moves the lead
   if (!(await authorizeLeadBranch(req, res, input.branchId))) return;
+
+  // Changing the phone to a number that already exists (owner decision, 2026-09-25): only when the
+  // number actually changes - an unrelated edit of a lead that already shares a number is never blocked.
+  if (input.phone !== undefined && !allowDuplicate) {
+    const current = await getLead(req.params.id);
+    if (current && normalizePhoneKey(input.phone) !== normalizePhoneKey(current.phone)) {
+      try {
+        await assertNoDuplicatePhone(input.phone, { includeLeads: true, excludeLeadId: req.params.id });
+      } catch (err) {
+        if (err instanceof DuplicatePhoneError) {
+          sendDuplicatePhone(err, auth, res);
+          return;
+        }
+        throw err;
+      }
+    }
+  }
 
   try {
     const lead = await updateLead(req.params.id, input);

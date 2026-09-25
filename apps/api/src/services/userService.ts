@@ -3,7 +3,7 @@ import type { Prisma } from '../generated/prisma/client.js';
 import type { User } from '@cleopatra/shared';
 
 export const userInclude = {
-  roles: { include: { role: true } },
+  roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } },
   branchAccess: true,
 } satisfies Prisma.StaffProfileInclude;
 
@@ -11,12 +11,16 @@ type StaffWithRoles = Prisma.StaffProfileGetPayload<{ include: typeof userInclud
 
 /** Maps a Prisma StaffProfile (with roles/branchAccess included) onto the shared `User` API shape. */
 export function mapStaffToUser(staff: StaffWithRoles): User {
+  const permissionKeys = new Set(staff.roles.flatMap((userRole) => userRole.role.permissions.map((rp) => rp.permission.key)));
   return {
     id: staff.id,
     name: staff.name,
     email: staff.email,
     phone: staff.phone,
     isActive: staff.isActive,
+    // a device login, not a person: the kiosk permission is its ONLY permission (a real employee who also holds
+    // the kiosk role alongside other roles is NOT a device account)
+    isDeviceAccount: permissionKeys.size === 1 && permissionKeys.has('attendance.kiosk'),
     lastLoginAt: staff.lastLoginAt ? staff.lastLoginAt.toISOString() : null,
     lastActiveAt: staff.lastActiveAt ? staff.lastActiveAt.toISOString() : null,
     branchId: staff.branchId,

@@ -8,6 +8,8 @@ import {
 } from '../services/businessPartnerService.js';
 import { recordAudit } from '../services/auditService.js';
 import { canAccessBranch, forbidBranch } from '../services/authContext.js';
+import { assertNoDuplicatePhone, DuplicatePhoneError } from '../services/leadService.js';
+import { sendDuplicatePhone } from './duplicatePhone.js';
 
 /** `lastContactedAt`/`nextFollowUpAt` arrive as ISO strings (Zod's date convention throughout this codebase) but Prisma's DateTime columns need real `Date`s — same explicit-conversion pattern `orderService.ts`'s `deliveryDate` handling already uses, not implicit string coercion. */
 function toDate(value: string | null | undefined): Date | null | undefined {
@@ -53,7 +55,7 @@ export async function getBusinessPartner(req: Request<{ id: string }>, res: Resp
 
 export async function createBusinessPartner(req: Request, res: Response) {
   const auth = req.auth!;
-  const input = createBusinessPartnerSchema.parse(req.body);
+  const { allowDuplicate, ...input } = createBusinessPartnerSchema.parse(req.body);
 
   if (!canAccessBranch(auth, input.branchId)) {
     forbidBranch(res);
@@ -69,6 +71,22 @@ export async function createBusinessPartner(req: Request, res: Response) {
       },
     });
     return;
+  }
+
+  // Duplicate detection by phone (owner decision, 2026-09-25): a customer whose number already belongs
+  // to a customer or an open lead is refused unless the user saw it and chose to go on. Suppliers
+  // (created with only the SUPPLIER role) are a different list and are not checked here.
+  const supplierOnly = input.roles !== undefined && input.roles.length > 0 && !input.roles.includes('CUSTOMER');
+  if (input.phone && !allowDuplicate && !supplierOnly) {
+    try {
+      await assertNoDuplicatePhone(input.phone, { includeLeads: true });
+    } catch (err) {
+      if (err instanceof DuplicatePhoneError) {
+        sendDuplicatePhone(err, auth, res);
+        return;
+      }
+      throw err;
+    }
   }
 
   const partner = await prisma.businessPartner.create({

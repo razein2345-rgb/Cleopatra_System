@@ -16,6 +16,8 @@ export const userSchema = z.object({
   email: z.string().email(),
   phone: z.string().nullable(),
   isActive: z.boolean(),
+  /** A device login (e.g. the attendance kiosk terminal), not a person: its ONLY permission is `attendance.kiosk`. Such an account must never be offered as an employee to assign work to. */
+  isDeviceAccount: z.boolean(),
   lastLoginAt: z.string().nullable(),
   /** Owner (2026-08-20, "محتاج اشوف مين الموظف الأكتيف على السيستم") — see StaffProfile.lastActiveAt's doc comment. */
   lastActiveAt: z.string().nullable(),
