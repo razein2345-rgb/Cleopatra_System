@@ -192,6 +192,33 @@ export async function deleteBusinessPartner(req: Request<{ id: string }>, res: R
     return;
   }
 
+  // Owner decision (2026-09-25) - a customer with live invoices or quotations
+  // cannot be deleted (a hard block, not a warning): deleting one orphaned its
+  // invoices (they dropped out of the customer-grouped lists and the invoice
+  // page could not even load), and the customer may still owe money. Only
+  // non-deleted documents count. To hide a customer with history, an
+  // archive/inactive state is the right tool - a separate, larger change.
+  const [invoiceCount, quotationCount] = await Promise.all([
+    prisma.order.count({ where: { partnerId: req.params.id, isDeleted: false } }),
+    prisma.quotation.count({ where: { partnerId: req.params.id, isDeleted: false } }),
+  ]);
+  if (invoiceCount + quotationCount > 0) {
+    const parts = [
+      ...(invoiceCount > 0 ? [`${invoiceCount} فاتورة`] : []),
+      ...(quotationCount > 0 ? [`${quotationCount} عرض سعر`] : []),
+    ];
+    res.status(409).json({
+      success: false,
+      error: {
+        message: `لا يمكن حذف هذا العميل — له ${parts.join(' و')} غير محذوفة. احذفها أولًا، أو احتفظ بالعميل.`,
+        code: 'PARTNER_HAS_DOCUMENTS',
+        invoiceCount,
+        quotationCount,
+      },
+    });
+    return;
+  }
+
   const deleted = await prisma.businessPartner.update({
     where: { id: req.params.id },
     data: { isDeleted: true, deletedAt: new Date(), deletedBy: auth.staffId },

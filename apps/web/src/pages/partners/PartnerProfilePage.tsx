@@ -51,6 +51,7 @@ export function PartnerProfilePage() {
   const [branches, setBranches] = useState<BranchSummary[]>([]);
   const [staff, setStaff] = useState<User[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
   const [showLogCall, setShowLogCall] = useState(false);
 
@@ -82,7 +83,14 @@ export function PartnerProfilePage() {
       }))
     )
       return;
-    await apiDelete(`/api/partners/${partner.id}`);
+    setDeleteError(null);
+    try {
+      await apiDelete(`/api/partners/${partner.id}`);
+    } catch (err) {
+      // e.g. 409 - the customer still has invoices/quotations (shown in Arabic by the server)
+      setDeleteError(err instanceof Error ? err.message : 'تعذر حذف العميل');
+      return;
+    }
     navigate('/partners', { replace: true });
   };
 
@@ -123,6 +131,8 @@ export function PartnerProfilePage() {
           )}
         </div>
       </div>
+
+      {deleteError && <p className="text-destructive text-sm">{deleteError}</p>}
 
       <div className="border-border flex gap-4 border-b text-sm">
         {tabs.map((t) => (
