@@ -2527,9 +2527,13 @@ function NewOrderForm({
    * very often all the same paper job.
    */
   const [lastNotebookDefaults, setLastNotebookDefaults] = useState<Partial<DraftItem> | null>(null);
-  const [partnerId, setPartnerId] = useState(
-    editOrder?.partnerId ?? editQuotation?.partnerId ?? presetPartnerId ?? partners[0]?.id ?? '',
-  );
+  // Owner decision (2026-09-25) — a NEW invoice/quotation starts with NO customer
+  // selected (it used to silently pick the first partner in the list, so saving
+  // without touching the field put the invoice — and its debt — on an arbitrary
+  // real customer). The submit handler already rejects an empty selection with
+  // "اختر العميل أولًا"; only editing an existing document or a
+  // `?partnerId=` deep link pre-fills it.
+  const [partnerId, setPartnerId] = useState(editOrder?.partnerId ?? editQuotation?.partnerId ?? presetPartnerId ?? '');
   /** Owner (2026-08-20, "فاتورة بدون إسم العميل") — see `WALK_IN_ALLOWED_KINDS`. */
   const [walkIn, setWalkIn] = useState(
     Boolean((editOrder && !editOrder.partnerId) || (editQuotation && !editQuotation.partnerId)),
@@ -3738,6 +3742,7 @@ function NewOrderForm({
                   <PartnerCombobox
                     partners={localPartners}
                     value={partnerId}
+                    placeholder="— اختر العميل —"
                     onChange={(id) => {
                       setPartnerId(id);
                       setApprovedCustomerOpeningId(null);
