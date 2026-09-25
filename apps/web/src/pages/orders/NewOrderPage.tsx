@@ -2564,7 +2564,11 @@ function NewOrderForm({
       .then((data) => setApprovedCustomerOpeningId(data.opening?.status === 'APPROVED' ? data.opening.id : null))
       .catch(() => setApprovedCustomerOpeningId(null));
   }, [isAdminOrAbove, walkIn, isEditing, partnerId]);
-  const [branchId, setBranchId] = useState(editOrder?.branchId ?? editQuotation?.branchId ?? branches[0]?.id ?? '');
+  // Owner decision (2026-09-25) — same rule as the customer above: a NEW document
+  // starts with NO branch selected (it used to take the first branch in the list, so
+  // a cashier who never touched the field booked the invoice, its stock deduction
+  // and its treasury entries on the wrong branch). Editing keeps the document's own.
+  const [branchId, setBranchId] = useState(editOrder?.branchId ?? editQuotation?.branchId ?? '');
   // "أمر شغل مستقل لكل صنف حسب مساره" (2026-08-16, owner: "الغيها خالص —
   // النظام يحدد لوحده") — supersedes the old single order-level
   // productionTrack dropdown + one global requiresDesign toggle. Each cart
@@ -3036,6 +3040,10 @@ function NewOrderForm({
     // built-in HTML5 form validation), so this replaces that lost gate.
     // Owner (2026-08-20, "فاتورة بدون إسم العميل") — skipped entirely for a
     // walk-in/cash sale, but only when every item qualifies.
+    if (!branchId) {
+      setError('اختر الفرع أولًا');
+      return;
+    }
     if (walkIn) {
       if (cart.some((line) => !WALK_IN_ALLOWED_KINDS.has(line.pricing.kind))) {
         setError('فاتورة بدون عميل متاحة بس لو كل البنود "بضاعة من المخزون" أو "بند يدوي"');
@@ -3751,7 +3759,14 @@ function NewOrderForm({
                     disabled={isEditing}
                   />
                   {can('partners.create') && (
-                    <Button type="button" variant="secondary" size="sm" onClick={() => setShowAddPartner(true)}>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={!branchId}
+                      title={branchId ? undefined : 'اختر الفرع أولًا'}
+                      onClick={() => setShowAddPartner(true)}
+                    >
                       + عميل جديد
                     </Button>
                   )}
@@ -3796,6 +3811,7 @@ function NewOrderForm({
                 onChange={(e) => setBranchId(e.target.value)}
                 className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm disabled:opacity-60"
               >
+                <option value="">— اختر الفرع —</option>
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
@@ -5206,7 +5222,9 @@ function NewOrderForm({
                   <button
                     type="button"
                     onClick={() => setShowQuickIncome(true)}
-                    className="text-primary text-xs hover:underline"
+                    disabled={!branchId}
+                    title={branchId ? undefined : 'اختر الفرع أولًا'}
+                    className="text-primary text-xs hover:underline disabled:opacity-50 disabled:no-underline"
                   >
                     ⚡ بيع سريع — قيد خزينة بدون فاتورة
                   </button>
