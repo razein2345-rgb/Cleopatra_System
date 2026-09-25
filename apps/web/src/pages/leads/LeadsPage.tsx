@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type {
   BranchSummary,
   CreateLeadInput,
@@ -9,10 +9,12 @@ import type {
   LeadSource,
   LeadStage,
   ParsedLeadImportRow,
+  PhoneMatch,
   UpdateLeadInput,
   User,
 } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost, apiPostFormData, apiPut } from '@/lib/api';
+import { ApiRequestError } from '@/lib/apiError';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -63,6 +65,42 @@ const NEXT_STAGE: Partial<Record<LeadStage, 'CONTACTED' | 'QUALIFIED'>> = {
  * staff straight into the normal quotation composer in the same motion,
  * never a bare "convert" with nothing behind it.
  */
+/** The 409 DUPLICATE_PHONE conflict: the phone number already belongs to a customer or lead. */
+interface DuplicateInfo {
+  message: string;
+  matches: PhoneMatch[];
+  hiddenCount: number;
+}
+
+function asDuplicate(err: unknown): DuplicateInfo | null {
+  if (!(err instanceof ApiRequestError) || err.code !== 'DUPLICATE_PHONE') return null;
+  return {
+    message: err.message,
+    matches: Array.isArray(err.payload.matches) ? (err.payload.matches as PhoneMatch[]) : [],
+    hiddenCount: Number(err.payload.hiddenCount ?? 0),
+  };
+}
+
+/** The existing records that share the number; customers link to their profile. Matches in a branch the user cannot access are only counted. */
+function DuplicateMatchList({ info }: { info: DuplicateInfo }) {
+  return (
+    <ul className="list-inside list-disc space-y-0.5 text-sm">
+      {info.matches.map((m) => (
+        <li key={`${m.kind}-${m.id}`}>
+          {m.kind === 'partner' ? (
+            <Link to={`/partners/${m.id}`} className="text-primary hover:underline">
+              عميل: {m.name}
+            </Link>
+          ) : (
+            <span>Lead: {m.name}</span>
+          )}
+        </li>
+      ))}
+      {info.hiddenCount > 0 && <li className="text-muted-foreground">{info.hiddenCount} سجل في فرع تاني (مش ظاهر ليك)</li>}
+    </ul>
+  );
+}
+
 export function LeadsPage() {
   const { can } = useAuth();
   const navigate = useNavigate();
@@ -78,6 +116,7 @@ export function LeadsPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rejectingLead, setRejectingLead] = useState<Lead | null>(null);
   const [loggingCallLead, setLoggingCallLead] = useState<Lead | null>(null);
+  const [duplicateConvert, setDuplicateConvert] = useState<{ lead: Lead; info: DuplicateInfo } | null>(null);
 
   const load = () => {
     Promise.all([apiGet<Lead[]>('/api/leads'), apiGet<BranchSummary[]>('/api/branches')])
@@ -110,14 +149,23 @@ export function LeadsPage() {
   };
 
   /** Converts the Lead (real BusinessPartner, status Prospect) then goes straight to the quotation composer — one motion, no dead-end "converted" screen. */
-  const createQuotation = async (lead: Lead) => {
+  const createQuotation = async (lead: Lead, allowDuplicate = false) => {
     setBusyId(lead.id);
     setError(null);
     try {
-      const result = await apiPost<{ leadId: string; partnerId: string }>(`/api/leads/${lead.id}/convert`, {});
+      const result = await apiPost<{ leadId: string; partnerId: string }>(
+        `/api/leads/${lead.id}/convert`,
+        allowDuplicate ? { allowDuplicate: true } : {},
+      );
       navigate(`/orders/new?partnerId=${result.partnerId}&documentType=QUOTATION`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر التحويل');
+      const duplicate = asDuplicate(err);
+      if (duplicate) {
+        // a customer with this number already exists - let the user decide instead of silently making a second copy
+        setDuplicateConvert({ lead, info: duplicate });
+      } else {
+        setError(err instanceof Error ? err.message : 'تعذر التحويل');
+      }
       setBusyId(null);
     }
   };
@@ -378,6 +426,44 @@ export function LeadsPage() {
           onReject={(reason) => void reject(rejectingLead, reason)}
         />
       )}
+      {duplicateConvert && (
+        <Dialog open onOpenChange={(open) => !open && setDuplicateConvert(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>العميل ده موجود بالفعل</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm">{duplicateConvert.info.message}</p>
+              <DuplicateMatchList info={duplicateConvert.info} />
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="secondary" onClick={() => setDuplicateConvert(null)}>
+                  إلغاء
+                </Button>
+                {duplicateConvert.info.matches.find((m) => m.kind === 'partner') && (
+                  <Button
+                    onClick={() => {
+                      const existing = duplicateConvert.info.matches.find((m) => m.kind === 'partner')!;
+                      navigate(`/orders/new?partnerId=${existing.id}&documentType=QUOTATION`);
+                    }}
+                  >
+                    اعمل عرض سعر للعميل الموجود
+                  </Button>
+                )}
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    const target = duplicateConvert.lead;
+                    setDuplicateConvert(null);
+                    void createQuotation(target, true);
+                  }}
+                >
+                  اعمل عميل جديد برضه
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
       {loggingCallLead && (
         <LogCallDialog
           targetName={loggingCallLead.name}
@@ -410,12 +496,14 @@ function CreateLeadForm({
   const [assignedToId, setAssignedToId] = useState('');
   const [nextFollowUpAt, setNextFollowUpAt] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [duplicate, setDuplicate] = useState<DuplicateInfo | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submit = async (e: React.FormEvent | null, allowDuplicate = false) => {
+    e?.preventDefault();
     if (submitting) return;
     setError(null);
+    setDuplicate(null);
     setSubmitting(true);
     try {
       const input: CreateLeadInput = {
@@ -424,6 +512,7 @@ function CreateLeadForm({
         branchId,
         assignedToId: assignedToId || undefined,
         nextFollowUpAt: nextFollowUpAt || undefined,
+        allowDuplicate: allowDuplicate || undefined,
         email: email.trim() || undefined,
         facebookUrl: facebookUrl.trim() || undefined,
         source: source || undefined,
@@ -432,14 +521,16 @@ function CreateLeadForm({
       await apiPost('/api/leads', input);
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'تعذر إنشاء الـLead');
+      const conflict = asDuplicate(err);
+      if (conflict) setDuplicate(conflict);
+      else setError(err instanceof Error ? err.message : 'تعذر إنشاء الـLead');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={submit} className="border-border bg-card space-y-3 rounded-2xl border p-4">
+    <form onSubmit={(e) => void submit(e)} className="border-border bg-card space-y-3 rounded-2xl border p-4">
       {error && <div className="text-destructive text-sm">{error}</div>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
         <input
@@ -526,6 +617,20 @@ function CreateLeadForm({
           />
         </label>
       </div>
+      {duplicate && (
+        <div className="border-warning/50 bg-warning/10 space-y-2 rounded-md border p-3">
+          <p className="text-sm font-medium">{duplicate.message}</p>
+          <DuplicateMatchList info={duplicate} />
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="secondary" size="sm" disabled={submitting} onClick={() => void submit(null, true)}>
+              احفظه برضه
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setDuplicate(null)}>
+              تعديل الرقم
+            </Button>
+          </div>
+        </div>
+      )}
       <Button type="submit" disabled={submitting}>
         {submitting ? 'جارٍ الحفظ…' : 'حفظ الـLead'}
       </Button>
@@ -559,6 +664,7 @@ function ImportLeadsDialog({
   const [rows, setRows] = useState<PreviewRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [allowDuplicates, setAllowDuplicates] = useState(false);
   const [result, setResult] = useState<{ successCount: number; failCount: number; results: LeadImportRowResult[] } | null>(null);
 
   const parse = async () => {
@@ -595,9 +701,10 @@ function ImportLeadsDialog({
     setError(null);
     setBusy(true);
     try {
-      const payload: { branchId: string; source?: LeadSource; rows: LeadImportRow[] } = {
+      const payload: { branchId: string; source?: LeadSource; allowDuplicates?: boolean; rows: LeadImportRow[] } = {
         branchId,
         source: source || undefined,
+        allowDuplicates: allowDuplicates || undefined,
         rows: included.map((r) => ({ rowNumber: r.rowNumber, name: r.name, phone: r.phone, email: r.email, facebookUrl: r.facebookUrl })),
       };
       const res = await apiPost<{ successCount: number; failCount: number; results: LeadImportRowResult[] }>('/api/leads/import', payload);
@@ -700,6 +807,11 @@ function ImportLeadsDialog({
                   ))}
                 </select>
               </div>
+
+              <label className="flex items-center gap-2 text-xs">
+                <input type="checkbox" checked={allowDuplicates} onChange={(e) => setAllowDuplicates(e.target.checked)} />
+                <span>استورد الأرقام الموجودة بالفعل برضه (لو مش مفعّلة، الصفوف اللي رقمها موجود عند عميل أو Lead بتتخطى ويتقالك السبب)</span>
+              </label>
 
               <div className="border-border max-h-80 overflow-y-auto rounded-md border">
                 <table className="w-full text-xs">

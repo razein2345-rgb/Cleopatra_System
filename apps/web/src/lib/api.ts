@@ -1,5 +1,6 @@
 import type { ApiResponse } from '@cleopatra/shared';
 import { supabase } from './supabase';
+import { ApiRequestError } from './apiError';
 
 const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 
@@ -47,7 +48,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const body = (await res.json()) as ApiResponse<T>;
   if (!body.success) {
-    throw new Error(body.error.message);
+    throw new ApiRequestError(body.error);
   }
   return body.data;
 }
@@ -91,7 +92,7 @@ export async function apiPostFormData<T>(path: string, formData: FormData): Prom
   });
   const body = (await res.json()) as ApiResponse<T>;
   if (!body.success) {
-    throw new Error(body.error.message);
+    throw new ApiRequestError(body.error);
   }
   return body.data;
 }
