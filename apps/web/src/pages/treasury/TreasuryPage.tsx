@@ -419,6 +419,7 @@ function FullTreasuryView() {
                           min={0.01}
                           step={0.01}
                           onSave={(next) => updateEntryField(entry, { amount: next })}
+                          renderValue={(n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         />
                       ) : (
                         entry.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })
@@ -430,6 +431,7 @@ function FullTreasuryView() {
                           value={entry.method ?? 'CASH'}
                           options={PAYMENT_METHOD_OPTIONS}
                           onSave={(next) => updateEntryField(entry, { method: next })}
+                          renderValue={(m) => PAYMENT_METHOD_LABELS[m]}
                         />
                       ) : entry.method ? (
                         PAYMENT_METHOD_LABELS[entry.method]
@@ -654,6 +656,7 @@ function ReceptionTreasuryView() {
                           min={0.01}
                           step={0.01}
                           onSave={(next) => updateEntryField(entry, { amount: next })}
+                          renderValue={(n) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         />
                       ) : (
                         entry.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })
@@ -665,6 +668,7 @@ function ReceptionTreasuryView() {
                           value={entry.method ?? 'CASH'}
                           options={PAYMENT_METHOD_OPTIONS}
                           onSave={(next) => updateEntryField(entry, { method: next })}
+                          renderValue={(m) => PAYMENT_METHOD_LABELS[m]}
                         />
                       ) : entry.method ? (
                         PAYMENT_METHOD_LABELS[entry.method]

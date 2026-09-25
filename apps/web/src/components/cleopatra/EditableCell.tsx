@@ -170,6 +170,7 @@ export function EditableNumberCell({
   min,
   step,
   className,
+  renderValue,
 }: {
   value: number | null;
   onSave: (next: number) => Promise<void>;
@@ -177,6 +178,8 @@ export function EditableNumberCell({
   min?: number;
   step?: number;
   className?: string;
+  /** Optional read-mode formatter (e.g. money with 2 decimals); the edit input still shows the raw number. */
+  renderValue?: (value: number) => ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value === null ? '' : String(value));
@@ -254,7 +257,9 @@ export function EditableNumberCell({
         className,
       )}
     >
-      <span dir="ltr">{value ?? <span className="text-muted-foreground">{placeholder ?? '—'}</span>}</span>
+      <span dir="ltr">
+        {value === null ? <span className="text-muted-foreground">{placeholder ?? '—'}</span> : renderValue ? renderValue(value) : value}
+      </span>
       {error && (
         <span className="text-destructive ms-1 text-xs" title={error}>
           ⚠
