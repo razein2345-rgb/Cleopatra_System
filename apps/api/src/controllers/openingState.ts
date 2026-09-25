@@ -40,6 +40,7 @@ import {
   OpeningCreditExceededError,
   OrderHasNoPartnerError,
   OrderNotFoundError,
+  PaymentExceedsRemainingError,
 } from '../services/orderService.js';
 import { CutoverApprovalNotAllowedError, VerificationNotAllowedError } from '../services/cutoverService.js';
 
@@ -74,6 +75,17 @@ function handleServiceError(err: unknown, res: Response): boolean {
   }
   if (err instanceof OrderHasNoPartnerError || err instanceof NoApprovedCustomerOpeningError) {
     res.status(400).json({ success: false, error: { message: err.message, code: err.name } });
+    return true;
+  }
+  if (err instanceof PaymentExceedsRemainingError) {
+    res.status(409).json({
+      success: false,
+      error: {
+        message: `المبلغ أكبر من المتبقي على الفاتورة (${err.remaining.toFixed(2)} ج.م) — لا يمكن تسجيل دفعة تزيد عن المستحق.`,
+        code: 'PAYMENT_EXCEEDS_REMAINING',
+        remaining: err.remaining,
+      },
+    });
     return true;
   }
   if (err instanceof OpeningCreditExceededError) {

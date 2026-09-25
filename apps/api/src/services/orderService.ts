@@ -1813,6 +1813,13 @@ export async function applyOpeningCreditPayment(
     const remaining = opening.creditAmount.toNumber() - (consumed._sum.amount?.toNumber() ?? 0);
     if (amount > remaining) throw new OpeningCreditExceededError(remaining);
 
+    // Owner decision (2026-09-25) - an opening-credit application is a payment
+    // like any other: it may not push the order's paid total past what the
+    // customer still owes on THIS invoice (the credit ceiling above only
+    // protects the credit, not the invoice). Lock order partner -> order, the
+    // same as updatePayment, so it can't deadlock with recordPayment.
+    await assertPaymentWithinRemaining(tx, order, amount);
+
     const payment = await tx.payment.create({
       data: { orderId: order.id, method, amount, sourceType: 'OPENING_CREDIT_APPLICATION' },
       // No tx.treasuryEntry.create — deliberately. See doc comment above.

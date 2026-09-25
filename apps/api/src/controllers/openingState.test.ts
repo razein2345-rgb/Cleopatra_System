@@ -23,6 +23,11 @@ vi.mock('../services/orderService.js', () => ({
   applyOpeningCreditPayment,
   NoApprovedCustomerOpeningError: class NoApprovedCustomerOpeningError extends Error {},
   OpeningCreditExceededError: class OpeningCreditExceededError extends Error {},
+  PaymentExceedsRemainingError: class PaymentExceedsRemainingError extends Error {
+    constructor(public readonly remaining = 0) {
+      super('exceeds');
+    }
+  },
   OrderHasNoPartnerError: class OrderHasNoPartnerError extends Error {},
   OrderNotFoundError: class OrderNotFoundError extends Error {},
 }));

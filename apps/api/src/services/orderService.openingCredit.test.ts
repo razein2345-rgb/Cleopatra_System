@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { Prisma } from '../generated/prisma/client.js';
 
 /**
  * Opening State / Cutover (Phase 3C.2) — regression coverage for
@@ -20,6 +21,7 @@ const customerOpeningFindUnique = vi.fn();
 const paymentAggregate = vi.fn();
 const paymentCreate = vi.fn();
 const orderFindUniqueOrThrow = vi.fn();
+const orderItemReturnAggregate = vi.fn();
 const executeRawLockKeys: string[] = [];
 
 function makeTx() {
@@ -30,6 +32,7 @@ function makeTx() {
       create: (...args: unknown[]) => paymentCreate(...args),
     },
     order: { findUniqueOrThrow: (...args: unknown[]) => orderFindUniqueOrThrow(...args) },
+    orderItemReturn: { aggregate: (...args: unknown[]) => orderItemReturnAggregate(...args) },
     $executeRaw: (_strings: TemplateStringsArray, ...values: unknown[]) => {
       executeRawLockKeys.push(String(values[0]));
       return Promise.resolve(undefined);
@@ -54,25 +57,27 @@ vi.mock('../lib/prisma.js', () => ({
   },
 }));
 
-const { applyOpeningCreditPayment, OpeningCreditExceededError, NoApprovedCustomerOpeningError, OrderHasNoPartnerError, OrderNotFoundError } =
+const { applyOpeningCreditPayment, OpeningCreditExceededError, NoApprovedCustomerOpeningError, OrderHasNoPartnerError, OrderNotFoundError, PaymentExceedsRemainingError } =
   await import('./orderService.js');
 
 const ORDER_ID = '11111111-1111-1111-1111-111111111111';
 const PARTNER_ID = '22222222-2222-2222-2222-222222222222';
 
+// real Decimals: the overpayment check does Decimal arithmetic on these sums
 function decimal(n: number) {
-  return { toNumber: () => n };
+  return new Prisma.Decimal(n);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   executeRawLockKeys.length = 0;
   transactionChain = Promise.resolve();
+  orderItemReturnAggregate.mockResolvedValue({ _sum: { refundAmount: null } });
 });
 
 describe('applyOpeningCreditPayment', () => {
   it('creates a Payment with sourceType OPENING_CREDIT_APPLICATION and no TreasuryEntry', async () => {
-    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID });
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID, finalTotal: decimal(1000000) });
     customerOpeningFindUnique.mockResolvedValue({ status: 'APPROVED', creditAmount: decimal(5000) });
     paymentAggregate.mockResolvedValue({ _sum: { amount: null } });
     paymentCreate.mockResolvedValue({ id: 'payment-1' });
@@ -90,7 +95,7 @@ describe('applyOpeningCreditPayment', () => {
   });
 
   it('acquires the advisory lock keyed by partnerId as the first statement inside the transaction', async () => {
-    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID });
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID, finalTotal: decimal(1000000) });
     customerOpeningFindUnique.mockResolvedValue({ status: 'APPROVED', creditAmount: decimal(1000) });
     paymentAggregate.mockResolvedValue({ _sum: { amount: null } });
     paymentCreate.mockResolvedValue({ id: 'payment-1' });
@@ -112,19 +117,19 @@ describe('applyOpeningCreditPayment', () => {
   });
 
   it('rejects when the customer has no approved CustomerOpening', async () => {
-    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID });
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID, finalTotal: decimal(1000000) });
     customerOpeningFindUnique.mockResolvedValue(null);
     await expect(applyOpeningCreditPayment(ORDER_ID, 100, 'CASH')).rejects.toThrow(NoApprovedCustomerOpeningError);
   });
 
   it('rejects a DRAFT (not yet approved) CustomerOpening the same as none at all', async () => {
-    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID });
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID, finalTotal: decimal(1000000) });
     customerOpeningFindUnique.mockResolvedValue({ status: 'DRAFT', creditAmount: decimal(5000) });
     await expect(applyOpeningCreditPayment(ORDER_ID, 100, 'CASH')).rejects.toThrow(NoApprovedCustomerOpeningError);
   });
 
   it('rejects an amount exceeding the exact remaining credit', async () => {
-    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID });
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID, finalTotal: decimal(1000000) });
     customerOpeningFindUnique.mockResolvedValue({ status: 'APPROVED', creditAmount: decimal(5000) });
     paymentAggregate.mockResolvedValue({ _sum: { amount: decimal(3000) } }); // already consumed 3000
     await expect(applyOpeningCreditPayment(ORDER_ID, 2000.01, 'CASH')).rejects.toThrow(OpeningCreditExceededError);
@@ -132,7 +137,7 @@ describe('applyOpeningCreditPayment', () => {
   });
 
   it('allows an amount exactly equal to the remaining credit (boundary)', async () => {
-    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID });
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID, finalTotal: decimal(1000000) });
     customerOpeningFindUnique.mockResolvedValue({ status: 'APPROVED', creditAmount: decimal(5000) });
     paymentAggregate.mockResolvedValue({ _sum: { amount: decimal(3000) } });
     paymentCreate.mockResolvedValue({ id: 'payment-2' });
@@ -152,7 +157,7 @@ describe('applyOpeningCreditPayment', () => {
    * commits.
    */
   it('under concurrent applications for the same partner, total consumed never exceeds the original credit', async () => {
-    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID });
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID, finalTotal: decimal(1000000) });
     customerOpeningFindUnique.mockResolvedValue({ status: 'APPROVED', creditAmount: decimal(5000) });
     orderFindUniqueOrThrow.mockResolvedValue({ id: ORDER_ID });
 
@@ -176,6 +181,43 @@ describe('applyOpeningCreditPayment', () => {
     expect(consumedSoFar).toBeLessThanOrEqual(5000);
     // Same lock key both times — proves both attempts were serialized
     // through the same critical section, not two independent, unlocked runs.
-    expect(executeRawLockKeys).toEqual([PARTNER_ID, PARTNER_ID]);
+    // both attempts take the partner lock first; only the first passes the credit ceiling, so only it goes on to the per-order payment lock
+    expect(executeRawLockKeys).toEqual([PARTNER_ID, `order-payments:${ORDER_ID}`, PARTNER_ID]);
+  });
+});
+
+/**
+ * Owner decision (2026-09-25) - an opening-credit application is a payment
+ * like any other and may not exceed what the customer still owes on THIS
+ * invoice, even when the customer's approved credit is larger.
+ */
+describe('applyOpeningCreditPayment - invoice overpayment', () => {
+  function setup(invoiceTotal: number, paidOnOrder: number) {
+    orderFindUnique.mockResolvedValue({ id: ORDER_ID, isDeleted: false, partnerId: PARTNER_ID, finalTotal: decimal(invoiceTotal) });
+    customerOpeningFindUnique.mockResolvedValue({ status: 'APPROVED', creditAmount: decimal(5000) });
+    // the credit-consumed sum (filtered by sourceType) and the order's paid sum (filtered by orderId) share this mock
+    paymentAggregate.mockImplementation((args: { where: { sourceType?: string } }) =>
+      Promise.resolve({ _sum: { amount: args.where.sourceType ? null : decimal(paidOnOrder) } }),
+    );
+    paymentCreate.mockResolvedValue({ id: 'payment-1' });
+    orderFindUniqueOrThrow.mockResolvedValue({ id: ORDER_ID });
+  }
+
+  it('rejects an application larger than the invoice remaining even though the credit would cover it - nothing is written', async () => {
+    setup(500, 0);
+    await expect(applyOpeningCreditPayment(ORDER_ID, 600, 'CASH')).rejects.toThrow(PaymentExceedsRemainingError);
+    expect(paymentCreate).not.toHaveBeenCalled();
+  });
+
+  it('counts payments already made on the invoice: 500 invoice, 200 paid, only 300 can still be applied', async () => {
+    setup(500, 200);
+    await expect(applyOpeningCreditPayment(ORDER_ID, 301, 'CASH')).rejects.toMatchObject({ remaining: 300 });
+    await expect(applyOpeningCreditPayment(ORDER_ID, 300, 'CASH')).resolves.toMatchObject({ paymentId: 'payment-1' });
+    expect(paymentCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('the credit ceiling still applies first: an amount over the remaining credit is an OpeningCreditExceededError', async () => {
+    setup(100000, 0);
+    await expect(applyOpeningCreditPayment(ORDER_ID, 5000.01, 'CASH')).rejects.toThrow(OpeningCreditExceededError);
   });
 });
