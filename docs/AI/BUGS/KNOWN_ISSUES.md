@@ -636,3 +636,13 @@ underlying gap remains:
 
 **Decide:** block deletion while the customer has non-deleted invoices/quotations
 (or unpaid balance), or allow it with an explicit warning that lists them.
+
+---
+
+## Update 2026-09-25 (later): deleting a customer with invoices is now BLOCKED
+
+Closed on the owner's decision (hard block, not a warning): `DELETE /api/partners/:id`
+answers 409 `PARTNER_HAS_DOCUMENTS` while the customer has non-deleted invoices or
+quotations, and the customer profile page shows the server's Arabic message.
+Not done, by decision: an archive/inactive state for customers with history (the
+right tool for "hide this customer from the active lists" — a larger, separate change).
