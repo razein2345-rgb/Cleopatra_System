@@ -1,6 +1,16 @@
 import { prisma } from '../lib/prisma.js';
 import type { Prisma } from '../generated/prisma/client.js';
-import { createLeadSchema, type CreateLeadInput, type Lead, type LeadImportRow, type LeadImportRowResult, type LeadSource, type UpdateLeadInput } from '@cleopatra/shared';
+import {
+  createLeadSchema,
+  normalizePhoneKey,
+  type CreateLeadInput,
+  type Lead,
+  type LeadImportRow,
+  type LeadImportRowResult,
+  type LeadSource,
+  type PhoneMatch,
+  type UpdateLeadInput,
+} from '@cleopatra/shared';
 import { mapPartnerToDto } from './businessPartnerService.js';
 
 /**
@@ -26,6 +36,69 @@ export class LeadAlreadyResolvedError extends Error {
     super('هذا الـLead اتحول لعميل أو اترفض بالفعل');
     this.name = 'LeadAlreadyResolvedError';
   }
+}
+
+/** The phone number entered already belongs to a customer (or, when leads are checked, another lead). */
+export class DuplicatePhoneError extends Error {
+  constructor(public readonly matches: PhoneMatch[]) {
+    super('هذا الرقم موجود بالفعل');
+    this.name = 'DuplicatePhoneError';
+  }
+}
+
+export function describePhoneMatch(match: PhoneMatch): string {
+  return match.kind === 'partner' ? `عميل "${match.name}"` : `Lead "${match.name}"`;
+}
+
+/**
+ * Duplicate detection by phone number (owner decision, 2026-09-25 - CRM review). Loads every
+ * live customer (and, optionally, every open lead) ONCE and answers by normalized number, so
+ * "010 1234 5678", "+20 101 234 5678" and "01012345678" are the same person. Business-wide, not
+ * branch-scoped: a duplicate is a duplicate whichever branch holds it (the controller decides
+ * what a branch-scoped caller may be told). A converted lead is skipped - its customer already
+ * represents it. `remember` adds a row created during a batch so later rows of the same file
+ * are caught too.
+ */
+export async function loadPhoneIndex(options: { includeLeads: boolean; excludeLeadId?: string }): Promise<{
+  lookup: (phone: string) => PhoneMatch[];
+  remember: (match: PhoneMatch, phone: string) => void;
+}> {
+  const [partners, leads] = await Promise.all([
+    prisma.businessPartner.findMany({
+      where: { isDeleted: false, phone: { not: null } },
+      select: { id: true, nameAr: true, phone: true, branchId: true, status: true },
+    }),
+    options.includeLeads
+      ? prisma.lead.findMany({
+          where: { isDeleted: false, stage: { not: 'CONVERTED' }, ...(options.excludeLeadId ? { id: { not: options.excludeLeadId } } : {}) },
+          select: { id: true, name: true, phone: true, branchId: true, stage: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const byKey = new Map<string, PhoneMatch[]>();
+  const remember = (match: PhoneMatch, phone: string) => {
+    const key = normalizePhoneKey(phone);
+    if (!key) return;
+    byKey.set(key, [...(byKey.get(key) ?? []), match]);
+  };
+  for (const p of partners) remember({ kind: 'partner', id: p.id, name: p.nameAr, branchId: p.branchId, detail: p.status }, p.phone ?? '');
+  for (const l of leads) remember({ kind: 'lead', id: l.id, name: l.name, branchId: l.branchId, detail: l.stage }, l.phone);
+
+  return {
+    lookup: (phone) => {
+      const key = normalizePhoneKey(phone);
+      return key ? (byKey.get(key) ?? []) : [];
+    },
+    remember,
+  };
+}
+
+/** Throws DuplicatePhoneError when the phone already exists (see `loadPhoneIndex`). */
+export async function assertNoDuplicatePhone(phone: string, options: { includeLeads: boolean; excludeLeadId?: string }): Promise<void> {
+  const { lookup } = await loadPhoneIndex(options);
+  const matches = lookup(phone);
+  if (matches.length > 0) throw new DuplicatePhoneError(matches);
 }
 
 export function mapLeadToDto(lead: LeadRecord): Lead {
@@ -94,8 +167,12 @@ export async function bulkCreateLeads(
   branchId: string,
   source: LeadSource | undefined,
   recordedById: string,
+  options: { allowDuplicates?: boolean } = {},
 ): Promise<LeadImportRowResult[]> {
   const results: LeadImportRowResult[] = [];
+  // Unless the user chose to import duplicates, a row whose phone already exists (as a customer or a
+  // lead) - or repeats an earlier row of the same file - is reported and skipped, never created.
+  const phoneIndex = options.allowDuplicates ? null : await loadPhoneIndex({ includeLeads: true });
   for (const row of rows) {
     const parsed = createLeadSchema.safeParse({
       name: row.name,
@@ -109,8 +186,14 @@ export async function bulkCreateLeads(
       results.push({ rowNumber: row.rowNumber, success: false, error: parsed.error.issues[0]?.message ?? 'بيانات غير صالحة' });
       continue;
     }
+    const duplicates = phoneIndex ? phoneIndex.lookup(parsed.data.phone) : [];
+    if (duplicates.length > 0) {
+      results.push({ rowNumber: row.rowNumber, success: false, error: `الرقم موجود بالفعل عند ${describePhoneMatch(duplicates[0]!)}` });
+      continue;
+    }
     try {
       const lead = await createLead(parsed.data, recordedById);
+      phoneIndex?.remember({ kind: 'lead', id: lead.id, name: lead.name, branchId: lead.branchId, detail: lead.stage }, lead.phone);
       results.push({ rowNumber: row.rowNumber, success: true, lead });
     } catch (err) {
       results.push({ rowNumber: row.rowNumber, success: false, error: err instanceof Error ? err.message : 'تعذر إنشاء الـLead' });
@@ -165,8 +248,12 @@ export async function rejectLead(id: string, reason: string | undefined): Promis
  */
 export async function convertLeadToPartner(
   id: string,
+  options: { allowDuplicate?: boolean } = {},
 ): Promise<{ leadId: string; partnerId: string; partner: ReturnType<typeof mapPartnerToDto> }> {
   const lead = await loadOpenLead(id);
+  // Converting creates a NEW customer: refuse when one with this phone already exists, unless the
+  // user was shown it and chose to create another anyway.
+  if (!options.allowDuplicate) await assertNoDuplicatePhone(lead.phone, { includeLeads: false });
 
   return prisma.$transaction(async (tx) => {
     const partner = await tx.businessPartner.create({

@@ -1,13 +1,15 @@
 import type { Request, Response } from 'express';
-import { advanceLeadStageSchema, createLeadSchema, importLeadsSchema, rejectLeadSchema, updateLeadSchema } from '@cleopatra/shared';
+import { advanceLeadStageSchema, convertLeadSchema, createLeadSchema, importLeadsSchema, rejectLeadSchema, updateLeadSchema } from '@cleopatra/shared';
 import { canAccessBranch, forbidBranch } from '../services/authContext.js';
 import { recordAudit } from '../services/auditService.js';
 import {
   advanceLeadStage,
+  assertNoDuplicatePhone,
   bulkCreateLeads,
   convertLeadToPartner,
   createLead,
   deleteLead,
+  DuplicatePhoneError,
   getLead,
   getLeadBranchId,
   LeadAlreadyResolvedError,
@@ -17,6 +19,27 @@ import {
   updateLead,
 } from '../services/leadService.js';
 import { LeadImportParseError, parseLeadImportFile } from '../services/leadImportParser.js';
+
+/**
+ * 409 for a phone number that already exists. Matching is business-wide, but a branch-scoped caller
+ * is only told about records of branches they can access; the rest are just counted, so this can't
+ * be used to read another branch's customers.
+ */
+function sendDuplicatePhone(err: DuplicatePhoneError, auth: NonNullable<Request['auth']>, res: Response): void {
+  const visible = err.matches.filter((m) => canAccessBranch(auth, m.branchId));
+  const hiddenCount = err.matches.length - visible.length;
+  const first = visible[0];
+  const what = first ? (first.kind === 'partner' ? `عميل "${first.name}"` : `Lead "${first.name}"`) : 'سجل في فرع تاني';
+  res.status(409).json({
+    success: false,
+    error: {
+      message: `الرقم ده موجود بالفعل عند ${what}${err.matches.length > 1 ? ` (و${err.matches.length - 1} تانيين)` : ''}.`,
+      code: 'DUPLICATE_PHONE',
+      matches: visible,
+      hiddenCount,
+    },
+  });
+}
 
 function handleServiceError(err: unknown, res: Response): boolean {
   if (err instanceof LeadNotFoundError) {
@@ -79,6 +102,18 @@ export async function createLeadHandler(req: Request, res: Response) {
   if (!canAccessBranch(auth, input.branchId)) {
     forbidBranch(res);
     return;
+  }
+
+  if (!input.allowDuplicate) {
+    try {
+      await assertNoDuplicatePhone(input.phone, { includeLeads: true });
+    } catch (err) {
+      if (err instanceof DuplicatePhoneError) {
+        sendDuplicatePhone(err, auth, res);
+        return;
+      }
+      throw err;
+    }
   }
 
   const lead = await createLead(input, auth.staffId);
@@ -171,12 +206,17 @@ export async function rejectLeadHandler(req: Request<{ id: string }>, res: Respo
  */
 export async function convertLeadHandler(req: Request<{ id: string }>, res: Response) {
   const auth = req.auth!;
+  const input = convertLeadSchema.parse(req.body ?? {});
   if (!(await authorizeLeadBranch(req, res))) return;
 
   let result;
   try {
-    result = await convertLeadToPartner(req.params.id);
+    result = await convertLeadToPartner(req.params.id, { allowDuplicate: input.allowDuplicate });
   } catch (err) {
+    if (err instanceof DuplicatePhoneError) {
+      sendDuplicatePhone(err, auth, res);
+      return;
+    }
     if (handleServiceError(err, res)) return;
     throw err;
   }
@@ -233,7 +273,7 @@ export async function importLeadsHandler(req: Request, res: Response) {
     return;
   }
 
-  const results = await bulkCreateLeads(input.rows, input.branchId, input.source, auth.staffId);
+  const results = await bulkCreateLeads(input.rows, input.branchId, input.source, auth.staffId, { allowDuplicates: input.allowDuplicates });
 
   for (const result of results) {
     if (result.success && result.lead) {

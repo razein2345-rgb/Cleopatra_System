@@ -18,6 +18,7 @@ const rejectLead = vi.fn();
 const convertLeadToPartner = vi.fn();
 const deleteLead = vi.fn();
 const bulkCreateLeads = vi.fn();
+const assertNoDuplicatePhone = vi.fn();
 const recordAudit = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../services/leadService.js', () => ({
@@ -31,6 +32,12 @@ vi.mock('../services/leadService.js', () => ({
   convertLeadToPartner,
   deleteLead,
   bulkCreateLeads,
+  assertNoDuplicatePhone,
+  DuplicatePhoneError: class DuplicatePhoneError extends Error {
+    constructor(public readonly matches: unknown[] = []) {
+      super('duplicate');
+    }
+  },
   LeadNotFoundError: class LeadNotFoundError extends Error {},
   LeadAlreadyResolvedError: class LeadAlreadyResolvedError extends Error {},
 }));
@@ -212,5 +219,94 @@ describe('import - branch access (unchanged rule, now covered)', () => {
     await handlers.importLeadsHandler({ body: { branchId: BRANCH_B, rows: [{ rowNumber: 2, name: 'عميل', phone: '01000000000' }] }, auth: salesA } as never, res as never);
     expect(res.statusCode).toBe(403);
     expect(bulkCreateLeads).not.toHaveBeenCalled();
+  });
+});
+
+describe('duplicate phone numbers (owner decision, 2026-09-25)', () => {
+  const createReq = (body: Record<string, unknown> = {}) =>
+    ({ body: { name: 'عميل', phone: '01011112222', branchId: BRANCH_A, ...body }, auth: salesA }) as never;
+
+  async function duplicateError(matches: Array<{ kind: 'partner' | 'lead'; id: string; name: string; branchId: string; detail: string | null }>) {
+    const { DuplicatePhoneError } = await import('../services/leadService.js');
+    return new (DuplicatePhoneError as new (m: unknown[]) => Error)(matches);
+  }
+
+  it('creating a lead whose phone already exists is a 409 DUPLICATE_PHONE naming the match - nothing is created', async () => {
+    assertNoDuplicatePhone.mockRejectedValue(await duplicateError([{ kind: 'partner', id: 'p1', name: 'شركة النور', branchId: BRANCH_A, detail: 'ACTIVE' }]));
+    const res = makeRes();
+    await handlers.createLeadHandler(createReq(), res as never);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toMatchObject({ error: { code: 'DUPLICATE_PHONE', hiddenCount: 0, matches: [{ id: 'p1' }] } });
+    expect((res.body as { error: { message: string } }).error.message).toContain('شركة النور');
+    expect(assertNoDuplicatePhone).toHaveBeenCalledWith('01011112222', { includeLeads: true });
+    expect(createLead).not.toHaveBeenCalled();
+    expect(recordAudit).not.toHaveBeenCalled();
+  });
+
+  it('a match in a branch the caller cannot access is only COUNTED, never described (no cross-branch read)', async () => {
+    assertNoDuplicatePhone.mockRejectedValue(
+      await duplicateError([
+        { kind: 'partner', id: 'p-b', name: 'عميل فرع تاني', branchId: BRANCH_B, detail: null },
+        { kind: 'lead', id: 'l-a', name: 'ليد فرعي', branchId: BRANCH_A, detail: 'NEW' },
+      ]),
+    );
+    const res = makeRes();
+    await handlers.createLeadHandler(createReq(), res as never);
+    const error = (res.body as { error: { matches: Array<{ id: string }>; hiddenCount: number; message: string } }).error;
+    expect(error.matches.map((m) => m.id)).toEqual(['l-a']);
+    expect(error.hiddenCount).toBe(1);
+    expect(JSON.stringify(res.body)).not.toContain('عميل فرع تاني');
+  });
+
+  it('when every match is in another branch the message does not name it', async () => {
+    assertNoDuplicatePhone.mockRejectedValue(await duplicateError([{ kind: 'partner', id: 'p-b', name: 'سري', branchId: BRANCH_B, detail: null }]));
+    const res = makeRes();
+    await handlers.createLeadHandler(createReq(), res as never);
+    expect(JSON.stringify(res.body)).not.toContain('سري');
+    expect(res.body).toMatchObject({ error: { code: 'DUPLICATE_PHONE', matches: [], hiddenCount: 1 } });
+  });
+
+  it('allowDuplicate skips the check and creates the lead', async () => {
+    createLead.mockResolvedValue({ id: LEAD_ID, branchId: BRANCH_A, name: 'عميل', phone: '01011112222', source: null });
+    const res = makeRes();
+    await handlers.createLeadHandler(createReq({ allowDuplicate: true }), res as never);
+    expect(assertNoDuplicatePhone).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('a new phone number is created normally', async () => {
+    assertNoDuplicatePhone.mockResolvedValue(undefined);
+    createLead.mockResolvedValue({ id: LEAD_ID, branchId: BRANCH_A, name: 'عميل', phone: '01011112222', source: null });
+    const res = makeRes();
+    await handlers.createLeadHandler(createReq(), res as never);
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('converting to a customer that already exists is a 409 with the match, and nothing is written', async () => {
+    getLeadBranchId.mockResolvedValue(BRANCH_A);
+    convertLeadToPartner.mockRejectedValue(await duplicateError([{ kind: 'partner', id: 'p1', name: 'شركة النور', branchId: BRANCH_A, detail: 'ACTIVE' }]));
+    const res = makeRes();
+    await handlers.convertLeadHandler(idReq(salesA), res as never);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toMatchObject({ error: { code: 'DUPLICATE_PHONE', matches: [{ id: 'p1' }] } });
+    expect(recordAudit).not.toHaveBeenCalled();
+  });
+
+  it('converting with allowDuplicate passes the choice to the service', async () => {
+    getLeadBranchId.mockResolvedValue(BRANCH_A);
+    convertLeadToPartner.mockResolvedValue({ leadId: LEAD_ID, partnerId: 'partner-2', partner: { branchId: BRANCH_A } });
+    await handlers.convertLeadHandler(idReq(salesA, { allowDuplicate: true }), makeRes() as never);
+    expect(convertLeadToPartner).toHaveBeenCalledWith(LEAD_ID, { allowDuplicate: true });
+  });
+
+  it('import passes allowDuplicates through and reports per-row results', async () => {
+    bulkCreateLeads.mockResolvedValue([{ rowNumber: 2, success: false, error: 'الرقم موجود بالفعل عند عميل "س"' }]);
+    const res = makeRes();
+    await handlers.importLeadsHandler(
+      { body: { branchId: BRANCH_A, allowDuplicates: true, rows: [{ rowNumber: 2, name: 'عميل', phone: '01011112222' }] }, auth: salesA } as never,
+      res as never,
+    );
+    expect(bulkCreateLeads).toHaveBeenCalledWith(expect.any(Array), BRANCH_A, undefined, salesA.staffId, { allowDuplicates: true });
+    expect(res.body).toMatchObject({ success: true, data: { successCount: 0, failCount: 1 } });
   });
 });

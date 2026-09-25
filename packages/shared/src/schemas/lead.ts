@@ -52,6 +52,8 @@ export const createLeadSchema = z.object({
   branchId: z.string().uuid(),
   assignedToId: z.string().uuid().optional(),
   nextFollowUpAt: z.string().optional(),
+  /** The user saw the "this phone number already exists" warning and chose to create the lead anyway. Never stored. */
+  allowDuplicate: z.boolean().optional(),
 });
 
 /** `stage` is deliberately absent — CONTACTED/QUALIFIED progression happens via `advanceLeadStage`, CONVERTED/REJECTED only via their own dedicated actions (same "no direct status field on the generic update" precedent `updateQuotationSchema` already sets). */
@@ -99,7 +101,25 @@ export const importLeadsSchema = z.object({
   branchId: z.string().uuid(),
   source: leadSourceSchema.optional(),
   rows: z.array(leadImportRowSchema).min(1).max(500),
+  /** Import rows whose phone number already exists (as a customer or lead) instead of skipping them. */
+  allowDuplicates: z.boolean().optional(),
 });
+
+/** Body of `POST /leads/:id/convert`. */
+export const convertLeadSchema = z.object({
+  /** The user saw that a customer with this phone number already exists and chose to create a new one anyway. */
+  allowDuplicate: z.boolean().optional(),
+});
+
+/** An existing customer or lead that has the same phone number as the one being entered. */
+export interface PhoneMatch {
+  kind: 'partner' | 'lead';
+  id: string;
+  name: string;
+  branchId: string;
+  /** Customer status or lead stage, for display. */
+  detail: string | null;
+}
 
 export interface ParsedLeadImportRow {
   rowNumber: number;
@@ -126,3 +146,4 @@ export type AdvanceLeadStageInput = z.infer<typeof advanceLeadStageSchema>;
 export type RejectLeadInput = z.infer<typeof rejectLeadSchema>;
 export type LeadImportRow = z.infer<typeof leadImportRowSchema>;
 export type ImportLeadsInput = z.infer<typeof importLeadsSchema>;
+export type ConvertLeadInput = z.infer<typeof convertLeadSchema>;

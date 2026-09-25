@@ -12,6 +12,7 @@ const leadFindUnique = vi.fn();
 const leadUpdate = vi.fn();
 const leadCreate = vi.fn();
 const partnerCreate = vi.fn();
+const partnerFindMany = vi.fn();
 
 const tx = {
   businessPartner: { create: (...a: unknown[]) => partnerCreate(...a) },
@@ -26,6 +27,7 @@ vi.mock('../lib/prisma.js', () => ({
       update: (...a: unknown[]) => leadUpdate(...a),
       create: (...a: unknown[]) => leadCreate(...a),
     },
+    businessPartner: { findMany: (...a: unknown[]) => partnerFindMany(...a) },
     $transaction: (fn: (t: unknown) => Promise<unknown>) => fn(tx),
   },
 }));
@@ -40,6 +42,9 @@ const {
   convertLeadToPartner,
   deleteLead,
   bulkCreateLeads,
+  assertNoDuplicatePhone,
+  loadPhoneIndex,
+  DuplicatePhoneError,
   LeadNotFoundError,
   LeadAlreadyResolvedError,
 } = await import('./leadService.js');
@@ -73,6 +78,8 @@ function leadRow(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  partnerFindMany.mockResolvedValue([]);
+  leadFindMany.mockResolvedValue([]);
   leadUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => Promise.resolve(leadRow(data)));
 });
 
@@ -202,5 +209,105 @@ describe('bulkCreateLeads (Excel/CSV import)', () => {
     expect(leadCreate).toHaveBeenCalledTimes(2);
     // one branch + one source apply to the whole batch
     expect(leadCreate.mock.calls.every((c) => (c[0] as { data: { branchId: string; source: string } }).data.branchId === BRANCH_A)).toBe(true);
+  });
+});
+
+describe('duplicate phone detection (owner decision, 2026-09-25)', () => {
+  const partnerRow = (overrides: Record<string, unknown> = {}) => ({
+    id: 'p1',
+    nameAr: 'شركة النور',
+    phone: '+20 101 111 2222',
+    branchId: BRANCH_B,
+    status: 'ACTIVE',
+    ...overrides,
+  });
+
+  it('finds an existing customer written differently ("+20 101 111 2222" vs "010 1111 2222")', async () => {
+    partnerFindMany.mockResolvedValue([partnerRow()]);
+    const { lookup } = await loadPhoneIndex({ includeLeads: false });
+    expect(lookup('010 1111 2222')).toEqual([{ kind: 'partner', id: 'p1', name: 'شركة النور', branchId: BRANCH_B, detail: 'ACTIVE' }]);
+    expect(lookup('01033334444')).toEqual([]);
+  });
+
+  it('only live customers are considered (deleted ones and ones without a phone are filtered in the query)', async () => {
+    await loadPhoneIndex({ includeLeads: true });
+    expect(partnerFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { isDeleted: false, phone: { not: null } } }));
+    expect(leadFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { isDeleted: false, stage: { not: 'CONVERTED' } } }));
+  });
+
+  it('leads are only loaded when asked, and the lead being edited can be excluded', async () => {
+    await loadPhoneIndex({ includeLeads: false });
+    expect(leadFindMany).not.toHaveBeenCalled();
+    await loadPhoneIndex({ includeLeads: true, excludeLeadId: LEAD_ID });
+    expect(leadFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { isDeleted: false, stage: { not: 'CONVERTED' }, id: { not: LEAD_ID } } }));
+  });
+
+  it('assertNoDuplicatePhone throws DuplicatePhoneError carrying every match, and passes when the number is new', async () => {
+    partnerFindMany.mockResolvedValue([partnerRow()]);
+    leadFindMany.mockResolvedValue([{ id: 'l9', name: 'ليد قديم', phone: '01011112222', branchId: BRANCH_A, stage: 'NEW' }]);
+    await expect(assertNoDuplicatePhone('01011112222', { includeLeads: true })).rejects.toMatchObject({
+      name: 'DuplicatePhoneError',
+      matches: [expect.objectContaining({ kind: 'partner' }), expect.objectContaining({ kind: 'lead', id: 'l9' })],
+    });
+    await expect(assertNoDuplicatePhone('01099998888', { includeLeads: true })).resolves.toBeUndefined();
+  });
+
+  it('a too-short phone value is never a duplicate', async () => {
+    partnerFindMany.mockResolvedValue([partnerRow({ phone: '123' })]);
+    await expect(assertNoDuplicatePhone('123', { includeLeads: false })).resolves.toBeUndefined();
+  });
+
+  it('converting a lead whose phone already belongs to a customer is refused - no customer is created, the lead stays open', async () => {
+    leadFindUnique.mockResolvedValue(leadRow({ phone: '01011112222' }));
+    partnerFindMany.mockResolvedValue([partnerRow()]);
+    await expect(convertLeadToPartner(LEAD_ID)).rejects.toThrow(DuplicatePhoneError);
+    expect(partnerCreate).not.toHaveBeenCalled();
+    expect(leadUpdate).not.toHaveBeenCalled();
+  });
+
+  it('converting checks customers only (another open lead with the same phone does not block it)', async () => {
+    leadFindUnique.mockResolvedValue(leadRow({ phone: '01011112222' }));
+    partnerCreate.mockResolvedValue({ id: 'partner-1', branchId: BRANCH_A });
+    await convertLeadToPartner(LEAD_ID);
+    expect(leadFindMany).not.toHaveBeenCalled();
+  });
+
+  it('allowDuplicate creates the customer anyway', async () => {
+    leadFindUnique.mockResolvedValue(leadRow({ phone: '01011112222' }));
+    partnerFindMany.mockResolvedValue([partnerRow()]);
+    partnerCreate.mockResolvedValue({ id: 'partner-2', branchId: BRANCH_A });
+    await expect(convertLeadToPartner(LEAD_ID, { allowDuplicate: true })).resolves.toMatchObject({ partnerId: 'partner-2' });
+    expect(partnerFindMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('bulkCreateLeads - duplicates', () => {
+  const rows = [
+    { rowNumber: 2, name: 'جديد', phone: '01011112222' },
+    { rowNumber: 3, name: 'نفس رقم عميل موجود', phone: '010 3333 4444' },
+    { rowNumber: 4, name: 'تكرار للصف الأول', phone: '+20 101 111 2222' },
+    { rowNumber: 5, name: 'آخر جديد', phone: '01055556666' },
+  ];
+
+  beforeEach(() => {
+    leadCreate.mockImplementation(({ data }: { data: { name: string; phone: string } }) =>
+      Promise.resolve(leadRow({ id: `new-${data.phone}`, name: data.name, phone: data.phone })),
+    );
+    partnerFindMany.mockResolvedValue([{ id: 'p1', nameAr: 'شركة موجودة', phone: '01033334444', branchId: BRANCH_A, status: 'ACTIVE' }]);
+  });
+
+  it('skips a row that matches an existing customer AND a row that repeats an earlier row of the same file, and reports why', async () => {
+    const results = await bulkCreateLeads(rows, BRANCH_A, undefined, 'staff-1');
+    expect(results.map((r) => r.success)).toEqual([true, false, false, true]);
+    expect(results[1]!.error).toContain('شركة موجودة');
+    expect(results[2]!.error).toContain('جديد');
+    expect(leadCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it('allowDuplicates imports every valid row and never even loads the index', async () => {
+    const results = await bulkCreateLeads(rows, BRANCH_A, undefined, 'staff-1', { allowDuplicates: true });
+    expect(results.every((r) => r.success)).toBe(true);
+    expect(leadCreate).toHaveBeenCalledTimes(4);
+    expect(partnerFindMany).not.toHaveBeenCalled();
   });
 });
