@@ -24,9 +24,10 @@ import { OrdersHistoryTab } from './OrdersHistoryTab';
 import { CustomerStatementTab } from './CustomerStatementTab';
 import { PaymentsHistoryTab } from './PaymentsHistoryTab';
 import { ReorderPredictionTab } from './ReorderPredictionTab';
+import { CallsTab } from './CallsTab';
 import { whatsappLink } from '@/lib/whatsapp';
 
-type Tab = 'overview' | 'orders' | 'statement' | 'reorder' | 'contacts' | 'addresses' | 'notes' | 'commercial' | 'payments';
+type Tab = 'overview' | 'orders' | 'statement' | 'reorder' | 'calls' | 'contacts' | 'addresses' | 'notes' | 'commercial' | 'payments';
 
 /**
  * Partner Profile. Overview (FEATURE-002 M1), Contacts (M2), Addresses
@@ -54,6 +55,8 @@ export function PartnerProfilePage() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
   const [showLogCall, setShowLogCall] = useState(false);
+  // bumped when the log-a-call dialog closes so the calls tab shows a call that was just saved
+  const [callsReloadKey, setCallsReloadKey] = useState(0);
 
   useEffect(() => {
     if (!id) return;
@@ -102,6 +105,7 @@ export function PartnerProfilePage() {
     ...(can('orders.view') ? [{ id: 'orders' as const, label: 'الطلبات' }] : []),
     ...(can('orders.view') ? [{ id: 'statement' as const, label: 'كشف الحساب' }] : []),
     ...(can('orders.view') ? [{ id: 'reorder' as const, label: 'توقع إعادة الطلب' }] : []),
+    ...(can('call-logs.view') ? [{ id: 'calls' as const, label: 'المكالمات' }] : []),
     { id: 'contacts', label: 'جهات الاتصال' },
     { id: 'addresses', label: 'العناوين' },
     ...(can('partners.edit') ? [{ id: 'notes' as const, label: 'الملاحظات' }] : []),
@@ -174,6 +178,8 @@ export function PartnerProfilePage() {
         <ReorderPredictionTab partnerId={partner.id} partnerName={partner.nameAr} partnerPhone={partner.phone} />
       )}
 
+      {tab === 'calls' && can('call-logs.view') && <CallsTab partnerId={partner.id} canSeeLeads={can('leads.view')} reloadKey={callsReloadKey} />}
+
       {tab === 'contacts' && (
         <ContactsTab partnerId={partner.id} canManage={can('partners.contacts.manage')} />
       )}
@@ -193,7 +199,7 @@ export function PartnerProfilePage() {
       {tab === 'payments' && can('treasury.view') && <PaymentsHistoryTab partnerId={partner.id} />}
 
       {showLogCall && (
-        <LogCallDialog targetName={partner.nameAr} partnerId={partner.id} branches={branches} defaultBranchId={partner.branchId} onClose={() => setShowLogCall(false)} />
+        <LogCallDialog targetName={partner.nameAr} partnerId={partner.id} branches={branches} defaultBranchId={partner.branchId} onClose={() => { setShowLogCall(false); setCallsReloadKey((k) => k + 1); }} />
       )}
     </div>
   );

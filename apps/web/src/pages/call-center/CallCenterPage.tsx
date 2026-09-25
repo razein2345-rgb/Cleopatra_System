@@ -2,13 +2,11 @@ import { useEffect, useState } from 'react';
 import type { BranchSummary, BusinessPartner, CallDirection, CallLog, CallOutcome, CreateCallLogInput, Lead } from '@cleopatra/shared';
 import { apiDelete, apiGet, apiPost } from '@/lib/api';
 import { Button } from '@/components/ui/button';
-import { Combobox, PartnerCombobox, StatusBadge, useConfirm, type StatusTone } from '@/components/cleopatra';
+import { Combobox, PartnerCombobox, StatusBadge, useConfirm } from '@/components/cleopatra';
 import { useAuth } from '@/state/AuthContext';
 import { whatsappLink } from '@/lib/whatsapp';
+import { DIRECTION_LABELS, OUTCOME_LABELS, OUTCOME_TONES } from './callLabels';
 
-const DIRECTION_LABELS: Record<CallDirection, string> = { INBOUND: 'وارد', OUTBOUND: 'صادر' };
-const OUTCOME_LABELS: Record<CallOutcome, string> = { RESOLVED: 'تم الحل', NEEDS_FOLLOWUP: 'محتاج متابعة' };
-const OUTCOME_TONES: Record<CallOutcome, StatusTone> = { RESOLVED: 'success', NEEDS_FOLLOWUP: 'warning' };
 const PURPOSE_SUGGESTIONS = ['استفسار', 'متابعة طلب', 'شكوى', 'تأكيد أوردر', 'استفسار عن سعر'];
 
 function callerLabel(log: CallLog): string {
