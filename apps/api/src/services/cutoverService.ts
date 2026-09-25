@@ -49,7 +49,8 @@ export class ActiveCutoverExistsError extends Error {
 
 /**
  * Owner decision (2026-09-25, found while testing the UI) — a superseded
- * cutover is dead (activate, reopen and supersede-again all reject it): it was cancelled to free the branch's slot for a new one.
+ * cutover is dead (every write action rejects it: submit, approve, activate, reopen,
+ * supersede-again, add/edit an opening line, verify/un-verify a line): it was cancelled to free the branch's slot for a new one.
  * Activating it anyway would still post its inventory openings (real
  * StockMovement/StockLevel writes) on a branch with live customers and
  * orders, while the `isSuperseded = false` lookups would never treat it as
@@ -57,7 +58,7 @@ export class ActiveCutoverExistsError extends Error {
  */
 export class CutoverSupersededError extends Error {
   constructor() {
-    super('هذا الـ Cutover أُلغي نهائيًا — لا يمكن تفعيله أو إعادة فتحه أو إلغاؤه مرة أخرى. أنشئ Cutover جديدًا للفرع بدلًا منه.');
+    super('هذا الـ Cutover أُلغي نهائيًا — لا يمكن تنفيذ أي إجراء عليه (إرسال أو اعتماد أو تفعيل أو إعادة فتح أو تعديل بنوده أو التحقق منها أو إلغاؤه مرة أخرى). أنشئ Cutover جديدًا للفرع بدلًا منه.');
     this.name = 'CutoverSupersededError';
   }
 }
@@ -249,6 +250,7 @@ export async function createCutover(input: CreateCutoverInput, staffId: string):
 export async function submitCutoverForReview(cutoverId: string, staffId: string): Promise<CutoverRecord> {
   const cutover = await prisma.cutoverRecord.findUnique({ where: { id: cutoverId } });
   if (!cutover) throw new CutoverNotFoundError();
+  if (cutover.isSuperseded) throw new CutoverSupersededError();
   if (cutover.status !== 'DRAFT') throw new InvalidCutoverTransitionError(cutover.status, 'REVIEW');
 
   const [treasuryCount, inventoryCount] = await Promise.all([
@@ -300,6 +302,7 @@ export function assertCanApprove(createdById: string, staffId: string, roleNames
 export async function approveCutover(cutoverId: string, staffId: string, roleNames: string[]): Promise<CutoverRecord> {
   const cutover = await prisma.cutoverRecord.findUnique({ where: { id: cutoverId } });
   if (!cutover) throw new CutoverNotFoundError();
+  if (cutover.isSuperseded) throw new CutoverSupersededError();
   if (cutover.status !== 'REVIEW') throw new InvalidCutoverTransitionError(cutover.status, 'APPROVED');
   const selfApprovedException = assertCanApprove(cutover.createdById, staffId, roleNames);
 
@@ -419,6 +422,7 @@ export async function supersedeCutover(cutoverId: string, staffId: string, roleN
 export async function upsertTreasuryOpening(cutoverId: string, input: CreateTreasuryOpeningInput, staffId: string): Promise<TreasuryOpening> {
   const cutover = await prisma.cutoverRecord.findUnique({ where: { id: cutoverId } });
   if (!cutover) throw new CutoverNotFoundError();
+  if (cutover.isSuperseded) throw new CutoverSupersededError();
   if (cutover.status !== 'DRAFT') throw new CutoverNotEditableError();
 
   const row = await prisma.treasuryOpening.upsert({
@@ -444,8 +448,9 @@ export async function getTreasuryOpeningBranchId(id: string): Promise<string> {
 
 export async function setTreasuryOpeningVerification(id: string, verified: boolean, roleNames: string[]): Promise<TreasuryOpening> {
   if (!isAdminOrAbove(roleNames)) throw new VerificationNotAllowedError();
-  const existing = await prisma.treasuryOpening.findUnique({ where: { id } });
+  const existing = await prisma.treasuryOpening.findUnique({ where: { id }, include: { cutover: { select: { isSuperseded: true } } } });
   if (!existing) throw new TreasuryOpeningNotFoundError();
+  if (existing.cutover.isSuperseded) throw new CutoverSupersededError();
   const row = await prisma.treasuryOpening.update({
     where: { id },
     data: { verificationStatus: verified ? 'VERIFIED' : 'UNVERIFIED' },
@@ -456,6 +461,7 @@ export async function setTreasuryOpeningVerification(id: string, verified: boole
 export async function upsertInventoryOpening(cutoverId: string, input: CreateInventoryOpeningInput, staffId: string): Promise<InventoryOpening> {
   const cutover = await prisma.cutoverRecord.findUnique({ where: { id: cutoverId } });
   if (!cutover) throw new CutoverNotFoundError();
+  if (cutover.isSuperseded) throw new CutoverSupersededError();
   if (cutover.status !== 'DRAFT') throw new CutoverNotEditableError();
 
   const row = await prisma.inventoryOpening.upsert({
@@ -487,8 +493,9 @@ export async function getInventoryOpeningBranchId(id: string): Promise<string> {
 
 export async function setInventoryOpeningVerification(id: string, verified: boolean, roleNames: string[]): Promise<InventoryOpening> {
   if (!isAdminOrAbove(roleNames)) throw new VerificationNotAllowedError();
-  const existing = await prisma.inventoryOpening.findUnique({ where: { id } });
+  const existing = await prisma.inventoryOpening.findUnique({ where: { id }, include: { cutover: { select: { isSuperseded: true } } } });
   if (!existing) throw new InventoryOpeningNotFoundError();
+  if (existing.cutover.isSuperseded) throw new CutoverSupersededError();
   const row = await prisma.inventoryOpening.update({
     where: { id },
     data: { verificationStatus: verified ? 'VERIFIED' : 'UNVERIFIED' },

@@ -12,6 +12,12 @@ const cutoverRecordFindUnique = vi.fn();
 const cutoverRecordUpdate = vi.fn();
 const treasuryOpeningCount = vi.fn();
 const inventoryOpeningCount = vi.fn();
+const treasuryOpeningFindUnique = vi.fn();
+const treasuryOpeningUpdate = vi.fn();
+const treasuryOpeningUpsert = vi.fn();
+const inventoryOpeningFindUnique = vi.fn();
+const inventoryOpeningUpsertTop = vi.fn();
+const inventoryOpeningUpdateTop = vi.fn();
 const inventoryOpeningFindMany = vi.fn();
 const inventoryOpeningUpdate = vi.fn();
 const stockLevelFindUnique = vi.fn();
@@ -41,8 +47,18 @@ vi.mock('../lib/prisma.js', () => ({
     },
     // approveCutover's readiness gate — top-level (not tx-scoped), unlike
     // activateCutover's own inventoryOpening.findMany above.
-    treasuryOpening: { count: (...args: unknown[]) => treasuryOpeningCount(...args) },
-    inventoryOpening: { count: (...args: unknown[]) => inventoryOpeningCount(...args) },
+    treasuryOpening: {
+      count: (...args: unknown[]) => treasuryOpeningCount(...args),
+      findUnique: (...args: unknown[]) => treasuryOpeningFindUnique(...args),
+      update: (...args: unknown[]) => treasuryOpeningUpdate(...args),
+      upsert: (...args: unknown[]) => treasuryOpeningUpsert(...args),
+    },
+    inventoryOpening: {
+      count: (...args: unknown[]) => inventoryOpeningCount(...args),
+      findUnique: (...args: unknown[]) => inventoryOpeningFindUnique(...args),
+      update: (...args: unknown[]) => inventoryOpeningUpdateTop(...args),
+      upsert: (...args: unknown[]) => inventoryOpeningUpsertTop(...args),
+    },
     $transaction: (fn: (tx: unknown) => Promise<unknown>) => fn(makeTx()),
   },
 }));
@@ -57,6 +73,11 @@ const {
   CutoverSupersededError,
   reopenCutover,
   supersedeCutover,
+  submitCutoverForReview,
+  upsertTreasuryOpening,
+  upsertInventoryOpening,
+  setTreasuryOpeningVerification,
+  setInventoryOpeningVerification,
 } = await import('./cutoverService.js');
 
 const CUTOVER_ID = '11111111-1111-1111-1111-111111111111';
@@ -317,5 +338,68 @@ describe('reopenCutover / supersedeCutover — superseded records', () => {
     await expect(reopenCutover(CUTOVER_ID, OTHER_STAFF_ID, ['SUPER_ADMIN'], 'تصحيح')).resolves.toBeDefined();
     await expect(supersedeCutover(CUTOVER_ID, OTHER_STAFF_ID, ['SUPER_ADMIN'], 'إلغاء')).resolves.toBeDefined();
     expect(cutoverRecordUpdate).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * Zero action on a superseded cutover (owner, 2026-09-25) - the rest of the
+ * write surface: submit, approve, add/edit an opening line, verify/un-verify a
+ * line. Each rejects with CutoverSupersededError before ANY write, even on a
+ * record whose status would otherwise allow the action (DRAFT/REVIEW).
+ */
+describe('every other write action on a superseded cutover', () => {
+  const supersededDraft = { id: CUTOVER_ID, branchId: BRANCH_ID, status: 'DRAFT', isSuperseded: true, createdById: CREATOR_ID };
+  const supersededReview = { ...supersededDraft, status: 'REVIEW' };
+
+  function expectNoWrites() {
+    expect(cutoverRecordUpdate).not.toHaveBeenCalled();
+    expect(treasuryOpeningUpsert).not.toHaveBeenCalled();
+    expect(treasuryOpeningUpdate).not.toHaveBeenCalled();
+    expect(inventoryOpeningUpsertTop).not.toHaveBeenCalled();
+    expect(inventoryOpeningUpdateTop).not.toHaveBeenCalled();
+    expect(stockMovementCreate).not.toHaveBeenCalled();
+  }
+
+  it('submit for review is rejected', async () => {
+    cutoverRecordFindUnique.mockResolvedValue(supersededDraft);
+    treasuryOpeningCount.mockResolvedValue(1);
+    inventoryOpeningCount.mockResolvedValue(0);
+    await expect(submitCutoverForReview(CUTOVER_ID, OTHER_STAFF_ID)).rejects.toThrow(CutoverSupersededError);
+    expectNoWrites();
+  });
+
+  it('approve is rejected, even for a SUPER_ADMIN and even with every line verified', async () => {
+    cutoverRecordFindUnique.mockResolvedValue(supersededReview);
+    treasuryOpeningCount.mockResolvedValue(0);
+    inventoryOpeningCount.mockResolvedValue(0);
+    await expect(approveCutover(CUTOVER_ID, OTHER_STAFF_ID, ['SUPER_ADMIN'])).rejects.toThrow(CutoverSupersededError);
+    expectNoWrites();
+  });
+
+  it('adding or editing a treasury or inventory opening line is rejected', async () => {
+    cutoverRecordFindUnique.mockResolvedValue(supersededDraft);
+    await expect(upsertTreasuryOpening(CUTOVER_ID, { method: 'CASH', amount: 100 }, OTHER_STAFF_ID)).rejects.toThrow(CutoverSupersededError);
+    await expect(upsertInventoryOpening(CUTOVER_ID, { inventoryItemId: ITEM_A, quantity: 5 }, OTHER_STAFF_ID)).rejects.toThrow(CutoverSupersededError);
+    expectNoWrites();
+  });
+
+  it('verifying or un-verifying a line of a superseded cutover is rejected', async () => {
+    treasuryOpeningFindUnique.mockResolvedValue({ id: 'l1', cutover: { isSuperseded: true } });
+    inventoryOpeningFindUnique.mockResolvedValue({ id: 'l2', cutover: { isSuperseded: true } });
+    await expect(setTreasuryOpeningVerification('l1', true, ['SUPER_ADMIN'])).rejects.toThrow(CutoverSupersededError);
+    await expect(setTreasuryOpeningVerification('l1', false, ['SUPER_ADMIN'])).rejects.toThrow(CutoverSupersededError);
+    await expect(setInventoryOpeningVerification('l2', true, ['SUPER_ADMIN'])).rejects.toThrow(CutoverSupersededError);
+    await expect(setInventoryOpeningVerification('l2', false, ['SUPER_ADMIN'])).rejects.toThrow(CutoverSupersededError);
+    expectNoWrites();
+  });
+
+  it('a normal cutover is unaffected: its lines can still be verified', async () => {
+    treasuryOpeningFindUnique.mockResolvedValue({ id: 'l1', cutover: { isSuperseded: false } });
+    treasuryOpeningUpdate.mockResolvedValue({
+      id: 'l1', cutoverId: CUTOVER_ID, method: 'CASH', amount: decimal(100), verificationStatus: 'VERIFIED',
+      notes: null, enteredById: CREATOR_ID, createdAt: new Date(), updatedAt: new Date(),
+    });
+    await expect(setTreasuryOpeningVerification('l1', true, ['SUPER_ADMIN'])).resolves.toBeDefined();
+    expect(treasuryOpeningUpdate).toHaveBeenCalledTimes(1);
   });
 });
