@@ -47,6 +47,21 @@ export class ActiveCutoverExistsError extends Error {
   }
 }
 
+/**
+ * Owner decision (2026-09-25, found while testing the UI) — a superseded
+ * cutover is dead: it was cancelled to free the branch's slot for a new one.
+ * Activating it anyway would still post its inventory openings (real
+ * StockMovement/StockLevel writes) on a branch with live customers and
+ * orders, while the `isSuperseded = false` lookups would never treat it as
+ * the branch's active cutover. Arabic message: new error, surfaced as-is.
+ */
+export class CutoverSupersededError extends Error {
+  constructor() {
+    super('هذا الـ Cutover أُلغي نهائيًا — لا يمكن تفعيله. أنشئ Cutover جديدًا للفرع بدلًا منه.');
+    this.name = 'CutoverSupersededError';
+  }
+}
+
 export class InvalidCutoverTransitionError extends Error {
   constructor(from: string, to: string) {
     super(`Cannot move a cutover from ${from} to ${to}`);
@@ -317,6 +332,7 @@ export async function activateCutover(cutoverId: string, staffId: string, roleNa
 
   const cutover = await prisma.cutoverRecord.findUnique({ where: { id: cutoverId } });
   if (!cutover) throw new CutoverNotFoundError();
+  if (cutover.isSuperseded) throw new CutoverSupersededError();
   if (cutover.status !== 'APPROVED') throw new InvalidCutoverTransitionError(cutover.status, 'ACTIVE');
 
   const updated = await prisma.$transaction(async (tx) => {

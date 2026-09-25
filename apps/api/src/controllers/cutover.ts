@@ -20,6 +20,7 @@ import {
   CutoverNotFoundError,
   CutoverNotReadyForApprovalError,
   CutoverNotReadyForSubmissionError,
+  CutoverSupersededError,
   CutoverSupersedeNotAllowedError,
   ActiveCutoverExistsError,
   InvalidCutoverDatesError,
@@ -53,6 +54,7 @@ function handleServiceError(err: unknown, res: Response): boolean {
     err instanceof ActiveCutoverExistsError ||
     err instanceof InvalidCutoverDatesError ||
     err instanceof InvalidCutoverTransitionError ||
+    err instanceof CutoverSupersededError ||
     err instanceof CutoverNotReadyForSubmissionError ||
     err instanceof CutoverNotReadyForApprovalError ||
     err instanceof CutoverNotEditableError

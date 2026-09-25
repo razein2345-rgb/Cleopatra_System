@@ -137,25 +137,28 @@ export function CutoverPage() {
                   آخر يوم يدوي: {selected.lastManualDate} · الحالة: {label(STATUS_LABELS, selected.status)}
                 </p>
                 {/* Cutover-revision-round decision (post-3D) — the logic (selfApprovedException itself) was already implemented in the services round; only its display here is new. */}
+                {selected.isSuperseded && (
+                  <Badge variant="destructive">أُلغي نهائيًا — للعرض فقط، لا يمكن تعديله أو تفعيله</Badge>
+                )}
                 {selected.selfApprovedException && <Badge variant="destructive">⚠️ تم الاعتماد ذاتيًا (استثناء طارئ)</Badge>}
               </div>
               <div className="flex flex-wrap gap-2">
-                {selected.status === 'DRAFT' && (
+                {!selected.isSuperseded && selected.status === 'DRAFT' && (
                   <Button size="sm" onClick={() => runAction(() => apiPost(`/api/cutover/${selected.id}/submit`, {}))}>
                     إرسال للمراجعة
                   </Button>
                 )}
-                {selected.status === 'REVIEW' && (
+                {!selected.isSuperseded && selected.status === 'REVIEW' && (
                   <Button size="sm" disabled={!canApproveThis} onClick={() => runAction(() => apiPost(`/api/cutover/${selected.id}/approve`, {}))}>
                     اعتماد
                   </Button>
                 )}
-                {selected.status === 'APPROVED' && isSuperAdmin && (
+                {!selected.isSuperseded && selected.status === 'APPROVED' && isSuperAdmin && (
                   <Button size="sm" onClick={() => runAction(() => apiPost(`/api/cutover/${selected.id}/activate`, {}))}>
                     تفعيل (بدء التشغيل)
                   </Button>
                 )}
-                {(selected.status === 'APPROVED' || selected.status === 'ACTIVE') && isAdmin && (
+                {!selected.isSuperseded && (selected.status === 'APPROVED' || selected.status === 'ACTIVE') && isAdmin && (
                   <Button
                     size="sm"
                     variant="secondary"
@@ -167,7 +170,7 @@ export function CutoverPage() {
                     إعادة فتح
                   </Button>
                 )}
-                {isSuperAdmin && (
+                {!selected.isSuperseded && isSuperAdmin && (
                   <Button
                     size="sm"
                     variant="destructive"
@@ -182,7 +185,7 @@ export function CutoverPage() {
               </div>
             </div>
 
-            {selected.status === 'DRAFT' && (
+            {!selected.isSuperseded && selected.status === 'DRAFT' && (
               <>
                 <AddTreasuryOpeningForm cutoverId={selected.id} onAdded={() => loadDetail(selected.id)} />
                 <AddInventoryOpeningForm cutoverId={selected.id} items={inventoryItems} onAdded={() => loadDetail(selected.id)} />
@@ -198,7 +201,7 @@ export function CutoverPage() {
                       <td className="p-2">{label(METHOD_LABELS, t.method)}</td>
                       <td className="p-2" dir="ltr">{fmt(t.amount)}</td>
                       <td className="p-2 text-xs">{label(VERIFICATION_LABELS, t.verificationStatus)}</td>
-                      {selected.status === 'DRAFT' && t.verificationStatus === 'UNVERIFIED' && (
+                      {!selected.isSuperseded && selected.status === 'DRAFT' && t.verificationStatus === 'UNVERIFIED' && (
                         <td className="p-2">
                           <button
                             type="button"
@@ -234,7 +237,7 @@ export function CutoverPage() {
                       <td className="p-2" dir="ltr">{fmt(i.quantity)}</td>
                       <td className="p-2 text-xs">{label(VERIFICATION_LABELS, i.verificationStatus)}</td>
                       <td className="p-2 text-xs">{i.activatedAt ? `مُفعّل — ${new Date(i.activatedAt).toLocaleDateString('ar-EG')}` : '—'}</td>
-                      {selected.status === 'DRAFT' && i.verificationStatus === 'UNVERIFIED' && (
+                      {!selected.isSuperseded && selected.status === 'DRAFT' && i.verificationStatus === 'UNVERIFIED' && (
                         <td className="p-2">
                           <button
                             type="button"

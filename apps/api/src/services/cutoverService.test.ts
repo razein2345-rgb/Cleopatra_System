@@ -54,6 +54,7 @@ const {
   CutoverApprovalNotAllowedError,
   CutoverActivationNotAllowedError,
   InvalidCutoverTransitionError,
+  CutoverSupersededError,
 } = await import('./cutoverService.js');
 
 const CUTOVER_ID = '11111111-1111-1111-1111-111111111111';
@@ -202,6 +203,16 @@ describe('activateCutover', () => {
   it('only a SUPER_ADMIN may activate', async () => {
     setupCutover();
     await expect(activateCutover(CUTOVER_ID, OTHER_STAFF_ID, ['ADMIN'])).rejects.toThrow(CutoverActivationNotAllowedError);
+    expect(cutoverRecordUpdate).not.toHaveBeenCalled();
+  });
+
+  it('rejects activation of a SUPERSEDED cutover even though its status is APPROVED — nothing is written', async () => {
+    cutoverRecordFindUnique.mockResolvedValue({ id: CUTOVER_ID, branchId: BRANCH_ID, status: 'APPROVED', isSuperseded: true });
+    inventoryOpeningFindMany.mockResolvedValue([{ id: 'op-1', inventoryItemId: ITEM_A, quantity: decimal(140) }]);
+    await expect(activateCutover(CUTOVER_ID, OTHER_STAFF_ID, ['SUPER_ADMIN'])).rejects.toThrow(CutoverSupersededError);
+    expect(stockMovementCreate).not.toHaveBeenCalled();
+    expect(stockLevelUpsert).not.toHaveBeenCalled();
+    expect(inventoryOpeningUpdate).not.toHaveBeenCalled();
     expect(cutoverRecordUpdate).not.toHaveBeenCalled();
   });
 
