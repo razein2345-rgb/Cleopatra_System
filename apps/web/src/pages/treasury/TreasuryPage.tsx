@@ -1194,7 +1194,9 @@ function NewEntryForm({
  * operation, so the two can never drift apart.
  */
 function GiveAdvanceDialog({ staff, onClose, onCreated }: { staff: User[]; onClose: () => void; onCreated: () => void }) {
-  const [staffId, setStaffId] = useState(staff[0]?.id ?? '');
+  // Owner decision (2026-09-25) - starts with NO employee selected (it used to pre-select
+  // the first one, so a quick "صرف السلفة" paid real cash to an arbitrary employee).
+  const [staffId, setStaffId] = useState('');
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [reason, setReason] = useState('');
@@ -1206,8 +1208,12 @@ function GiveAdvanceDialog({ staff, onClose, onCreated }: { staff: User[]; onClo
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (submitting || !selectedStaff) return;
+    if (submitting) return;
     setError(null);
+    if (!selectedStaff) {
+      setError('اختر الموظف أولًا');
+      return;
+    }
     setSubmitting(true);
     try {
       await apiPost('/api/employee-advances', {
@@ -1242,6 +1248,7 @@ function GiveAdvanceDialog({ staff, onClose, onCreated }: { staff: User[]; onClo
               getKey={(s) => s.id}
               getLabel={(s) => s.name}
               onChange={(s) => setStaffId(s.id)}
+              placeholder="— اختر الموظف —"
               searchPlaceholder="اكتب اسم الموظف…"
             />
           </label>
