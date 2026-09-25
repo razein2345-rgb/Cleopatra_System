@@ -562,3 +562,33 @@ corrected another way, is the owner's call.
 
 **Nothing was changed** — no adjustment, no movement, no edit. The system
 never auto-corrects a balance from this report (by design).
+
+---
+
+## Read endpoints return every branch with no branch scoping (inventory, machines, field assignments) — read-only, lower severity, NOT fixed
+
+**Found:** 2026-09-25, read-only access review of the inventory / attendance /
+machines write paths. **Owner instruction:** document for later review; do not
+change now. The WRITE gaps found in the same review were fixed (stock-movement
+edit/delete, field-assignment create/delete, machine create/update/delete —
+each now checks the record's own branch and audits under it).
+
+| Endpoint | Permission | What it returns |
+|---|---|---|
+| `GET /api/inventory-items`, `/needs-supplier`, `/:id`, `/by-barcode/:barcode` | `inventory.view` | items with `quantityOnHand` summed company-wide (by design — `mapInventoryItemToDto`) |
+| `GET /api/inventory-items/:id/movements` | `inventory.view` | every branch's movements for the item, incl. `branchId` and references |
+| `GET /api/machines` | `machines.view` | all branches' machines unless the optional `?branchId=` is sent (not enforced against access) |
+| `GET /api/attendance/field-assignments` | `employees.edit` | every branch's assignments |
+
+Why it is lower severity than the write gaps: no value can be changed, and stock
+levels are deliberately company-wide (`quantityOnHand` is summed across
+branches, so item-level reads are shared by design). What a branch-scoped user
+can still see is the OTHER branch's movement history (quantities, references,
+dates) and machine/assignment lists.
+
+**Already scoped (for contrast):** `GET /api/inventory-items/reconciliation`
+(via `resolveBranchScope`), treasury, orders, suppliers, advances, reports.
+
+**Decide later:** whether a branch-scoped caller should see other branches'
+movements/machines at all, or only company-wide item totals. If yes, clamp with
+the same `resolveBranchScope` / `canAccessBranch` pattern the treasury reads use.
