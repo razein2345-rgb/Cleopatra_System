@@ -53,6 +53,7 @@ export const pricingReferenceSchema = z.object({
   digitalConstants: digitalPricingConstantsSchema,
   vatRate: z.number(),
   sizeFamilies: z.array(sizeFamilySchema),
+  sheetBases: z.array(z.object({ id: z.string(), base: z.enum(['REGULAR', 'GAYER']) })).optional(),
   /** Owner (2026-08-20) — every `DigitalPriceTier` row across all 12 (basis, colorMode, sides) tables, for the composer's live client-side preview. */
   digitalPriceTiers: z.array(digitalPriceTierSchema),
 });

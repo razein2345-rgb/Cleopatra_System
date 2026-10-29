@@ -15,7 +15,7 @@ import {
  * business-identity/tax fields that permission is meant to protect.
  */
 export async function getPricingReference(_req: Request, res: Response) {
-  const [setting, families, digitalPriceTiers] = await Promise.all([
+  const [setting, families, digitalPriceTiers, sheetBases] = await Promise.all([
     prisma.setting.findFirstOrThrow(),
     prisma.sizeFamily.findMany({
       where: { isDeleted: false },
@@ -23,6 +23,7 @@ export async function getPricingReference(_req: Request, res: Response) {
       orderBy: { label: 'asc' },
     }),
     prisma.digitalPriceTier.findMany(),
+    prisma.sheetType.findMany({ where: { isDeleted: false }, select: { id: true, base: true } }),
   ]);
 
   res.json({
@@ -32,6 +33,7 @@ export async function getPricingReference(_req: Request, res: Response) {
       boardsConstants: mapSettingToBoardsPricingConstants(setting),
       digitalConstants: mapSettingToDigitalPricingConstants(setting),
       vatRate: setting.vatRate.toNumber(),
+      sheetBases,
       sizeFamilies: families.map((f) => ({
         id: f.id,
         key: f.key,

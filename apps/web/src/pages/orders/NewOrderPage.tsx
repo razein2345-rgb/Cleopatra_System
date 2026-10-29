@@ -38,6 +38,8 @@ import type {
 } from '@cleopatra/shared';
 import {
   calculateBoardsCost,
+  canonicalOffsetLabel,
+  type CustomOffsetLayout,
   calculateDigitalMultiComponentCost,
   calculateEnvelopeCost,
   calculateFolderCost,
@@ -1086,6 +1088,7 @@ interface PricingCtx {
   boardsConstants: PricingReference['boardsConstants'];
   digitalConstants: PricingReference['digitalConstants'];
   sheetPriceByInventoryItemId: Map<string, number>;
+  sheetBaseByInventoryItemId?: Map<string, 'REGULAR' | 'GAYER'>;
   catalogPriceById: Map<string, number>;
   salePriceByInventoryItemId: Map<string, number>;
   /** Owner (2026-08-27, "روول أب... محتاجة مورد وسعر تكلفة خاصين بيها") — mirrors `catalogPriceById` but keyed to `BoardsCatalogItem`, whose flat-priced items bypass the material/geometry BOARDS formula entirely. */
@@ -1101,6 +1104,8 @@ function digitalTierTableKey(basis: DigitalPrintBasis, colorMode: DigitalColorMo
 
 /** Every field any `calculate*Cost` result might carry — display-only (formula strings), never used to compute an actual total. */
 interface PricingPreviewResult {
+  calcLabel?: string;
+  customLayout?: CustomOffsetLayout;
   sheetsNeeded?: number;
   paperCost?: number;
   zincCost?: number;
@@ -1178,6 +1183,15 @@ function pricingPreviewFromInputRaw(
   }));
 
   try {
+    if (pricing.kind === 'LOOSE_PAPER') {
+      const family = families.find(f => f.key === pricing.sizeFamilyKey);
+      if (family && !family.entries.some(e => e.label === canonicalOffsetLabel(pricing.realSizeLabel))) {
+        const ids = [pricing.inventoryItemId];
+        if (ids.some(id => ctx.sheetBaseByInventoryItemId?.get(id) !== family.base)) {
+          return { total: 0, result: null, error: 'اختر ورق مخزن مطابقًا لمجموعة المقاس: عادي 70×100 أو جاير 66×88' };
+        }
+      }
+    }
     switch (pricing.kind) {
       case 'LOOSE_PAPER': {
         const sheetPrice = pricing.sheetPriceOverride ?? ctx.sheetPriceByInventoryItemId.get(pricing.inventoryItemId);
@@ -2689,6 +2703,10 @@ function NewOrderForm({
       pricingConstants: pricingReference.pricingConstants,
       boardsConstants: pricingReference.boardsConstants,
       digitalConstants: pricingReference.digitalConstants,
+      sheetBaseByInventoryItemId: new Map(inventoryItems.flatMap(i => {
+        const base = pricingReference.sheetBases?.find(s => s.id === i.sheetTypeId)?.base;
+        return base ? [[i.id, base] as const] : [];
+      })),
       sheetPriceByInventoryItemId: new Map(
         inventoryItems.filter((i) => i.sheetPrice !== null).map((i) => [i.id, i.sheetPrice as number]),
       ),
@@ -4045,6 +4063,39 @@ function NewOrderForm({
                   searchPlaceholder="اكتب المقاس للبحث…"
                 />
               </label>
+              {draft.kind === 'LOOSE_PAPER' && <>
+              <label className="space-y-1 text-sm sm:col-span-2">
+                <span className="text-muted-foreground">مقاس مخصص بالسنتيمتر (عرض × ارتفاع)</span>
+                <input
+                  aria-label="مقاس أوفست مخصص"
+                  value={draft.realSizeLabel}
+                  onChange={(e) => {
+                    const label = canonicalOffsetLabel(e.target.value);
+                    const paperBase = ctx.sheetBaseByInventoryItemId?.get(draft.inventoryItemId);
+                    const exact = allSizeEntries.find(en => en.label === label && (!paperBase || pricingReference.sizeFamilies.find(f => f.key === en.familyKey)?.base === paperBase));
+                    const family = pricingReference.sizeFamilies.find(f => f.key === draft.sizeFamilyKey && (!paperBase || f.base === paperBase))
+                      ?? pricingReference.sizeFamilies.find(f => f.base === (paperBase ?? 'REGULAR'));
+                    updateDraft({ realSizeLabel: e.target.value, sizeFamilyKey: exact?.familyKey ?? family?.key ?? '' });
+                  }}
+                  placeholder="مثال: 7×7 أو 12.3×18.5"
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                />
+              </label>
+              {result?.customLayout && (
+                <p role="status" className="rounded-md border p-3 text-sm sm:col-span-4">
+                  مقاس الطباعة المقترح: <strong>{result.calcLabel}</strong>
+                  {result.customLayout && <>
+                    {' — '}{result.customLayout.repeat} قطعة في الطبعة، {result.customLayout.calcPiecesPerSheet} طبعات من الفرخ الكامل
+                    {' — '}{result.customLayout.piecesPerFullSheet} قطعة في الفرخ الكامل
+                    {' — '}هامش {result.customLayout.marginCm} سم من كل جانب؛ مساحة الطباعة {result.customLayout.printableWidthCm}×{result.customLayout.printableHeightCm} سم
+                    {' — '}دوران {result.customLayout.rotation}°
+                    {' — '}مساحة غير مستغلة {result.customLayout.unusedAreaPercent.toFixed(1)}٪
+                    {' — '}الورق {result.customLayout.sheetBase === 'GAYER' ? '66×88 جاير' : '70×100 عادي'}
+                    {' — '}هالك التجهيز: {draft.wasteSheetsOverrideEnabled ? draft.wasteSheetsOverrideValue : ctx.pricingConstants.wasteSheetsDefault} فرخ
+                  </>}
+                </p>
+              )}
+              </>}
               <label className="space-y-1 text-sm sm:col-span-2">
                 <span className="text-muted-foreground">نوع الورق (يُسحب من المخزن)</span>
                 <Combobox
@@ -4052,7 +4103,14 @@ function NewOrderForm({
                   value={draft.inventoryItemId}
                   getKey={(p) => p.id}
                   getLabel={(p) => p.name}
-                  onChange={(p) => updateDraft({ inventoryItemId: p.id })}
+                  onChange={(p) => {
+                    const base = ctx.sheetBaseByInventoryItemId?.get(p.id);
+                    const family = pricingReference.sizeFamilies.find(f => f.key === draft.sizeFamilyKey);
+                    const isCustom = draft.kind === 'LOOSE_PAPER' && !family?.entries.some(e => e.label === canonicalOffsetLabel(draft.realSizeLabel));
+                    updateDraft({ inventoryItemId: p.id, ...(base && isCustom ? {
+                      sizeFamilyKey: pricingReference.sizeFamilies.find(f => f.base === base)?.key ?? draft.sizeFamilyKey,
+                    } : {}) });
+                  }}
                   placeholder="— بدون ورق —"
                   searchPlaceholder="اكتب أول كام حرف من اسم الورق…"
                 />

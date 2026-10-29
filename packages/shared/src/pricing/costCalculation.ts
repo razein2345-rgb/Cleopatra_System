@@ -7,6 +7,7 @@
  * duplicating its tiering logic. Pure functions only — no DB/HTTP access.
  */
 
+import { canonicalOffsetLabel, resolveCustomOffsetNumbering, type CustomOffsetLayout } from './customOffsetSize.js';
 import {
   findEntry,
   findFamily,
@@ -86,10 +87,11 @@ export function resolveNumbering(params: {
   families: SizeFamilyInput[];
   targetLabelOverride?: string;
 }): { repeat: number; targetLabel: string } {
+  params = { ...params, realLabel: canonicalOffsetLabel(params.realLabel) };
   const family = findFamily(params.families, params.familyKey);
   const realEntry = findEntry(family, params.realLabel);
   if (!realEntry) {
-    throw new SizeCalculationError(`Unknown size "${params.realLabel}" in family "${params.familyKey}"`);
+    return resolveCustomOffsetNumbering(params.realLabel, params.families, family.base, params.targetLabelOverride);
   }
 
   if (params.targetLabelOverride) {
@@ -245,6 +247,7 @@ export interface LoosePaperCostInput {
 }
 
 export interface LoosePaperCostResult {
+  customLayout?: CustomOffsetLayout;
   /**
    * Owner (2026-08-24, "المفروض المقاس اللي يتحط المقاس اللي بيتحسب عليه
    * الطباعة... لو شغلانه 20*30 وهما اكتر من 30 دفتر المفروض هيتطبع على
@@ -271,11 +274,13 @@ export interface LoosePaperCostResult {
 
 /** §3.4 — loose paper. */
 export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperCostResult {
+  input = { ...input, realLabel: canonicalOffsetLabel(input.realLabel) };
   const family = findFamily(input.families, input.familyKey);
 
   let sheetsNeeded: number;
   let printUnits: number;
   let calcLabel: string;
+  let customLayout: CustomOffsetLayout | undefined;
 
   if (family.base === 'GAYER') {
     const calc = resolveCalcSize({
@@ -287,9 +292,10 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
       settings: input.settings,
       calcLabelOverride: input.calcSizeOverride,
     });
-    sheetsNeeded = Math.ceil(input.quantity / calc.repeat) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
-    printUnits = input.quantity;
+    sheetsNeeded = Math.ceil(input.quantity / calc.repeat / (calc.customLayout ? calc.calcPiecesPerSheet : 1)) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
+    printUnits = calc.customLayout ? input.quantity / calc.repeat : input.quantity;
     calcLabel = calc.calcLabel;
+    customLayout = calc.customLayout;
   } else {
     const calc = resolveCalcSize({
       familyKey: input.familyKey,
@@ -303,6 +309,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
     printUnits = input.quantity / calc.repeat;
     sheetsNeeded = Math.ceil(printUnits / calc.calcPiecesPerSheet) + (input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault);
     calcLabel = calc.calcLabel;
+    customLayout = calc.customLayout;
   }
 
   const paperCost = input.paperCostOverride ?? sheetsNeeded * input.sheetPrice;
@@ -339,6 +346,7 @@ export function calculateLoosePaperCost(input: LoosePaperCostInput): LoosePaperC
 
   return {
     calcLabel,
+    ...(customLayout ? { customLayout } : {}),
     sheetsNeeded,
     paperCost,
     zincCost,
@@ -804,6 +812,7 @@ export interface FolderCostInput {
 }
 
 export interface FolderCostResult {
+  customLayout?: CustomOffsetLayout;
   /** See `LoosePaperCostResult.calcLabel`'s doc comment — folders reuse loose paper's sheet-count math, same concept. */
   calcLabel: string;
   sheetsNeeded: number;
@@ -833,6 +842,9 @@ export interface FolderCostResult {
  * section never mentions it.
  */
 export function calculateFolderCost(input: FolderCostInput): FolderCostResult {
+  if (!findEntry(findFamily(input.families, input.familyKey), input.realLabel)) {
+    throw new SizeCalculationError('المقاسات المخصصة متاحة للورق السايب فقط؛ اختر مقاس فولدر من الجدول');
+  }
   const base = calculateLoosePaperCost({
     familyKey: input.familyKey,
     realLabel: input.realLabel,
@@ -867,6 +879,7 @@ export function calculateFolderCost(input: FolderCostInput): FolderCostResult {
 
   return {
     calcLabel: base.calcLabel,
+    ...(base.customLayout ? { customLayout: base.customLayout } : {}),
     sheetsNeeded: base.sheetsNeeded,
     paperCost: base.paperCost,
     zincCost: base.zincCost,

@@ -2,6 +2,9 @@ import type { Prisma } from '../generated/prisma/client.js';
 import type { BoardsPricingConstants, BoardsSupplierPricingConstants, DigitalColorMode, DigitalPrintBasis, DigitalSides, OrderItemPricingInput, PricingConstants } from '@cleopatra/shared';
 import {
   calculateBoardsCost,
+  SizeCalculationError,
+  findEntry,
+  findFamily,
   calculateDigitalMultiComponentCost,
   calculateEnvelopeCost,
   calculateFolderCost,
@@ -45,6 +48,7 @@ export interface PricingContext {
   digitalConstants: DigitalPricingConstants;
   vatRate: number;
   sheetPriceByInventoryItemId: Map<string, number>;
+  sheetBaseByInventoryItemId?: Map<string, 'REGULAR' | 'GAYER'>;
   /** Frozen into `breakdown` at creation time (same "freeze by default" discipline as `modelName`) so a later paper rename never changes what an already-printed Work Order shows it used. */
   paperNameByInventoryItemId: Map<string, string>;
   catalogPriceById: Map<string, number>;
@@ -194,11 +198,15 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
       : Promise.resolve([]),
   ]);
 
+  const sheetBaseByInventoryItemId = new Map<string, 'REGULAR' | 'GAYER'>();
   const sheetPriceByInventoryItemId = new Map<string, number>();
   const paperNameByInventoryItemId = new Map<string, string>();
   const salePriceByInventoryItemId = new Map<string, number>();
   for (const ii of inventoryItems) {
     if (ii.sheetType) sheetPriceByInventoryItemId.set(ii.id, ii.sheetType.price.toNumber());
+    if (ii.sheetType && !ii.sheetType.isDeleted && !ii.isDeleted && ii.unit === 'SHEET') {
+      sheetBaseByInventoryItemId.set(ii.id, ii.sheetType.base);
+    }
     paperNameByInventoryItemId.set(ii.id, ii.name);
     if (ii.salePrice) salePriceByInventoryItemId.set(ii.id, ii.salePrice.toNumber());
   }
@@ -229,6 +237,7 @@ export async function buildPricingContext(items: PricingLineItem[]): Promise<Pri
     digitalConstants: mapSettingToDigitalPricingConstants(setting),
     vatRate: setting.vatRate.toNumber(),
     sheetPriceByInventoryItemId,
+    sheetBaseByInventoryItemId,
     paperNameByInventoryItemId,
     catalogPriceById,
     salePriceByInventoryItemId,
@@ -850,7 +859,24 @@ function computeItemPricingRaw(item: PricingLineItem, ctx: PricingContext): Item
  * the same role `subtotal` plays for "قبل نسبة الربح".
  */
 export function computeItemPricing(item: PricingLineItem, ctx: PricingContext): ItemPricingResult {
-  const result = computeItemPricingRaw(item, ctx);
+  const pricing = item.pricing;
+  let result: ItemPricingResult;
+  try {
+    if (pricing.kind === 'LOOSE_PAPER') {
+      const family = findFamily(ctx.families, pricing.sizeFamilyKey);
+      // New geometry must use the actual paper base, never infer it from a paper name or price.
+      if (!findEntry(family, pricing.realSizeLabel)) {
+        const ids = [pricing.inventoryItemId];
+        if (ids.some(id => ctx.sheetBaseByInventoryItemId?.get(id) !== family.base)) {
+          throw new PricingInputError('نوع الورق في المخزن لا يطابق قاعدة المقاس (70×100 عادي أو 66×88 جاير)');
+        }
+      }
+    }
+    result = computeItemPricingRaw(item, ctx);
+  } catch (error) {
+    if (error instanceof SizeCalculationError) throw new PricingInputError(error.message);
+    throw error;
+  }
   const finalPriceOverride = 'finalPriceOverride' in item.pricing ? item.pricing.finalPriceOverride : undefined;
   if (finalPriceOverride === undefined) return result;
   return {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { canonicalOffsetLabel } from '../pricing/customOffsetSize.js';
 
 /**
  * FEATURE-007 PE-E — one structured input per item kind, matching the six
@@ -11,7 +12,7 @@ import { z } from 'zod';
 
 const sheetJobFields = {
   sizeFamilyKey: z.string().trim().min(1),
-  realSizeLabel: z.string().trim().min(1),
+  realSizeLabel: z.string().trim().min(1).transform(canonicalOffsetLabel),
   inventoryItemId: z.string().uuid(),
   colorCount: z.number().int().positive(),
   isNewDesign: z.boolean(),
@@ -255,7 +256,7 @@ export const envelopePricingInputSchema = z.object({
 export const folderPricingInputSchema = z.object({
   kind: z.literal('FOLDER'),
   sizeFamilyKey: z.string().trim().min(1),
-  realSizeLabel: z.string().trim().min(1),
+  realSizeLabel: z.string().trim().min(1).transform(canonicalOffsetLabel),
   inventoryItemId: z.string().uuid(),
   quantity: z.number().int().positive(),
   colorCount: z.number().int().positive(),

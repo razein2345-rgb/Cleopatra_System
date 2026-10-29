@@ -12,6 +12,7 @@
  * `SizeFamily`/`SizeFamilyEntry` data and the relevant `Setting` constants.
  */
 
+import { canonicalOffsetLabel, fitOffsetPieces, parseOffsetDimensions, resolveCustomOffsetSize, type CustomOffsetLayout } from './customOffsetSize.js';
 import type { SheetBase } from '../schemas/sheetType.js';
 
 export type JobKind = 'LOOSE_PAPER' | 'NOTEBOOK';
@@ -82,7 +83,7 @@ export function parseAreaLabel(label: string): number | null {
 }
 
 export function findEntry(family: SizeFamilyInput, label: string): SizeFamilyEntryInput | undefined {
-  return family.entries.find((entry) => entry.label === label);
+  return family.entries.find((entry) => entry.label === canonicalOffsetLabel(label));
 }
 
 export function findFamily(families: SizeFamilyInput[], familyKey: string): SizeFamilyInput {
@@ -150,7 +151,7 @@ function resolveManualCalcSize(
  * be shown to the customer (§5.3 of the spec) — only used internally
  * (Work Order / Inventory deduction).
  */
-export function resolveCalcSize(params: {
+function resolveCalcSizeRaw(params: {
   familyKey: string;
   realLabel: string;
   quantity: number;
@@ -158,14 +159,17 @@ export function resolveCalcSize(params: {
   families: SizeFamilyInput[];
   settings: TieringSettings;
   calcLabelOverride?: string;
-}): { calcLabel: string; repeat: number; calcPiecesPerSheet: number } {
+}): { calcLabel: string; repeat: number; calcPiecesPerSheet: number; customLayout?: CustomOffsetLayout } {
   const family = findFamily(params.families, params.familyKey);
   const realEntry = findEntry(family, params.realLabel);
   if (!realEntry) {
-    throw new SizeCalculationError(
-      `Unknown size "${params.realLabel}" in family "${params.familyKey}"`,
-    );
+    if (params.jobKind === 'NOTEBOOK') throw new SizeCalculationError('الدفاتر تستخدم المقاسات القياسية المسجلة فقط');
+    const customLayout = resolveCustomOffsetSize({ realLabel: params.realLabel, base: family.base,
+      families: params.families, calcLabelOverride: params.calcLabelOverride });
+    return { ...customLayout, customLayout };
   }
+
+  params = { ...params, realLabel: realEntry.label };
 
   if (family.base === 'GAYER') {
     // §3.4 — gayer sheets never tier; repeat comes straight from the family table.
@@ -239,6 +243,21 @@ export function resolveCalcSize(params: {
   return { calcLabel, repeat, calcPiecesPerSheet: calcEntry.piecesPerSheet };
 }
 
+/** Apply the physical quarter-sheet limit to automatic AND manual selections, including catalogue sizes.
+ * Existing tiering/prices stay unchanged for jobs that fit the press.
+ */
+export function resolveCalcSize(params: Parameters<typeof resolveCalcSizeRaw>[0]): ReturnType<typeof resolveCalcSizeRaw> {
+  const result = resolveCalcSizeRaw(params);
+  if (params.jobKind === 'NOTEBOOK') return result;
+  const family = findFamily(params.families, params.familyKey);
+  const dimensions = parseOffsetDimensions(result.calcLabel);
+  const quarter: [number, number] = family.base === 'GAYER' ? [33, 44] : [35, 50];
+  if (!dimensions || !fitOffsetPieces(quarter, dimensions).pieces) {
+    throw new SizeCalculationError('مقاس الطباعة يتجاوز حدود ماكينة ربع فرخ للورق المختار');
+  }
+  return result;
+}
+
 /** §3.4 — loose paper sheet count (blank-paper consumption). */
 export function computeLooseSheetsNeeded(params: {
   familyKey: string;
@@ -250,8 +269,8 @@ export function computeLooseSheetsNeeded(params: {
   const family = findFamily(params.families, params.familyKey);
 
   if (family.base === 'GAYER') {
-    const { repeat } = resolveCalcSize({ ...params, jobKind: 'LOOSE_PAPER' });
-    return Math.ceil(params.quantity / repeat) + params.settings.wasteSheetsDefault;
+    const calc = resolveCalcSize({ ...params, jobKind: 'LOOSE_PAPER' });
+    return Math.ceil(params.quantity / calc.repeat / (calc.customLayout ? calc.calcPiecesPerSheet : 1)) + params.settings.wasteSheetsDefault;
   }
 
   const { repeat, calcPiecesPerSheet } = resolveCalcSize({ ...params, jobKind: 'LOOSE_PAPER' });
