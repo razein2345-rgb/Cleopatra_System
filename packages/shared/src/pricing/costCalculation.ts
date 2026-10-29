@@ -516,6 +516,9 @@ export function calculateNotebookCost(input: NotebookCostInput): NotebookCostRes
  * copies — gets exactly the same weight, `1/(1+copies)` of the pages. The
  * last role absorbs the rounding remainder so the shares always sum to
  * `sheetsNeeded` exactly, never drifting from the unmodified total.
+ * Exception for multi-material 15×20 notebooks: each role needs
+ * ceil(its flat pages / 22) + waste sheets; their sum replaces sheetsNeeded.
+ * This affects paper only, leaving the existing print calculations intact.
  */
 export type NotebookMaterialRole = string;
 
@@ -613,10 +616,27 @@ export function calculateNotebookMultiMaterialCost(
   for (const override of materialOverrides) priceByRole.set(override.role, override.sheetPrice);
 
   let allocated = 0;
+  const isSpecial15x20 = input.realLabel === '15×20';
+  const originalPages = input.originalPagesOverride ?? (input.contentType === 'ORIGINAL_ONLY' ? 100 : 50);
+  const copyPages = input.copyPagesOverride ?? 50;
+  const wasteSheets = input.wasteSheetsOverride ?? input.settings.wasteSheetsDefault;
+
   const materials: NotebookMaterialBreakdown[] = roles.map((role, idx) => {
-    const isLast = idx === roles.length - 1;
-    const sheetsNeeded = isLast ? base.sheetsNeeded - allocated : Math.floor(base.sheetsNeeded / totalWeight);
-    allocated += sheetsNeeded;
+    let sheetsNeeded: number;
+
+    if (isSpecial15x20) {
+      const flatSheets = input.notebookQuantity * (role === 'ORIGINAL' ? originalPages : copyPages);
+
+      sheetsNeeded = Math.ceil(flatSheets / 22) + wasteSheets;
+    } else {
+      const isLast = idx === roles.length - 1;
+      sheetsNeeded = isLast
+        ? base.sheetsNeeded - allocated
+        : Math.floor(base.sheetsNeeded / totalWeight);
+
+      allocated += sheetsNeeded;
+    }
+
     const sheetPrice = priceByRole.get(role) ?? input.sheetPrice;
     return { role, sheetsNeeded, sheetPrice, paperCost: sheetsNeeded * sheetPrice };
   });
@@ -690,7 +710,22 @@ export function calculateNotebookMultiMaterialCost(
   const subtotal = designCost + zincCost + printCost + base.numberingCost + paperCost + base.bindingCost + base.extraCosts;
   const total = subtotal * (1 + base.profitPercentUsed / 100);
 
-  return { ...base, zincCost, printRuns, printCost, designCost, paperCost, subtotal, total, materials };
+  const sheetsNeeded = isSpecial15x20
+    ? materials.reduce((sum, material) => sum + material.sheetsNeeded, 0)
+    : base.sheetsNeeded;
+
+  return {
+    ...base,
+    sheetsNeeded,
+    zincCost,
+    printRuns,
+    printCost,
+    designCost,
+    paperCost,
+    subtotal,
+    total,
+    materials,
+  };
 }
 
 export interface EnvelopeCostInput {

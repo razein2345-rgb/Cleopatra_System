@@ -265,6 +265,45 @@ describe('calculateNotebookMultiMaterialCost — per-copy independent print job 
     settings: SETTINGS,
   };
 
+  it('15×20: calculates each paper role independently and sums the required sheets', () => {
+    const input = {
+      ...baseInput,
+      familyKey: 'extra2',
+      realLabel: '15×20',
+      notebookQuantity: 200,
+      copies: 2,
+    };
+
+    const base = calculateNotebookCost(input);
+    const result = calculateNotebookMultiMaterialCost(input, [
+      { role: 'COPY_1', sheetPrice: 6 },
+      { role: 'COPY_2', sheetPrice: 7 },
+    ]);
+
+    expect(result.materials.map((material) => material.sheetsNeeded)).toEqual([457, 457, 457]);
+    expect(result.sheetsNeeded).toBe(1371);
+
+    // Paper-price overrides must not change the existing printing calculations.
+    expect(result.zincCost).toBe(base.zincCost);
+    expect(result.printRuns).toBe(base.printRuns);
+    expect(result.printCost).toBe(base.printCost);
+    expect(result.designCost).toBe(base.designCost);
+  });
+
+  it('keeps the existing sheet allocation for other sizes', () => {
+    const base = calculateNotebookCost(baseInput);
+    const result = calculateNotebookMultiMaterialCost(baseInput, [
+      { role: 'COPY_1', sheetPrice: 8 },
+    ]);
+
+    expect(result.sheetsNeeded).toBe(base.sheetsNeeded);
+    expect(result.materials.reduce((sum, material) => sum + material.sheetsNeeded, 0)).toBe(base.sheetsNeeded);
+    expect(result.zincCost).toBe(base.zincCost);
+    expect(result.printRuns).toBe(base.printRuns);
+    expect(result.printCost).toBe(base.printCost);
+    expect(result.designCost).toBe(base.designCost);
+  });
+
   it('sheet-price-only override (no print fields) stays byte-identical to calculateNotebookCost (regression guard)', () => {
     const base = calculateNotebookCost(baseInput);
     const result = calculateNotebookMultiMaterialCost(baseInput, [{ role: 'COPY_1', sheetPrice: 8 }]);
